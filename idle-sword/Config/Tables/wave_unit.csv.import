@@ -6,10 +6,10 @@ uid="uid://blbgdqe7k88ht"
 
 [deps]
 
-files=["res://Config/Tables/wave_unit.wave.translation", "res://Config/Tables/wave_unit.monster.translation", "res://Config/Tables/wave_unit.count.translation", "res://Config/Tables/wave_unit.max.translation"]
+files=["res://Config/Tables/wave_unit.wave.translation", "res://Config/Tables/wave_unit.monster.translation", "res://Config/Tables/wave_unit.weight.translation"]
 
 source_file="res://Config/Tables/wave_unit.csv"
-dest_files=["res://Config/Tables/wave_unit.wave.translation", "res://Config/Tables/wave_unit.monster.translation", "res://Config/Tables/wave_unit.count.translation", "res://Config/Tables/wave_unit.max.translation"]
+dest_files=["res://Config/Tables/wave_unit.wave.translation", "res://Config/Tables/wave_unit.monster.translation", "res://Config/Tables/wave_unit.weight.translation"]
 
 [params]
 

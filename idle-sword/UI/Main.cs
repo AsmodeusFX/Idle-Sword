@@ -1,4 +1,4 @@
-using Godot;
+﻿using Godot;
 using IdleSword.Core;
 using IdleSword.Features;
 using FileAccess = Godot.FileAccess;
@@ -69,8 +69,8 @@ public partial class Main : Control
         UiKit.Label(this, "IDLE SWORD  /  修行初境", 265, 20, 360, 45, 17, UiKit.Muted);
         // 顶栏右侧依次为 GM / 设置 / 保存，钱包宽度收窄给设置按钮让位。
         _wallet = UiKit.Label(this, "", 825, 14, 620, 48, 23);
-        var gm = UiKit.Button(this, "GM", 1462, 20, 120, 42, () => { _game.GrantAllCurrencies(); Refresh(); });
-        gm.TooltipText = "调试专用：item.csv 中每种货币各 +10000，新增货币自动纳入。";
+        var gm = UiKit.Button(this, "GM", 1462, 20, 120, 42, ToggleGm);
+        gm.TooltipText = "调试专用：发放资源，以及临时加减每波的怪物数量（不影响正式配置）。";
         var settings = UiKit.Button(this, "设置", 1592, 20, 120, 42, ToggleSettings);
         settings.TooltipText = "画面、音频与进度重置。";
         UiKit.Button(this, "保存", 1730, 20, 150, 42, Save);
@@ -112,6 +112,7 @@ public partial class Main : Control
         }
         TrackFirstKills();
         TickSettings(delta);
+        TickDamage(delta);
         _saveClock += delta; _refreshClock += delta;
         if (_preview is null && _saveClock >= _game.Config.Setting("save_interval")) { _saveClock = 0; Save(); }
         if (_refreshClock >= .15) { _refreshClock = 0; Refresh(); }
@@ -142,6 +143,9 @@ public partial class Main : Control
             void Press(string prefix) => Buttons(_page).First(b => b.Text.StartsWith(prefix)).EmitSignal(Button.SignalName.Pressed);
             // 外壳（顶栏/页签）上的按钮不在 _page 下，单独按整棵树查找。
             void Tap(string prefix) => Buttons(this).First(b => b.Text.StartsWith(prefix)).EmitSignal(Button.SignalName.Pressed);
+            // 面板各自有"关闭"，而 `Tap` 取的是**全树第一个**前缀匹配——隐藏的面板仍留在树上，会抢在真正打开的那个前面。
+            // 所以按面板关闭时得从它自己的根往下找。
+            void TapIn(Node root, string prefix) => Buttons(root).First(b => b.Text.StartsWith(prefix)).EmitSignal(Button.SignalName.Pressed);
             ShowPage(0); Refresh(); Press("剑心初明");
             if (_game.State.Talents.GetValueOrDefault("t_root") != 1) throw new Exception("Talent UI action failed");
             _intentTab = -1; ShowPage(3); Refresh(); Press("◇");
@@ -155,9 +159,8 @@ public partial class Main : Control
                 for (int i = 0; i < 5; i++) _game.Step(_game.Config.Setting("fixed_step"));
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             }
-            // 炼气期只有御剑术，50 伤害一击秒掉 45 血的青苔妖：敌人是在同一个 Step 内"从列表消失"，
-            // 血量差分看不到掉血，走的是击杀路径而不是命中路径。因此这里只要求"伤害反馈发生过"，
-            // 两个命中分支各自由下面专门的高血靶子断言覆盖。
+            // 开局不附带剑诀，这一段的输出全部来自普攻（每秒一柄、1× 攻击的飞剑）。
+            // 这里只要求"伤害反馈发生过"，两个命中分支各自由下面专门的高血靶子断言覆盖。
             if (SfxCount("sfx_hit") + SfxCount("sfx_hit_heavy") + SfxCount("sfx_kill") == 0) throw new Exception("No combat feedback SFX fired");
             // 击杀音：死亡的敌人已在同一次 Step 里被移除，表现层只能靠"从列表消失"判定，这里专门验证那条路径。
             if (SfxCount("sfx_kill") == 0)
@@ -170,11 +173,11 @@ public partial class Main : Control
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             }
             if (SfxCount("sfx_kill") == 0) throw new Exception("Kill SFX never fired");
-            // 重击分支（伤害占比 ≥ 12%）：初期御剑术一击秒杀小怪，敌人是"消失"而非掉血，自然战斗走不到这条分支。
-            // 血量取 12 倍攻击，同时满足两个边界：单支剑 2×攻击 → 占比 17%（判为重击）；
-            // 多发剑诀一轮齐射（3 支 = 6×攻击）也打不死它——否则它会在同一帧内被移除，只剩击杀音。
+            // 重击分支（伤害占比 ≥ 12%）：这一段的输出只有普攻，所以靶血必须让一发**未暴击**的普攻
+            // 就够得上 12%——取 7 倍攻击时占比 14%。取 12 倍的话只有暴击（×1.5）才够，断言会变成
+            // 摇暴击的抽签，偶发失败。同时 7 倍血也扛得住循环里的 5 发，不会先死变成击杀音。
             var slime = _game.Config.Monsters["slime"];
-            double heavyHp = Math.Max(1, _game.Attack) * 12;
+            double heavyHp = Math.Max(1, _game.Attack) * 7;
             var heavyTank = new EnemyState
             {
                 Id = _game.Battle.NextEnemyId++, MonsterId = slime.Id, Kind = slime.Kind,
@@ -258,7 +261,7 @@ public partial class Main : Control
             if (basicTarget.Hp >= 1e6) throw new Exception("Basic attack never landed");
             if (!basicSession.Battle.Cooldowns.ContainsKey(GameSession.BasicAttackKey)) throw new Exception("Basic attack never consumed its interval");
             // 真诀：关掉普攻就绝不自动释放，只有显式放一次才看得到（技能预览正是靠 ForceRelease）。
-            // 这一场绑到表现层上逐帧跑，让龙卷与火海真的走一遍绘制路径，而不是只留在 Core 里。
+            // 这一场绑到表现层上逐帧跑，让聚怪力场（寒冰龙卷）与火海真的走一遍绘制路径，而不是只留在 Core 里。
             var procSession = new GameSession(_game.Config, seed: 1) { BasicAttackEnabled = false };
             for (int cell = 0; cell < procSession.Level.Cells; cell++) procSession.Battle.Spawns[cell] = new() { Passed = true };
             procSession.Battle.Enemies.Clear(); procSession.State.Skills.Clear();
@@ -284,9 +287,9 @@ public partial class Main : Control
             {
                 procSession.Step(step);
                 if (procSession.Effects.Any(e => e.Skill == "skill_12")) tornadoSeen = true;
-                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);   // 逐帧跑 _Draw，龙卷的绘制路径真的被执行
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);   // 逐帧跑 _Draw，力场的绘制路径真的被执行
             }
-            if (!tornadoSeen) throw new Exception("剑气流云壁 never produced a tornado");
+            if (!tornadoSeen) throw new Exception("寒冰龙卷 never produced its gathering field");
             // 寒冷必须同时落到"表现用的状态源"与"实际减速"上：只染蓝不改速度就成了纯视觉欺骗。
             if (procTarget.ChillUntil <= 0 || procTarget.SlowUntil <= 0) throw new Exception("Chill did not mark the target");
             procSession.Effects.Clear(); procSession.Battle.Cooldowns.Clear();
@@ -318,19 +321,19 @@ public partial class Main : Control
             }
             _battle.Session = ultimate;
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-            // ① 空明虚空剑：施放瞬间全场定身（不看射程），贴地剑气推出去把身前的敌人击退。
+            // ① 剑气流云壁：施放瞬间全场定身（不看射程），贴地剑气推出去把身前的敌人击退。
             var front = AddTarget(ultimate.Battle.PlayerX + 300, 1e8);
             var far = AddTarget(ultimate.Battle.PlayerX + 6000, 1e8);
             ultimate.State.Skills["skill_05"] = 1;
             ultimate.Battle.Cooldowns.Clear(); ultimate.Effects.Clear();
             front.StunUntil = 0; far.StunUntil = 0;               // 先解定身，否则"定住了"这条断言是空的
             double frontX = front.X;
-            if (!ultimate.ForceRelease("skill_05")) throw new Exception("空明虚空剑 was not released");
-            if (ultimate.Battle.Enemies.Any(e => e.StunUntil < 1)) throw new Exception("空明虚空剑 did not root the whole field");
+            if (!ultimate.ForceRelease("skill_05")) throw new Exception("剑气流云壁 was not released");
+            if (ultimate.Battle.Enemies.Any(e => e.StunUntil < 1)) throw new Exception("剑气流云壁 did not root the whole field");
             foreach (var e in ultimate.Battle.Enemies) e.StunUntil = 1e9;   // 定身看完就重新钉死，只看剑气自己的位移
             for (int i = 0; i < 60; i++) { ultimate.Step(step); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
-            if (front.X <= frontX) throw new Exception("空明虚空剑 did not knock the enemy back");
-            if (far.Hp < 1e8) throw new Exception("空明虚空剑 reached an enemy that was never on its path");
+            if (front.X <= frontX) throw new Exception("剑气流云壁 did not knock the enemy back");
+            if (far.Hp < 1e8) throw new Exception("剑气流云壁 reached an enemy that was never on its path");
             // ② 斩鬼神：全场血量最高的单位远在射程之外，也必须是它挨这一剑。
             ultimate.Battle.Enemies.Clear(); ultimate.Effects.Clear(); ultimate.Battle.Cooldowns.Clear();
             ultimate.State.Skills.Clear(); ultimate.State.Skills["skill_10"] = 1;
@@ -352,16 +355,58 @@ public partial class Main : Control
             for (int i = 0; i < 60; i++) { ultimate.Step(step); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
             if (ahead.Hp >= 1e8 || behind.Hp >= 1e8 || remote.Hp >= 1e8)
                 throw new Exception($"诛仙剑阵 did not strike the whole field: {ahead.Hp:0}/{behind.Hp:0}/{remote.Hp:0}");
+            // ④ 天剑（横向贯穿）与苍穹剑陨（黑洞 + 剑雨落地爆炸）：让两条新的绘制分支真的被执行一遍，
+            //    而不是只留在 Core 里。苍穹剑陨的探出 + 停顿 + 下坠共 1.3 秒，步数要给够。
+            ultimate.Battle.Enemies.Clear(); ultimate.Effects.Clear(); ultimate.Battle.Cooldowns.Clear();
+            ultimate.State.Skills.Clear(); ultimate.State.Skills["skill_17"] = 1;
+            var beheaded = AddTarget(ultimate.Battle.PlayerX + 300, 1e8);
+            if (!ultimate.ForceRelease("skill_17")) throw new Exception("天剑 was not released");
+            for (int i = 0; i < 20; i++) { ultimate.Step(step); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+            if (beheaded.Hp >= 1e8) throw new Exception("天剑 did not strike its target");
+            ultimate.Battle.Enemies.Clear(); ultimate.Effects.Clear(); ultimate.Battle.Cooldowns.Clear();
+            ultimate.State.Skills.Clear(); ultimate.State.Skills["skill_18"] = 1;
+            // 各锁一敌：每支落在**自己锁定的目标**身上，敌人不足时循环重复。场上只放一只，三支就全砸在它身上
+            // ——这也正是"打 BOSS 不丢伤害"那条口径的现场验证。
+            var armored = AddTarget(ultimate.Battle.PlayerX + 500, 1e8);
+            if (!ultimate.ForceRelease("skill_18")) throw new Exception("苍穹剑陨 was not released");
+            if (ultimate.Effects.Count(e => e.Skill == "skill_18" && e.Trajectory == "sky_drop")
+                != ultimate.Config.Skills["skill_18"].ProjectileCount)
+                throw new Exception("苍穹剑陨 did not raise its configured volley");
+            for (int i = 0; i < 60; i++) { ultimate.Step(step); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+            if (armored.Hp >= 1e8) throw new Exception("苍穹剑陨 did not wound its target");
+            // ⑤ 剑二十三（影分身）：先开分身窗口，再让本体放一式——分身应当同步复制一份，且这一段
+            //    会带着分身逐帧跑过表现层，"身后那个半透明分身"的绘制路径因此真的被执行过。
+            ultimate.Battle.Enemies.Clear(); ultimate.Effects.Clear(); ultimate.Battle.Cooldowns.Clear();
+            var prey = AddTarget(ultimate.Battle.PlayerX + 400, 1e8);
+            ultimate.State.Skills.Clear(); ultimate.State.Skills["skill_19"] = 1; ultimate.State.Skills["skill_01"] = 1;
+            if (!ultimate.ForceRelease("skill_19")) throw new Exception("剑二十三 was not released");
+            if (ultimate.MirrorRemaining <= 0) throw new Exception("剑二十三 did not open the clone window");
+            ultimate.Battle.Cooldowns.Clear(); ultimate.Effects.Clear();
+            if (!ultimate.ForceRelease("skill_01")) throw new Exception("御剑术 was not released");
+            if (ultimate.Effects.Count(e => e.Skill == "skill_01") != 2 || !ultimate.Effects.Any(e => e.Mirrored))
+                throw new Exception("影分身 did not mirror the cast");
+            // 分身那一式必须**从分身上出发**（更小的 X）且**晚一拍**出现——两样都缺就看不出是分身放的。
+            var cloneShot = ultimate.Effects.Single(e => e.Mirrored);
+            var ownShot = ultimate.Effects.Single(e => e.Skill == "skill_01" && !e.Mirrored);
+            if (cloneShot.Delay <= 0 || ownShot.Delay != 0) throw new Exception("影分身 did not stagger its cast");
+            if (cloneShot.X >= ownShot.X) throw new Exception("影分身 cast from the wrong place");
+            double cloneStart = cloneShot.X;
+            for (int i = 0; i < 20; i++) { ultimate.Step(step); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+            if (ultimate.MirrorRemaining <= 0) throw new Exception("影分身 expired far too early");
+            if (cloneShot.X <= cloneStart) throw new Exception("影分身 never launched from the clone");
+            if (prey.Hp >= 1e8) throw new Exception("影分身 dealt no damage");
             // 分层：地面定位的剑诀打不到飞行单位，不限层的照打。顺带绑着表现层跑几帧，
             // 让"飞行怪抬高、影子留在地面"这条绘制路径真的被执行过。
             ultimate.Battle.Enemies.Clear(); ultimate.Effects.Clear(); ultimate.Battle.Cooldowns.Clear();
-            ultimate.State.Skills.Clear(); ultimate.State.Skills["skill_03"] = 1;
             var onGround = AddTarget(ultimate.Battle.PlayerX + 200, 1e8);
             var inAir = AddTarget(ultimate.Battle.PlayerX + 260, 1e8, "bat");   // 就在地面靶旁边：没有层判定一定会被波及
+            // 焚天剑诀定位是 ground（天降火海），且是触发类真诀，不会自动释放，这里显式放一次。
+            ultimate.State.Skills.Clear(); ultimate.State.Skills["skill_02"] = 1;
+            if (!ultimate.ForceRelease("skill_02")) throw new Exception("焚天剑诀 was not released");
             for (int i = 0; i < 24; i++) { ultimate.Step(step); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
             // 留一张图：地面怪踩着地、飞行怪浮空且影子留在地面，是这一眼要核对的东西。
             await Capture("-flying");
-            if (onGround.Hp >= 1e8) throw new Exception("青莲剑阵 did not strike the ground target");
+            if (onGround.Hp >= 1e8) throw new Exception("焚天剑诀 did not strike the ground target");
             if (inAir.Hp < 1e8) throw new Exception("a ground-only skill struck a flying monster");
             ultimate.Battle.Enemies.Remove(onGround);
             ultimate.State.Skills.Clear(); ultimate.State.Skills["skill_01"] = 1; ultimate.Battle.Cooldowns.Clear();
@@ -370,7 +415,8 @@ public partial class Main : Control
             _battle.Session = _game;
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             // 召唤/跟随单位的站位：Core 把召唤物的 X 统一钉在玩家身后，错开完全靠表现层分配位次。
-            // 这里伪造的 CombatEffect 不读配置，因此 summon 已无在役技能也不影响——它覆盖的是表现层的位次分配。
+            // 当前 15 个在役剑诀里已经没有 summon（剑侍已归档），这里造三份伪实体覆盖表现层的位次分配——它们不读配置，
+            // id 只是用来让三个槽各画一张不同的素材。
             var fakes = new[] { "skill_05", "skill_10", "skill_15" }
                 .Select(id => new CombatEffect { Kind = "summon", Skill = id, Life = 5, MaxLife = 5 }).ToArray();
             foreach (var fake in fakes) _game.Effects.Add(fake);
@@ -407,7 +453,7 @@ public partial class Main : Control
             // 释放音：预览模式逐个播放剑诀，覆盖全部 5 种 kind。
             // 其中 buff 类不产生 CombatEffect，正是"效果引用差集"会永久漏掉的那一类。
             TogglePreview();
-            // summon 不在列：化神档三个召唤技能已换成三个终极剑诀，当前 15 个在役剑诀里没有 summon，
+            // summon 不在列：跟随召唤的剑侍已归档（机制留给以后的剑灵系统），当前 15 个在役剑诀里没有 summon，
             // 因此 sfx_cast_summon 没有活触发点（素材与映射保留，退役配置日后可能复活）。
             foreach (string kind in new[] { "projectile", "target", "ground", "buff" })
             {
@@ -431,15 +477,60 @@ public partial class Main : Control
             for (int i = 0; i < 5; i++) { ShowPage(i); Refresh(); await Capture("-page" + i); }
             _intentTab = 0; ShowPage(3); Refresh(); await Capture("-intent");
             ShowPage(0); Refresh(); await Capture("");
-            // 用 GM 按钮发放后续步骤所需资源：既覆盖 GM→GameSession 接线，也避免界面直接改写钱包。
+            // GM 面板：发放后续步骤所需资源（既覆盖 GM→GameSession 接线，也避免界面直接改写钱包），
+            // 并顺带按一下波次加成的 ＋ / −，把那条接线也走一遍。
             Tap("GM");
+            if (_gmRoot is null || !_gmRoot.Visible) throw new Exception("GM panel did not open");
+            await Capture("-gm");
+            Tap("每种货币");
             if (_game.State.Amount("gold") < 10000 || _game.State.Amount("core") < 10000) throw new Exception("GM UI action failed");
+            Tap("波次＋"); if (_game.WaveBonus != 1) throw new Exception("GM wave bonus did not go up");
+            Tap("波次−"); if (_game.WaveBonus != 0) throw new Exception("GM wave bonus did not go down");
+            // 怪物倍率：按一下要跳档，并且**立刻**作用到场上的怪（血量按比例缩放，百分比不变）。
+            var scaled = _game.Battle.Enemies.FirstOrDefault();
+            double beforeScale = scaled?.MaxHp ?? 0;
+            Tap("血量＋");
+            if (_game.MonsterHpScale != 2) throw new Exception($"GM monster HP scale did not step: {_game.MonsterHpScale}");
+            if (scaled is not null && Math.Abs(scaled.MaxHp - beforeScale * 2) > 1e-6)
+                throw new Exception("monster HP scale did not reach the enemies already on the field");
+            Tap("血量−"); Tap("攻击＋");
+            if (_game.MonsterHpScale != 1 || _game.MonsterAtkScale != 2) throw new Exception("GM monster scale did not restore");
+            Tap("攻击−");
+            // 主角无敌：点一下要真的不再掉血（死亡会重置冷却、让伤害统计断档）。
+            Tap("无敌：关");
+            if (!_game.PlayerInvincible) throw new Exception("GM invincibility did not turn on");
+            _game.Battle.PlayerHp = 1;
+            for (int i = 0; i < 40; i++) { _game.Step(.05); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+            if (_game.Battle.PlayerHp != 1 || _game.Battle.RespawnTimer > 0) throw new Exception("GM invincibility did not hold");
+            Tap("无敌：开");
+            if (_game.PlayerInvincible) throw new Exception("GM invincibility did not turn off");
+            _game.Battle.PlayerHp = _game.MaxHp;
+            // 伤害统计：开面板 → 断言统计到了东西 → 重置 → 关面板。数据源是 `_battle.Session`（当前在看的那一场）。
+            Tap("伤害统计");
+            if (_damageRoot is null || !_damageRoot.Visible) throw new Exception("Damage panel did not open");
+            if (_gmRoot.Visible) throw new Exception("GM panel should close when the damage panel opens");
+            if (_battle.Session.DamageStats.Rows.Count == 0) throw new Exception("Damage stats recorded nothing");
+            if (_battle.Session.DamageStats.Rows.Values.Sum(r => r.Hits) == 0) throw new Exception("Damage stats recorded no hits");
+            await Capture("-damage");
+            Tap("重置");
+            if (_battle.Session.DamageStats.Rows.Count != 0) throw new Exception("Damage stats did not reset");
+            TapIn(_damageRoot, "关闭");
+            if (_damageRoot.Visible) throw new Exception("Damage panel did not close");
+            Tap("GM");
+            if (_gmRoot is null || !_gmRoot.Visible) throw new Exception("GM panel did not reopen");
+            TapIn(_gmRoot, "关闭");
+            if (_gmRoot.Visible) throw new Exception("GM panel did not close");
             // 取"属于已解锁境界且尚未习得"的技能，而不是写死某个 id：技能书序会随设计调整重排，
             // 写死 id 的话每次重排都会在这里断掉。要在点按钮**之前**取，否则取到的是下一个还没学的。
             ShowPage(1); Refresh();
             var learnable = _game.Config.Skills.Values.First(s => _game.State.Realms.Contains(s.Realm) && _game.State.Skills.GetValueOrDefault(s.Id) == 0);
             Press("习得");
             if (_game.State.Skills.GetValueOrDefault(learnable.Id) != 1) throw new Exception("Skill UI action failed");
+            // 升级提示必须写清"每级强化了什么"：输出类写威力幅度、增益类写覆盖率（它的峰值强度不随等级变）。
+            string tipAtk = UpgradeTip(_game.Config.Skills["skill_01"], 1);
+            string tipBuff = UpgradeTip(_game.Config.Skills["skill_04"], 1);
+            if (!tipAtk.Contains("每级") || !tipAtk.Contains("威力")) throw new Exception("输出类的升级提示没写清幅度：" + tipAtk);
+            if (!tipBuff.Contains("每级") || !tipBuff.Contains("覆盖率")) throw new Exception("增益类的升级提示没写清幅度：" + tipBuff);
             ShowPage(2); Refresh(); Press("打造并装备"); Press("淬炼");
             if (_game.State.Weapon != "sword_wood" || _game.State.WeaponLevel != 1) throw new Exception("Forge UI action failed");
             ShowPage(4); Refresh(); Press("召唤");
@@ -491,7 +582,8 @@ public partial class Main : Control
             if (_game.State.Amount("gold") != goldBefore || _game.State.Skills.Count != skillsBefore) throw new Exception("Reset fired on the first click");
             Tap("确认重置");
             if (_game.State.Amount("gold") != _game.Config.Setting("starting_gold") || _game.State.Amount("core") != 0 || _game.State.UnlockedLevels.Count != 1) throw new Exception("Reset did not restore the initial state");
-            if (_game.State.FirstKills.Count != 0 || _game.State.Skills.Count != 1) throw new Exception("Reset left progress behind");
+            // 重置后剑诀数为 0：开局不再白送御剑术，得自己花灵钱学（见 GameSession 构造器）。
+            if (_game.State.FirstKills.Count != 0 || _game.State.Skills.Count != 0) throw new Exception("Reset left progress behind");
             if (_settingsRoot.Visible) throw new Exception("Settings panel should close after reset");
             if (_preview is not null || !ReferenceEquals(_battle.Session, _game)) throw new Exception("Reset must leave preview mode and rebind the battle view");
             // 真实窗口路径：--capture 是有显示的，这里验证分辨率确实落到窗口上。

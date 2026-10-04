@@ -21,7 +21,11 @@ public partial class Main
     private const double PreviewRecast = 1.8;
 
     private GameSession Active => _preview ?? _game;
-    private List<string> PreviewSkillIds => _game.Config.Skills.Keys.OrderBy(id => id).ToList();
+    // 预览的翻页与网格顺序：**按境界 1→5** 排，境界内保持技能书行序（= Config.Skills 的插入序；LINQ 的 OrderBy 是稳定排序）。
+    // 不按 id 字典序——那是 `skill_01, skill_02, skill_04, …` 的排法，又跳境界又跳编号，逐个核对时很别扭。
+    private List<string> PreviewSkillIds => _game.Config.Skills.Values
+        .OrderBy(s => _game.Config.Row("SwordLevel", s.Realm).Int("order"))
+        .Select(s => s.Id).ToList();
     private string PreviewSkillId => PreviewSkillIds[_previewSkill];
 
     private void TogglePreview()
@@ -46,6 +50,10 @@ public partial class Main
         string current = ids[_previewSkill];
         // 只保留当前剑诀，避免其他技能的特效混进来，失去对照意义。
         foreach (string id in ids) _preview.State.Skills[id] = id == current ? 1 : 0;
+        // 剑二十三是个例外：它本身不产生任何效果，只是"让本体放出的剑诀多一份"。
+        // 不给它配一个搭档剑诀，预览里就只剩一个站着不动的分身，什么也演示不出来。
+        if (_preview.Config.Skills[current].Secondary == "mirror" && _preview.State.Skills.ContainsKey("skill_01"))
+            _preview.State.Skills["skill_01"] = 1;
         _preview.Battle.Cooldowns.Clear();
         // 清掉上一招的全部残留（飞行效果、玩家增益、飘字）：否则切技能后画面里混着两招，失去逐个对照的意义。
         _preview.Effects.Clear();
@@ -83,6 +91,10 @@ public partial class Main
         {
             _previewClock = 0;
             _preview.Battle.Cooldowns.Clear();
+            // 清完冷却要让释放音的观测点先看到"冷却为 0"这一帧：TrackSkillCasts 逐 Step 观测 0 → 正 的跳变，
+            // 而本步的 Step 紧接着就会把技能放出去并写回冷却——不在这里补一次观测，那个跳变永远发生在同一步之内，
+            // 预览模式下就一声释放音都不会响（真机上表现为"看技能时没有音效"）。
+            TrackSkillCasts(Active);
             // 真诀不在冷却到点自动释放（要等普攻按概率摇中），而预览里普攻是关掉的。
             // 不显式放一次，它们在对照模式下永远不出手，等于看不到。
             if (_preview.Config.Skills[PreviewSkillId].TriggerChance > 0) _preview.ForceRelease(PreviewSkillId);
@@ -125,6 +137,8 @@ public partial class Main
             "regen" => $"回血 {skill.SecondaryValue:P0}/秒 / {skill.SecondaryDuration:0.#}s",
             "haste" => $"攻速 +{skill.SecondaryValue:P0} / {skill.SecondaryDuration:0.#}s",
             "crit_reduce" => $"暴击 +{skill.SecondaryValue:P0} / {skill.SecondaryDuration:0.#}s · 暴击缩冷却 {skill.SecondaryExtra:0.##}s",
+            // 影分身：摘要里要写清"同步复制、继承多少"，这两个数是这个技能的全部内容。
+            "mirror" => $"影分身 同步复制剑诀 / 本体伤害 {skill.SecondaryValue:P0} 起 · {skill.SecondaryDuration:0.#}s",
             _ => skill.Secondary,
         };
         // 飞行形态摘要：审核弹道时最需要核对的就是"几支、怎么飞、范围多大、出剑节奏"。
@@ -145,7 +159,9 @@ public partial class Main
         string realm = _game.Config.Row("SwordLevel", skill.Realm).Text("name");
         string tail = shape == "" ? secondary : skill.Secondary == "" ? shape : $"{secondary} · {shape}";
         // 真诀的出手时机由普攻概率决定，配置里的 cooldown 只是最短触发间隔；不点明的话"冷却 5s"会被读错。
-        string trigger = skill.TriggerChance > 0 ? $"普攻触发 {skill.TriggerChance:P0} · 最短间隔 {skill.Cooldown:0.#}s" : $"冷却 {skill.Cooldown:0.#}s";
+        string trigger = skill.TriggerChance > 0
+            ? $"普攻触发 {skill.TriggerChance:P0}{(skill.TriggerChanceStep > 0 ? $" 起 · 每次普攻 +{skill.TriggerChanceStep:P0}" : "")} · 最短间隔 {skill.Cooldown:0.#}s"
+            : $"冷却 {skill.Cooldown:0.#}s";
         return $"{realm} · {skill.Kind} · {trigger} · 射程 {skill.Range:0} · 威力 ×{skill.Power:0.##} · {tail}";
     }
 }

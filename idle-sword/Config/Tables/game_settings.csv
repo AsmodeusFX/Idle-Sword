@@ -7,5 +7,11 @@ pet_duplicate_gold,40
 fixed_step,0.05
 save_interval,5
 enemy_visual_limit,80
-wave_growth,0.01
-wave_accel,0.00018
+wave_growth,0.012
+wave_accel,0.00032
+skill_level_bonus,0.15
+buff_cooldown_per_level,0.02
+buff_cooldown_floor_ratio,1.25
+guard_blade_power,1.2
+guard_interval,0.8
+guard_range,400

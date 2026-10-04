@@ -1,4 +1,4 @@
 id,name,base_atk,craft_cost,upgrade_cost,refine_cost
-sword_wood,青竹剑,12,80,35,60
-sword_iron,玄铁剑,45,600,80,100
-sword_jade,碧霄剑,160,3000,200,300
+sword_wood,青竹剑,4,80,35,60
+sword_iron,玄铁剑,8,600,80,100
+sword_jade,碧霄剑,14,3000,200,300

@@ -3,16 +3,24 @@ namespace IdleSword.Core;
 // Layer：怪物所在层，ground / air（空 = ground）。飞行单位免疫地面定位的技能，见 SwordSkill.hits。
 public sealed record MonsterDef(string Id, string Name, string Kind, string Layer, double Hp, double Atk, double Range, double Interval, double Speed, string Attack, double Gold, string Visual);
 public sealed record LevelDef(string Id, string Name, int Order, int Cells, double HpScale, double AtkScale, double EliteHp, double EliteAtk, double BossHp, double BossAtk, double RiftHp, string Wave, string Boss, string Rift, string FirstReward, string RepeatReward);
-// 一条波次刷什么由子表 wave_unit 决定（一条波次可混编多种怪），这里只剩节奏与精英设置。
-public sealed record WaveDef(string Id, double Interval, int EliteEvery, string Elite);
-// Count 是第 1 关的基线数量，MaxCount 是随关卡放大后的**预设上限**（必须不小于 Count）。
-public sealed record WaveUnitDef(string Monster, int Count, int MaxCount);
+// 一条波次刷什么由子表 wave_unit 决定（一条波次可混编多种怪），这里只剩节奏、精英设置与强度系数。
+// HpScale / AtkScale 是**波次自身**的强弱梯度，乘在 level.normal_hp / normal_atk 之上，只作用于 kind = normal。
+// 精英 / BOSS / 裂隙不吃这两个系数：它们是关卡节点，不是波次阵容的一部分。
+// Count 是这条波次在第 1 关的**总只数**，之后随关卡按全局倍率放大、到 `CountMax` 封顶（CountMax 必须不小于 Count）。
+// 只数放在**波次**这一层而不是各模板上：模板只管"刷什么、按什么比例"，于是"这波多刷几只"不会顺手改掉阵容配比。
+public sealed record WaveDef(string Id, double Interval, int EliteEvery, string Elite, double HpScale, double AtkScale, int Count, int CountMax);
+// Weight 是该模板在这条波次里的**比例**（不是绝对只数）：整波只数由 wave.count / count_growth / count_max 决定。
+public sealed record WaveUnitDef(string Monster, int Weight);
 // TriggerChance：0 = 冷却到点自动释放（全部在役剑诀的默认）；> 0 = 不再自动释放，改为普攻出手时按此概率触发（真诀）。
 // CastRoot / Knockback：施放瞬间的全屏定身秒数、每次命中把目标推离玩家的逻辑距离，0 均表示无。
+// Band：`sky_drop` 的"天上那排黑洞的铺开宽度"（0 = 各支在阵心两侧按 `spread` 对称铺开）。
+// > 0 时**每支各锁一个（尽量不同的）目标、落在它当时的位置爆炸**，而黑洞以**目标群的中轴**为心铺开 band 宽。
+// 锚在目标上而不是角色上：角色每秒走 340，一发 1.3 秒的轰炸若从角色量起，落点会甩到身后（18 苍穹剑陨）。
+// 详见 docs/data/fields.md 的「各锁一敌」。
 // Targeting：空 / nearest = 最近的合法目标（受射程限制）；highest_hp = 全场血量最高者，无视射程。
 // AoeAll：落点/范围结算命中全体合法敌人（aoe_radius 退为表现用）。
 // Hits：能打到哪一层。空 / both = 打地面也打空中；ground 只打地面；air 只打空中。与 monster.layer 配对判定。
-public sealed record SkillDef(string Id, string Name, string Realm, string Kind, double Cooldown, double Range, double Power, double Duration, int MaxLevel, double Cost, double CostGrowth, string Description, string Secondary, double SecondaryValue, double SecondaryDuration, double AoeRadius, string Trajectory, int ProjectileCount, double HoverTime, double ArcMin, double ArcMax, double Speed, double Spread, double VolleyInterval, double VolleyJitter, double SpawnJitter, double PierceChance, double SecondaryExtra, double TriggerChance, double CastRoot, double Knockback, string Targeting, bool AoeAll, string Hits);
+public sealed record SkillDef(string Id, string Name, string Realm, string Kind, double Cooldown, double Range, double Power, double Duration, int MaxLevel, double Cost, double CostGrowth, string Description, string Secondary, double SecondaryValue, double SecondaryDuration, double AoeRadius, string Trajectory, int ProjectileCount, double HoverTime, double ArcMin, double ArcMax, double Speed, double Spread, double VolleyInterval, double VolleyJitter, double SpawnJitter, double PierceChance, double SecondaryExtra, double TriggerChance, double TriggerChanceStep, double CastRoot, double Knockback, string Targeting, bool AoeAll, string Hits, double Gather, double Band);
 
 /// <summary>唯一配置入口。读取源 CSV 后校验并建立索引，运行时不修改配置对象。</summary>
 public sealed class GameConfig
@@ -52,20 +60,41 @@ public sealed class GameConfig
         foreach (var r in c.Rows("wave"))
         {
             c.Ref(r, "elite_id", "monster"); Positive(r, "interval"); Positive(r, "elite_every");
-            c.Waves.Add(r.Text("id"), new(r.Text("id"), r.Number("interval"), r.Int("elite_every"), r.Text("elite_id")));
+            Positive(r, "hp_scale"); Positive(r, "atk_scale");
+            Positive(r, "count"); Positive(r, "count_max");
+            // 上限低于基线就等于关卡越高刷怪越少，那是配错了，不是设计。
+            if (r.Int("count_max") < r.Int("count")) throw r.Error("count_max", "不能小于第 1 关的基线只数 count");
+            // 上界只是防手滑（例如想写 1.2 写成 12）——强度系数是"同一关内的波次梯度"，不该是量级跳变。
+            foreach (var f in new[] { "hp_scale", "atk_scale" })
+                if (r.Number(f) > 5) throw r.Error(f, "波次强度系数不应超过 5，量级调整请改 level.csv 的关卡倍率");
+            c.Waves.Add(r.Text("id"), new(r.Text("id"), r.Number("interval"), r.Int("elite_every"), r.Text("elite_id"), r.Number("hp_scale"), r.Number("atk_scale"), r.Int("count"), r.Int("count_max")));
         }
-        // 波次混编：一条波次可以配多行，每行一种怪与数量；偏移按跨行的连续序号铺开，不会两只叠在一起。
+        // 波次混编：一条波次可以配多行，每行一种怪与它在整波里的**比例**；偏移按跨行的连续序号铺开，不会两只叠在一起。
         foreach (var r in c.Rows("wave_unit"))
         {
-            c.Ref(r, "wave_id", "wave"); c.Ref(r, "monster_id", "monster"); Positive(r, "count"); Positive(r, "max_count");
-            // 上限低于基线就等于关卡越高刷怪越少，那是配错了，不是设计。
-            if (r.Int("max_count") < r.Int("count")) throw r.Error("max_count", "不能小于基线数量 count");
+            c.Ref(r, "wave_id", "wave"); c.Ref(r, "monster_id", "monster"); Positive(r, "weight");
             if (!c.WaveUnits.TryGetValue(r.Text("wave_id"), out var units)) c.WaveUnits[r.Text("wave_id")] = units = [];
-            units.Add(new(r.Text("monster_id"), r.Int("count"), r.Int("max_count")));
+            units.Add(new(r.Text("monster_id"), r.Int("weight")));
         }
         // 没有配任何单位的波次会刷不出怪，关卡直接空转——这是新子表最容易配错的地方，在加载期就拦住。
         foreach (var wave in c.Waves.Values)
             if (!c.Rows("wave_unit").Any(u => u.Text("wave_id") == wave.Id)) throw new InvalidDataException($"wave_unit.csv: 波次 {wave.Id} 没有配置任何怪物");
+        // 一条波次的**只数上限**决定最末一只落在哪里：落点是 40 + i×100 横向铺开（i 跨模板连续），
+        // 所以上限抬高不是免费的。超过下一格末尾就落到第 3 格——画面外、要走很久才进场，还会与下一格的怪交错。
+        // 精英每 `elite_every` 波跟着一只、同样占一个落点，所以 +1。
+        // 与 GameSession.Spawn 的落点算法是同一份约定；改那边要同步改这里。
+        // （spawn_point 为空时下面那条 spawn_point 校验会给出更好的报错，这里先让路。）
+        var spawn = c.Rows("spawn_point").FirstOrDefault();
+        if (spawn is not null)
+        {
+            double cellWidth = c.Setting("cell_width"), spawnOffset = spawn.Number("offset");
+            foreach (var wave in c.Waves.Values)
+            {
+                int cap = wave.CountMax + 1;
+                double far = spawnOffset + 40 + cap * 100;
+                if (far > 2 * cellWidth) throw new InvalidDataException($"wave.csv: 波次 {wave.Id} 的只数上限 {wave.CountMax}（含精英 {cap} 只）会把最末一只刷到第 3 格（落点 {far} > {2 * cellWidth}）");
+            }
+        }
         foreach (var r in c.Rows("drop")) { c.Ref(r, "item_id", "item"); Nonnegative(r, "amount"); }
         foreach (var r in c.Rows("level"))
         {
@@ -88,14 +117,34 @@ public sealed class GameConfig
             c.Ref(r, "realm_id", "SwordLevel"); Choice(r, "kind", "projectile", "target", "ground", "buff", "summon");
             foreach (var key in new[] { "cooldown", "range", "power", "duration", "max_level", "cost", "cost_growth" }) Positive(r, key);
             var secondary = r.Text("secondary");
-            if (secondary != "") Choice(r, "secondary", "pierce", "multi", "slow", "stun", "dot", "vulnerable", "chill", "lifesteal", "execute", "shield", "regen", "haste", "crit_reduce");
-            Nonnegative(r, "secondary_value", "secondary_duration", "aoe_radius", "secondary_extra", "pierce_chance", "trigger_chance");
+            if (secondary != "") Choice(r, "secondary", "pierce", "multi", "slow", "stun", "dot", "vulnerable", "chill", "lifesteal", "execute", "shield", "regen", "haste", "crit_reduce", "mirror", "bonus_vs_state");
+            Nonnegative(r, "secondary_value", "secondary_duration", "aoe_radius", "secondary_extra", "pierce_chance", "trigger_chance", "trigger_chance_step");
+            // 利用状态（bonus_vs_state）：对**携带任意状态**的目标增伤。它不写任何状态字段，只在 Hit 里当乘区用，
+            // 所以值必须为正——配成 0 就是一行什么都不做的死配置。
+            if (secondary == "bonus_vs_state" && r.Number("secondary_value") <= 0)
+                throw r.Error("secondary_value", "利用状态（bonus_vs_state）需要正的增伤比例");
+            // 影分身（mirror，剑二十三）：它是**自身的短时状态**，不分敌、也不生成单位，所以必须是 buff。
+            // secondary_value 是继承比例的小数（0.7 = 七成），误填成 70 不会报任何错、只会静默变成 7000%，故在这里拦下。
+            if (secondary == "mirror")
+            {
+                if (r.Text("kind") != "buff") throw r.Error("kind", "影分身（mirror）必须是 buff 类：它是自身的状态，不是单位");
+                if (r.Number("secondary_duration") <= 0) throw r.Error("secondary_duration", "影分身需要正的持续时间");
+                if (r.Number("secondary_value") > 1) throw r.Error("secondary_value", "影分身的继承比例是 0～1 的小数（0.7 = 七成）");
+            }
             if (r.Number("pierce_chance") > 1) throw r.Error("pierce_chance", "是概率，取值 0～1");
             // 触发概率：0 表示沿用「冷却到点自动释放」，> 0 表示改为普攻出手时按概率触发（真诀）。
             // 两者互斥，不需要额外的触发方式列：0 就是自动释放那一档。
             if (r.Number("trigger_chance") > 1) throw r.Error("trigger_chance", "是概率，取值 0～1");
-            Nonnegative(r, "cast_root", "knockback");
-            if (r.Text("targeting") != "") Choice(r, "targeting", "nearest", "highest_hp");
+            // gather 是 knockback（推开）的反向孪生：每次命中把目标**朝效果中心**拉近，0 = 不吸。
+            // 两者都是正交旋钮，不占 secondary，所以"吸 + 减速"能同时挂在同一个技能上（寒冰龙卷）。
+            Nonnegative(r, "cast_root", "knockback", "gather", "band");
+            // 黑洞铺开宽度：只有 sky_drop 会读它——别的形态配了就是一行什么都不做的死配置，拦下来别让它静默失效。
+            if (r.Number("band") > 0 && r.Text("trajectory") != "sky_drop")
+                throw r.Error("band", "只有 sky_drop 形态支持黑洞铺开宽度（band）");
+            // 铺得太宽就夹不住画面了（表现层要把这条带子夹在 1920 逻辑画布里，可用的横向余量只有 1460）。
+            if (r.Number("band") > 1400)
+                throw r.Error("band", "黑洞铺开宽度超过 1400 就夹不进画面（角色锚点在 330、逻辑宽 1920）");
+            if (r.Text("targeting") != "") Choice(r, "targeting", "nearest", "highest_hp", "lowest_hp", "farthest");
             r.Flag("aoe_all");
             // 技能定位：空 = both（打地面也打空中）。飞行单位只吃 air / both。
             if (r.Text("hits") != "") Choice(r, "hits", "ground", "air", "both");
@@ -132,8 +181,8 @@ public sealed class GameConfig
             // 弹速：0 表示沿用默认 1500（宠物弹与召唤弹也走那个默认值，不受本列影响）。
             var speed = r.Number("speed");
             if (speed != 0 && speed < 100) throw r.Error("speed", "0 表示默认 1500；显式配置时必须 ≥ 100");
-            c.Skills.Add(r.Text("id"), new(r.Text("id"), r.Text("name"), r.Text("realm_id"), r.Text("kind"), r.Number("cooldown"), r.Number("range"), r.Number("power"), r.Number("duration"), r.Int("max_level"), r.Number("cost"), r.Number("cost_growth"), r.Text("description"), secondary, r.Number("secondary_value"), r.Number("secondary_duration"), r.Number("aoe_radius"), trajectory, count, r.Number("hover_time"), r.Number("arc_min"), r.Number("arc_max"), speed, r.Number("spread"), r.Number("volley_interval"), r.Number("volley_jitter"), r.Number("spawn_jitter"), r.Number("pierce_chance"), r.Number("secondary_extra"), r.Number("trigger_chance"),
-                r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits")));
+            c.Skills.Add(r.Text("id"), new(r.Text("id"), r.Text("name"), r.Text("realm_id"), r.Text("kind"), r.Number("cooldown"), r.Number("range"), r.Number("power"), r.Number("duration"), r.Int("max_level"), r.Number("cost"), r.Number("cost_growth"), r.Text("description"), secondary, r.Number("secondary_value"), r.Number("secondary_duration"), r.Number("aoe_radius"), trajectory, count, r.Number("hover_time"), r.Number("arc_min"), r.Number("arc_max"), speed, r.Number("spread"), r.Number("volley_interval"), r.Number("volley_jitter"), r.Number("spawn_jitter"), r.Number("pierce_chance"), r.Number("secondary_extra"), r.Number("trigger_chance"), r.Number("trigger_chance_step"),
+                r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits"), r.Number("gather"), r.Number("band")));
         }
         foreach (var r in c.Rows("Talent"))
         {
@@ -153,7 +202,14 @@ public sealed class GameConfig
             visiting.Remove(id); visited.Add(id);
         }
         foreach (var r in c.Rows("Talent")) Visit(r.Text("id"));
-        foreach (var r in c.Rows("SwordUpgrade")) { c.Ref(r, "skill_id", "SwordSkill"); c.Ref(r, "currency_id", "item"); Positive(r, "max_level"); Positive(r, "cost"); Positive(r, "value"); }
+        foreach (var r in c.Rows("SwordUpgrade"))
+        {
+            c.Ref(r, "skill_id", "SwordSkill"); c.Ref(r, "currency_id", "item");
+            Positive(r, "max_level"); Positive(r, "cost"); Positive(r, "value");
+            // effect 决定"这一行加的是哪种东西"，界面按它渲染文案——填错会显示成别的东西，必须校验。
+            // damage_percent = 技能威力；inherit_percent = 影分身的继承比例（剑二十三）。
+            Choice(r, "effect", "damage_percent", "inherit_percent");
+        }
         foreach (var r in c.Rows("contemplation"))
         {
             c.Ref(r, "item_id", "item"); if (r.Text("item_id") == "core") throw r.Error("item_id", "参悟不能产出妖核");
