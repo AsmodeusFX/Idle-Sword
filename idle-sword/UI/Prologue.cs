@@ -177,6 +177,11 @@ public partial class Main
     /// <summary>过场期间收起 HUD（标题除外）。节点清单见 <c>_hudNodes</c>。</summary>
     private void SetHudVisible(bool visible)
     {
+        _hudHidden = !visible;
         foreach (var node in _hudNodes) node.Visible = visible;
+        // 星图与锁那三层、以及战斗区里那条「点击鼠标攻击敌人」气泡，都不在 `_hudNodes` 里（理由见各自的说明），
+        // 它们各自有自己的开关——**统一交给这两个方法**，免得"过场结束全点亮"把锁着的星图一起露出来。
+        RefreshHudLayers();
+        _battle.ShowClickHint = visible;
     }
 }

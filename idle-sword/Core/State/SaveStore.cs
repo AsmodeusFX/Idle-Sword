@@ -18,6 +18,7 @@ public sealed class SaveStore(string path)
             {
                 var state = JsonSerializer.Deserialize<PlayerState>(File.ReadAllText(candidate)) ?? throw new InvalidDataException("存档为空");
                 AdoptUntrackedCores(state);
+                AdoptUnlockState(state);
                 Validate(state, config);
                 if (candidate.EndsWith(".bak")) Warning = "主存档损坏，已从上一份备份恢复。";
                 return state;
@@ -57,6 +58,19 @@ public sealed class SaveStore(string path)
         double excess = s.Amount("core") - s.FirstKills.Count;
         if (excess > 0) s.DebugGranted["core"] = excess;
     }
+    /// <summary>
+    /// 迁移：`UnlockedSystems` 是后加的字段，更早的存档里没有，反序列化得到空集 = 全部锁着。
+    /// 但那些存档**本来就已经走过了教学**（有首杀、有点过的修行节点、有学会的法术），
+    /// 让它们回头去锁一遍是平白罚人。所以只在"这一个字段从没写过"且"存档确实有进度"时，
+    /// 补成全部解锁；新档（什么都没有）保持全锁，教学照常。
+    /// </summary>
+    private static void AdoptUnlockState(PlayerState s)
+    {
+        if (s.UnlockedSystems.Count > 0) return;
+        bool hasProgress = s.FirstKills.Count > 0 || s.Talents.Count > 0 || s.Skills.Count > 0
+            || s.Realms.Count > 0 || s.UnlockedLevels.Count > 1 || s.Pets.Count > 0 || s.Weapon != "";
+        if (hasProgress) s.UnlockedSystems.UnionWith(Systems.All);
+    }
     public static void Validate(PlayerState s, GameConfig c)
     {
         if (s.Version != 1) throw new InvalidDataException("不支持的存档版本");
@@ -76,6 +90,8 @@ public sealed class SaveStore(string path)
             References(ranks.Keys, table);
             if (ranks.Any(p => p.Value < 0 || p.Value > MaxReasonableRank)) throw new InvalidDataException("存档等级非法: " + table);
         }
+        // 系统解锁：只允许白名单里的 id。写错一个字母会让那个系统**永久锁死且不报错**，必须拦在加载期。
+        if (s.UnlockedSystems.Any(id => !Systems.All.Contains(id))) throw new InvalidDataException("存档引用了未知的系统 id");
         Ranks(s.Skills, "SwordSkill"); Ranks(s.Talents, "Talent"); Ranks(s.Upgrades, "SwordUpgrade");
         References(s.Realms, "SwordLevel"); References(s.Pets, "Pet"); References(s.UnlockedLevels, "level"); References(s.Wallet.Keys, "item");
         if (!s.UnlockedLevels.Contains(s.Battle.LevelId)) throw new InvalidDataException("当前关卡未解锁");

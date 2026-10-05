@@ -9,33 +9,55 @@ namespace IdleSword.UI;
 /// </summary>
 public static class TalentMap
 {
-    public const float CellWidth = 150f, CellHeight = 60f, NodeSize = 46f;
-    /// <summary>5 行 × 60 = 300，居中在 316 高的页带里，所以纵向留 8。</summary>
-    public const float OriginY = 8f;
-    /// <summary>平移时至少要让这么宽的节点区域留在视野里——否则一拖就把整棵树拖没了。</summary>
-    public const float PanKeepX = 200f;
-
+    // 页签挪到左侧竖排之后，功能区从 1728×316 变成 1728×452：纵向多了 136px。
+    // 5 行因此能分到 90px 一行，节点从 46px 放大到 **76px（+65%）**——这是这轮排版调整最直接的收益。
+    public const float CellWidth = 176f, CellHeight = 90f, NodeSize = 76f;
+    /// <summary>5 行 × 90 = 450，居中在 452 高的功能区里，所以纵向留 1。</summary>
+    public const float OriginY = 1f;
+    /// <summary>贴边时留的余量：节点正好贴住框沿会显得被裁掉了半个。</summary>
+    public const float EdgePad = 26f;
     public static Vector2 CellCenter(int col, int row) => new((col + .5f) * CellWidth, OriginY + (row + .5f) * CellHeight);
 
     /// <summary>
-    /// 把平移量夹回合理范围：横向保证包围盒至少 <see cref="PanKeepX"/> 留在视野内；
-    /// 纵向在"整棵树装得下"时直接锁死（装得下就不该能上下拖）。
+    /// 把平移量夹回合理范围。**横向不再居中，而是左对齐**：所有节点都在根节点的右边，
+    /// 居中只会让开局那唯一一个能点的根节点落在屏幕中间、玩家还得先把它拖回来。
+    ///
+    /// 规则：内容比框窄 → 只能停在最左（根贴左边距）；比框宽 → 在一段区间里随便拖，
+    /// 但两端最多各贴住一边，**拖不出框**。纵向在"五行装得下"时直接锁死。
     /// 纯函数，不碰任何节点——自检可以脱离 Godot 直接验它。
     /// </summary>
     public static Vector2 ClampPan(Vector2 pan, Vector2 min, Vector2 max, Vector2 view)
     {
-        float baseX = (view.X - (max.X - min.X)) / 2 - min.X;
-        float baseY = (view.Y - (max.Y - min.Y)) / 2 - min.Y;
-        float left = baseX + pan.X + min.X, right = baseX + pan.X + max.X;
-        if (left > view.X - PanKeepX) pan.X -= left - (view.X - PanKeepX);
-        if (right < PanKeepX) pan.X += PanKeepX - right;
+        // min/max 是节点**中心**的包围盒；夹取得按节点的实际外框（±半格）来算，
+        // 否则贴边时会有半个节点被框裁掉。
+        float half = NodeSize / 2;
+        float lo = view.X - max.X - half - EdgePad, hi = half - min.X + EdgePad;   // hi = 最左贴左沿，lo = 最右贴右沿
+        if (lo > hi) (lo, hi) = (hi, lo);          // 内容比框窄时两端会反过来，先摆正
+        pan.X = Math.Clamp(pan.X, lo, hi);
         if (max.Y - min.Y <= view.Y) pan.Y = 0;
         else
         {
-            float top = baseY + pan.Y + min.Y, bottom = baseY + pan.Y + max.Y;
+            float top = pan.Y + min.Y - half, bottom = pan.Y + max.Y + half;
             if (top > 0) pan.Y -= top;
             if (bottom < view.Y) pan.Y += view.Y - bottom;
         }
+        return pan;
+    }
+
+    /// <summary>
+    /// 让 <paramref name="min"/>～<paramref name="max"/> 这几个节点全都露出来所需的**最小**平移量。
+    ///
+    /// **已经在框内的那一侧一点都不动**——这正是要的口径：点一个就在眼前的天赋，画面必须纹丝不动；
+    /// 只有新节点真的长到框外（多半是往右）才把画面推过去。两端各留一个 <see cref="EdgePad"/> 的边距。
+    /// 纯函数，不碰任何节点。
+    /// </summary>
+    public static Vector2 RevealPan(Vector2 pan, Vector2 min, Vector2 max, Vector2 view)
+    {
+        float half = NodeSize / 2 + EdgePad;
+        if (pan.X + min.X - half < 0) pan.X = half - min.X;                     // 左边露不出来 → 往右推
+        else if (pan.X + max.X + half > view.X) pan.X = view.X - half - max.X;  // 右边露不出来 → 往左推
+        if (pan.Y + min.Y - half < 0) pan.Y = half - min.Y;
+        else if (pan.Y + max.Y + half > view.Y) pan.Y = view.Y - half - max.Y;
         return pan;
     }
 }
@@ -82,19 +104,31 @@ public partial class Main
     private TalentLines _talentLines = null!;
     private TalentTooltip _talentTip = null!;
     private readonly List<(string Id, Button Node)> _talentNodes = [];
-    private Vector2 _talentPan, _talentDragFrom;
+    // `_talentPan` 是当前显示位置，`_talentPanTarget` 是目标位置，每帧朝目标平滑趋近（见 TickTalentPan）。
+    // **拖拽时两者一起写** = 绕过平滑，手感才是瞬时跟手的。
+    private Vector2 _talentPan, _talentPanTarget, _talentDragFrom;
     private bool _talentDragging;
+    /// <summary>解锁可见过的节点 id。用来认出新冒出来的那些——**只有它们**才可能触发画面矫正。</summary>
+    private readonly HashSet<string> _talentSeen = [];
 
     private void BuildTalentMap()
     {
-        _talentRoot = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
-        UiKit.Place(_talentRoot, 24, 704, 1872, 316);
+        // `ClipContents` 是这儿的要害：拖到框外的节点与连线必须被裁掉。
+        // 不加的话它们会一路飘到左边的页签上面去——玩家反馈的"拖拽会到屏幕外面、和页签重叠"就是这个。
+        _talentRoot = new Control { MouseFilter = Control.MouseFilterEnum.Ignore, ClipContents = true };
+        UiKit.Place(_talentRoot, 168, 580, 1728, 452);
         AddChild(_talentRoot);
+
+        // 可操作区的底框：让玩家一眼看出"能操作的范围有多大"，也让裁切看起来是有意的而不是画错了。
+        var frame = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+        frame.AddThemeStyleboxOverride("panel", UiKit.Box(UiKit.Ink, 10, UiKit.Line));
+        UiKit.Place(frame, 0, 0, 1728, 452);
+        _talentRoot.AddChild(frame);
 
         // 拖拽层在**下面**：它只负责"按空白处 = 平移"。节点是真 Button、压在它上面，
         // 所以"按节点 = 加点 / 按空白 = 平移"不需要任何阈值判断。
         _talentDragLayer = new Control { MouseFilter = Control.MouseFilterEnum.Stop };
-        UiKit.Place(_talentDragLayer, 0, 0, 1872, 316);
+        UiKit.Place(_talentDragLayer, 0, 0, 1728, 452);
         _talentDragLayer.GuiInput += OnTalentDrag;
         _talentRoot.AddChild(_talentDragLayer);
 
@@ -130,10 +164,11 @@ public partial class Main
         _talentTip = new TalentTooltip();
         AddChild(_talentTip);
 
-        var center = UiKit.Button(_talentRoot, "居中", 1720, 6, 130, 38, Recenter);
-        center.AddThemeFontSizeOverride("font_size", 18);
         _talentRoot.Visible = false;
-        _talentPan = Vector2.Zero;
+        // 初始位置**左对齐**：根节点贴着左边距。所有节点都在它右边，居中毫无意义，
+        // 而且居中会让"开局只有一个根节点能点"时那个节点落在屏幕正中，玩家还得先把它拖回来。
+        // 推到最左允许的位置：根节点的左沿离框边正好一个 EdgePad。
+        _talentPan = _talentPanTarget = new Vector2(TalentMap.NodeSize / 2 - TalentNodeMin().X + TalentMap.EdgePad, 0);
     }
 
     /// <summary>按当前存档重建节点的三态、连线与满级金框。每帧由 Refresh 调（它自己已经限流到 0.15s）。</summary>
@@ -171,7 +206,67 @@ public partial class Main
                 edges.Add((TalentMap.CellCenter(up.Int("col"), up.Int("row")), here, level > 0));
             }
         }
+        // 只有**新冒出来**的节点才可能触发矫正：已经看得见的节点不该让画面动
+        // （用户口径：在操作区域内就不要刷新节点树位置）。
+        var fresh = new List<string>();
+        foreach (var (id, _) in _talentNodes)
+            if (_game.TalentVisible(id) && _talentSeen.Add(id)) fresh.Add(id);
+        if (fresh.Count > 0) RevealTalentNodes(fresh);
+
         _talentLines.SetEdges(edges, maxed);
+        UpdateTalentTransform();
+    }
+
+    /// <summary>
+    /// 把新解锁的节点带进视野。位移取"刚好够看见"的最小量——**本来就在框内的话一点不动**。
+    /// 同时冒出来好几个时按**并集**处理，取把它们全部露出来所需的最小位移。
+    /// </summary>
+    private void RevealTalentNodes(List<string> fresh)
+    {
+        var min = new Vector2(float.MaxValue, float.MaxValue);
+        var max = new Vector2(float.MinValue, float.MinValue);
+        foreach (var id in fresh)
+        {
+            var layout = _game.Config.Row("TalentLayout", id);
+            var c = TalentMap.CellCenter(layout.Int("col"), layout.Int("row"));
+            min = new(Math.Min(min.X, c.X), Math.Min(min.Y, c.Y));
+            max = new(Math.Max(max.X, c.X), Math.Max(max.Y, c.Y));
+        }
+        // 先算"露出来"所需的最小位移，再用夹取兜底——新节点入框后可见范围变大，夹取区间也跟着变了。
+        _talentPanTarget = TalentMap.ClampPan(
+            TalentMap.RevealPan(_talentPanTarget, min, max, _talentRoot.Size),
+            TalentNodeMin(), TalentNodeMax(), _talentRoot.Size);
+    }
+
+    /// <summary>
+    /// 每帧把平移滑向目标。**必须放在 `_Process` 里**——`Refresh` 只有 6.7Hz，
+    /// 在那儿插值会滑得一顿一顿的，比瞬间跳过去还难看。帧率无关的指数趋近，约 0.25 秒到位。
+    /// </summary>
+    private void TickTalentPan(double delta)
+    {
+        if (_talentPan.IsEqualApprox(_talentPanTarget)) return;
+        _talentPan = _talentPan.Lerp(_talentPanTarget, 1 - Mathf.Exp(-14f * (float)delta));
+        // 收尾：指数趋近永远差一点点，不抹平的话每帧都会白跑一次 UpdateTalentTransform。
+        if (_talentPan.DistanceTo(_talentPanTarget) < .5f) _talentPan = _talentPanTarget;
+        UpdateTalentTransform();
+    }
+
+    /// <summary>当前平移目标。公开只读，供冒烟断言"点已在画面内的节点时画面不许动"。</summary>
+    public float TalentPanXForCheck => _talentPanTarget.X;
+
+    /// <summary>
+    /// 换了一局（**重置进度** / 新建会话）：星图的平移量与"见过"的集合都要归零。
+    ///
+    /// **不归零的后果是一张空图**：重置后只剩根节点可见，而平移量还停在上一次那棵长树的右边；
+    /// 而"点已在画面内的节点时画面不许动"那条口径让星图**不会**因为内容变少自己收回来
+    /// （`RevealPan` 只在**新节点冒出来**时才推画面，`_talentSeen` 又记着所有老 id）。
+    /// 于是玩家对着一张空白星图，连那个唯一能点的根都找不到。
+    /// </summary>
+    public void ResetTalentView()
+    {
+        _talentSeen.Clear();
+        _talentPan = _talentPanTarget = new Vector2(TalentMap.NodeSize / 2 - TalentNodeMin().X + TalentMap.EdgePad, 0);
+        RefreshTalentMap();
         UpdateTalentTransform();
     }
 
@@ -209,6 +304,9 @@ public partial class Main
         if (node is not null) ShowTalentTip(id, node);
     }
 
+    /// <summary>截图用：收起说明条。不收起的话它会一直飘在后面几张截图上。</summary>
+    public void TalentHideTipForCapture() => _talentTip.Dismiss();
+
     /// <summary>截图用：把某几个节点伪装成已点亮，好看清三态与连线（自检不写存档，随便改）。</summary>
     public void TalentDemo(params (string Id, int Level)[] levels)
     {
@@ -224,7 +322,8 @@ public partial class Main
         }
         if (@event is InputEventMouseMotion motion && _talentDragging)
         {
-            _talentPan = TalentMap.ClampPan(_talentPan + motion.Position - _talentDragFrom, TalentNodeMin(), TalentNodeMax(), _talentRoot.Size);
+            // 拖拽**绕过平滑**：当前与目标一起写，手感才是瞬时跟手的。
+            _talentPan = _talentPanTarget = TalentMap.ClampPan(_talentPan + motion.Position - _talentDragFrom, TalentNodeMin(), TalentNodeMax(), _talentRoot.Size);
             _talentDragFrom = motion.Position;
             UpdateTalentTransform();
         }
@@ -232,14 +331,13 @@ public partial class Main
 
     private void UpdateTalentTransform()
     {
-        var (min, max) = (TalentNodeMin(), TalentNodeMax());
         var size = _talentRoot.Size;
-        _talentHolder.Position = new Vector2((size.X - (max.X - min.X)) / 2 - min.X, (size.Y - (max.Y - min.Y)) / 2 - min.Y) + _talentPan;
+        // 基准就是 (0,0)：节点坐标本身就是相对框的，根节点因此天然落在左侧。
+        _talentHolder.Position = _talentPan;
         _talentHolder.Size = size;
         _talentLines.Size = size;
     }
 
-    /// <summary>按节点的**实际包围盒**取中，而不是整张网格——网格比树大时，居中会居到一片空白上。</summary>
     private Vector2 TalentNodeMin() => TalentBounds().Min;
     private Vector2 TalentNodeMax() => TalentBounds().Max;
 
@@ -265,9 +363,4 @@ public partial class Main
         return any ? (min, max) : (Vector2.Zero, Vector2.Zero);
     }
 
-    private void Recenter()
-    {
-        _talentPan = Vector2.Zero;
-        UpdateTalentTransform();
-    }
 }

@@ -16,6 +16,11 @@ public sealed class PlayerState
     public Dictionary<string, int> Upgrades { get; set; } = [];
     public Dictionary<string, double> PendingIntent { get; set; } = [];
     public Dictionary<string, double> IntentTimers { get; set; } = [];
+    /// <summary>已解锁的系统 id，取值只允许 <see cref="Systems.All"/> 里的那几个。
+    /// **旧档缺这个字段时反序列化得到空集 = 全部锁着**——这是刻意的：老玩家没有走过教学，
+    /// 但他们的进度（关卡、法术、修行点数）一样不少，重新解锁一次只是点两下。
+    /// 加字段**不需要升 `Version`**（`SaveStore.Validate` 只认 `Version == 1`）。</summary>
+    public HashSet<string> UnlockedSystems { get; set; } = [];
     public HashSet<string> Pets { get; set; } = [];
     public List<string> EquippedPets { get; set; } = [];
     public Dictionary<string, List<string>> PetBuffs { get; set; } = [];

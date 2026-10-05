@@ -28,6 +28,11 @@ public partial class BattleView : Control
     public float PlayerScreenX { get; set; } = PlayerAnchor;
     /// <summary>离地高度：只抬本体，影子留在地面线，于是读成"悬空/下落"。</summary>
     public float PlayerAirHeight { get; set; }
+    /// <summary>
+    /// 玩家整体的倾角（弧度），0 = 站直。**死亡倒地**靠它——绕**底部中心**（脚底）转，
+    /// 所以倒下时脚不动、身体往后甩出去。负值向后（朝屏幕左侧）倒。
+    /// </summary>
+    public float PlayerTilt { get; set; }
     /// <summary>步伐开关覆盖。序章不推进会话，但要走出台步与扬尘，所以需要从外面给。</summary>
     public bool? MovingOverride { get; set; }
     private float CameraX => CameraOverride ?? (float)Session.Battle.PlayerX;
@@ -69,6 +74,33 @@ public partial class BattleView : Control
         public float X, Y, Vx, Vy, Size;
         public double Life, MaxLife;
     }
+
+    /// <summary>
+    /// 尸体：怪物死掉之后播的那一下——身上爆一圈白光与冲击环，身体同时渐隐。
+    /// 位置存**世界坐标**，所以镜头一动它就跟着地面走，不会黏在屏幕上（阵亡切镜头时尤其要紧）。
+    /// </summary>
+    private sealed class Corpse
+    {
+        public string Visual = "";
+        public double WorldX, Life, MaxLife;
+        public float Bottom, Size;
+        public Color Tint = Colors.White;
+    }
+    private const double CorpseLife = .35;
+    private const int CorpseLimit = 60;
+    private readonly List<Corpse> _corpses = [];
+    /// <summary>一只怪的出场信息。**绘制与"死时落尸体"共用同一套取值**，免得两处各算一份、日后走样。</summary>
+    private readonly record struct EnemyVisual(string Sprite, double WorldX, float Bottom, float Size, Color Tint);
+    private readonly Dictionary<long, EnemyVisual> _lastEnemy = [];
+    /// <summary>阵亡清场期间为真：不画"活着的"敌人，只画它们就地变成的尸体。</summary>
+    private bool _hideLiveEnemies;
+    /// <summary>每只怪第一次出现在场上的时刻，出生动画拿它算年龄。</summary>
+    private readonly Dictionary<long, double> _spawnedAt = [];
+    /// <summary>这一趟是不是"刚换过场"：那时场上那批怪是上一场就在的，不该一起弹一下。</summary>
+    private bool _skipSpawnAnim;
+    private const double SpawnLife = .35;
+    /// <summary>真的播过出生动画的怪有几只（换场补录的那批不算）。冒烟靠它等到"下一只新刷出来的怪"，见 Main 的 -spawn 截图。</summary>
+    public int FreshSpawns { get; private set; }
     // 上一帧看到的 BattleState 对象。换场判定必须用对象身份，见 TrackHits 的说明。
     private BattleState? _lastBattle;
     private double _clock;
@@ -86,7 +118,10 @@ public partial class BattleView : Control
 
     public override void _Ready()
     {
-        MouseFilter = MouseFilterEnum.Ignore; ClipContents = true;
+        // 收鼠标：战斗区要接"点画面挥一下"。**这块矩形里没有别的可点东西**——顶栏、提示行、
+        // 左侧页签、功能区全在 y 128..528 之外，而 GM / 设置 / 节点编辑器那些覆盖层的背板是 Stop
+        // 且加在 `_battle` 之后（在上层），会先把手势吃掉。所以这里常开 Stop 不会吞掉别处的点击。
+        MouseFilter = MouseFilterEnum.Stop; ClipContents = true;
         TextureFilter = TextureFilterEnum.Nearest;
         var manifest = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(Godot.FileAccess.GetFileAsString("res://Assets/visuals.json"))
             ?? throw new InvalidDataException("美术资源映射为空");
@@ -117,10 +152,27 @@ public partial class BattleView : Control
     private float X(double world) => PlayerScreenX + (float)(world - CameraX);
     /// <summary>同上，公开给自检断言"默认路径没被改动"。见 <see cref="CameraOverride"/> 的说明。</summary>
     public float ScreenX(double world) => X(world);
+    /// <summary>
+    /// 点击战斗区 = 手动挥一下（"点画面任意处就挥一下"）。
+    ///
+    /// 只认**按下**的左键：抬手不触发，否则一次拖拽会多打一下。
+    /// 结算整个交给 `GameSession.ManualBasicAttack()`——它与自动普攻共用同一条判定与**同一个冷却键**，
+    /// 所以点快了就是白点，这里**不做任何"补一刀"的兜底**（那会让点击凭空多出输出，
+    /// 「激活自动攻击」这件事就没有价值了）。冷却中刻意**不给任何反馈**：
+    /// 挥了却没伤害比没反应更容易被读成"游戏坏了"。
+    /// </summary>
+    public override void _GuiInput(InputEvent @event)
+    {
+        if (@event is not InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true }) return;
+        Session?.ManualBasicAttack();
+        AcceptEvent();
+    }
     public override void _Process(double delta)
     {
         TrackHits(delta);
         TrackPlayerJuice(delta);
+        foreach (var corpse in _corpses) corpse.Life -= delta;
+        _corpses.RemoveAll(c => c.Life <= 0);
         AssignCompanionSlots();
         QueueRedraw();
     }
@@ -129,6 +181,8 @@ public partial class BattleView : Control
     {
         _lastHp.Clear(); _flash.Clear(); _popups.Clear(); _companionSlots.Clear();
         _puffs.Clear(); _playerFlash = 0; _lastPlayerHp = double.NaN;
+        _corpses.Clear(); _lastEnemy.Clear();
+        _spawnedAt.Clear(); _skipSpawnAnim = true;
     }
 
     /// <summary>
@@ -299,6 +353,15 @@ public partial class BattleView : Control
         bool hitPlayed = false;
         foreach (var enemy in Session.Battle.Enemies)
         {
+            // 每帧记住出场信息：它从场上消失的那一帧要拿它落尸体（那时 EnemyState 已经取不到了）。
+            _lastEnemy[enemy.Id] = Of(enemy);
+            // 第一次见到这只怪 = 它刚刷出来：记下出生时刻。换场那趟不算（那批怪是上一场留下的），
+            // 记成"早就出生了"，免得读档 / 换关时整场怪一起弹一下。
+            if (!_spawnedAt.ContainsKey(enemy.Id))
+            {
+                _spawnedAt[enemy.Id] = _skipSpawnAnim ? _clock - SpawnLife : _clock;
+                if (!_skipSpawnAnim) FreshSpawns++;
+            }
             if (!_lastHp.TryGetValue(enemy.Id, out double previous)) { _lastHp[enemy.Id] = enemy.Hp; continue; }
             _lastHp[enemy.Id] = enemy.Hp;
             double damage = previous - enemy.Hp;
@@ -318,6 +381,10 @@ public partial class BattleView : Control
         foreach (long id in _lastHp.Keys.Where(id => !Session.Battle.Enemies.Any(e => e.Id == id)).ToArray())
         {
             _lastHp.Remove(id); _flash.Remove(id);
+            // 死了就落一具尸体：爆一下再渐隐，而不是凭空消失。
+            // 清场期间跳过——那时 BeginDeathWipe 已经统一落过一轮了，这里再落会在画面亮回来之后又爆一片。
+            if (_lastEnemy.Remove(id, out var visual) && !_hideLiveEnemies) SpawnCorpse(visual);
+            _spawnedAt.Remove(id);
             // 同一帧死多个只报一次，避免叠成一片。
             if (announced) continue;
             announced = true;
@@ -325,6 +392,8 @@ public partial class BattleView : Control
         }
         foreach (var popup in _popups) popup.Life -= delta;
         _popups.RemoveAll(p => p.Life <= 0);
+        // 换场后只有第一趟算"补录"，之后新出现的都是真的刚刷出来的。
+        _skipSpawnAnim = false;
     }
     /// <summary>返回是否为灼烧跳伤，供调用方决定要不要播命中音。</summary>
     private bool AddPopup(EnemyState enemy, double damage, double simSeconds)
@@ -416,7 +485,8 @@ public partial class BattleView : Control
         }
         DrawPuffs();
         DrawEllipseShadow(PlayerScreenX, 366, 65);
-        if (Session.Battle.RespawnTimer <= 0)
+        // **不看 RespawnTimer 决定画不画人**：死亡倒地与复活落下都由覆盖量驱动（见 UI/Respawn.cs），
+        // 原先"倒计时 > 0 就跳过精灵、改画一行「调息重生…」"正是"人凭空消失"的来源。
         {
             // 挤压拉伸绕**底部中心**做：中心 x 与底边都不动，所以视觉位置和命中判定都不受影响
             // （锚点就是底部中心，见 assets/asset_spec.md）。squash > 0 = 拉高变瘦，< 0 = 压矮变宽。
@@ -425,14 +495,25 @@ public partial class BattleView : Control
             squash += LandingSquash();
             float sy = 1 + squash, sx = 1 - squash * .7f;
             // 悬空只抬本体的底边，影子（上一行）留在地面线上——"抬角色、钉影子"才读成下落。
-            Sprite("player", PlayerScreenX, 368 + bob - PlayerAirHeight, 136, null, sx, sy);
+            float bottom = 368 + bob - PlayerAirHeight;
+            // 倾角（死亡倒地）绕**底部中心**转：脚不动，身体往后甩出去。**只有非零时才碰变换**，
+            // 而且画完立刻复位——`DrawSetTransform` 的状态会残留给后面的 DrawString 与精灵绘制
+            // （见 BladePolygon 上方那条注释），漏了复位整屏文字都会跟着歪。
+            // `DrawSetTransform` 的原点是**加到**后续绘制坐标上的，所以设了变换就得画"相对原点"的坐标。
+            // 之前这里照传绝对坐标 (PlayerScreenX, bottom)，等于把锚点加了两次——土豆被画到约 660
+            // （屏幕中间偏左），也就是玩家报的"死的时候突然跑到画面中间去倒"。
+            // 原点取脚底：画在 (0,0) 就是以脚底为轴旋转，倒下时脚不动、身体往后甩。
+            bool tilted = Math.Abs(PlayerTilt) > .001f;
+            if (tilted) DrawSetTransform(new(PlayerScreenX, bottom), PlayerTilt, Vector2.One);
+            float spriteX = tilted ? 0 : PlayerScreenX, spriteBottom = tilted ? 0 : bottom;
+            Sprite("player", spriteX, spriteBottom, 136, null, sx, sy);
             // 受击白闪：叠一层**同轮廓的纯白图**。项目跑在 gl_compatibility（LDR）下，顶点色乘不过 1，
             // 深色像素提不亮，靠 modulate 做不出全白的土豆——所以让 SpriteGen 顺带生成 player_flash。
             double flashLeft = _playerFlash - _clock;
             if (flashLeft > 0)
-                Sprite("player_flash", PlayerScreenX, 368 + bob - PlayerAirHeight, 136, new Color(1, 1, 1, (float)(flashLeft / .12)), sx * 1.06f, sy * 1.06f);
+                Sprite("player_flash", spriteX, spriteBottom, 136, new Color(1, 1, 1, (float)(flashLeft / .12)), sx * 1.06f, sy * 1.06f);
+            if (tilted) DrawSetTransform(Vector2.Zero, 0, Vector2.One);
         }
-        else DrawString(font, new(220, 290), "调息重生…", HorizontalAlignment.Left, -1, 26, UiKit.Gold);
         DrawPlayerAuras();
         DrawPhantom();
         int pi = 0;
@@ -442,7 +523,11 @@ public partial class BattleView : Control
             Sprite(Session.Config.Row("Pet", pet).Text("visual"), px, py, 70); pi++;
         }
         // 仅限制可见精灵数量，不删除怪物，不改变任何伤害和刷怪逻辑。
-        var visible = Session.Battle.Enemies.Where(e => e.Hp > 0 && X(e.X) > -120 && X(e.X) < 2070).OrderBy(e => e.Kind == "boss" || e.Kind == "rift" ? 0 : 1).Take((int)Session.Config.Setting("enemy_visual_limit"));
+        // 阵亡清场期间**不画"活着的"那一份**：它们已经被就地转成尸体了（见 BeginDeathWipe）。
+        // 用空序列而不是再套一层 if，是为了少动这段已经调好的绘制代码。
+        var visible = _hideLiveEnemies
+            ? Enumerable.Empty<EnemyState>()
+            : Session.Battle.Enemies.Where(e => e.Hp > 0 && X(e.X) > -120 && X(e.X) < 2070).OrderBy(e => e.Kind == "boss" || e.Kind == "rift" ? 0 : 1).Take((int)Session.Config.Setting("enemy_visual_limit"));
         foreach (var enemy in visible)
         {
             float x = X(enemy.X), size = enemy.Kind switch { "boss" => 194, "rift" => 174, "elite" => 125, _ => 96 };
@@ -457,13 +542,17 @@ public partial class BattleView : Control
             // 寒冷先于裂隙封印判定：被寒气侵住的敌人整只染成冰蓝，一眼可辨（减速冰环仍照常由 SlowUntil 画出）。
             var tint = enemy.ChillUntil > 0 ? new Color(.55f, .74f, 1f)
                 : enemy.Kind == "rift" && !Session.RiftUnlocked ? new Color(.6f, .6f, .7f) : Colors.White;
-            Sprite(Session.Config.Monsters[enemy.MonsterId].Visual, x, y, size, tint);
+            // 出生动画：刚刷出来的怪从地里弹出来（缩放绕底部中心，见 SpawnSquash）。
+            // 与上面受击放大的 `size` 正交——一个是尺寸、一个是绘制缩放，不会互相打架。
+            var (spawnSx, spawnSy) = SpawnSquash(_clock - _spawnedAt.GetValueOrDefault(enemy.Id, _clock - SpawnLife));
+            Sprite(Session.Config.Monsters[enemy.MonsterId].Visual, x, y, size, tint, spawnSx, spawnSy);
             if (hit) DrawCircle(new(x, y - size * .5f), size * .34f, new Color(1, 1, 1, .16f));
             DrawEnemyStatus(enemy, x, y, size);
             DrawRect(new(x - 42, y - size - 6, 84, 5), UiKit.Ink);
             DrawRect(new(x - 42, y - size - 6, 84 * (float)(enemy.Hp / enemy.MaxHp), 5), enemy.Kind == "boss" ? Hostile : UiKit.Jade);
             if (enemy.Kind is "boss" or "rift") DrawString(font, new(x - 65, y - size - 16), enemy.Kind == "rift" && !Session.RiftUnlocked ? "裂隙 · 封印中" : Session.Config.Monsters[enemy.MonsterId].Name, HorizontalAlignment.Left, -1, 20, UiKit.Gold);
         }
+        DrawCorpses();
         // 召唤物不走通用标签：它们的站位由位次分配，标签要跟着单位走，见 DrawSummons。
         foreach (var effect in Session.Effects.Where(e => e.Kind is not ("ground" or "summon"))) DrawEffect(effect, font);
         DrawSummons(font);
@@ -471,6 +560,40 @@ public partial class BattleView : Control
         // 战场左上的题词。原来是「剑问长生」（旧标题的余韵），跟着标题一起换；「一路」呼应主角一路向右。
         DrawString(font, new(32, 42), "青山不语   ·   一路长生", HorizontalAlignment.Left, -1, 23, new Color("#c0d2c9"));
         DrawString(font, new(32, 73), Session.Moving ? "前行中 · 尚未越过的刷怪点仍会补怪" : "交战中 · 清空攻击范围后继续前行", HorizontalAlignment.Left, -1, 18, UiKit.Muted);
+        // 画在最后：这一条是"要你动手"的提示，被别的东西压住就白做了。
+        DrawClickHint(font);
+    }
+
+    /// <summary>过场（序章）期间要收起这条提示——那时角色还走不了，谈不上"点击攻击"。</summary>
+    public bool ShowClickHint { get; set; } = true;
+
+    /// <summary>
+    /// 出手提示：**还没点亮「生根」（自动攻击）之前**，在战斗区中央靠上飘一句"点击鼠标攻击敌人"。
+    ///
+    /// 这一段玩家是**真的只能自己点**（`TickBasicAttack` 直接返回），不提示的话他会盯着一个
+    /// 一动不动的角色等半天——这正是"引导玩家手动点击杀怪"那一步唯一的入口。
+    /// 解锁之后自动攻击接管，气泡立刻消失，不必玩家去关。
+    ///
+    /// **每隔几秒来一次轻微的果冻缩放**：静止的提示看两眼就过滤掉了，定时的轻微弹动才读得成"重要信息"。
+    /// 曲线与出生动画同一套路子（指数衰减的正弦），幅度刻意小（±7%）——它是个提示，不该比战斗本身还抢眼。
+    /// </summary>
+    private void DrawClickHint(Font font)
+    {
+        if (!ShowClickHint || Session is null || Session.AutoBasicUnlocked) return;
+        const double Cycle = 3.2;              // 每 3.2 秒提醒一次
+        const float Cx = 960, Cy = 92;         // 战斗区（1920×400）中央靠上
+        const float W = 322, H = 54;
+        double t = _clock % Cycle;
+        // 只在每个周期的头一秒弹，之后回到 1.0（静止）。
+        float pulse = t < 1.1 ? 1 + .07f * (float)(Math.Exp(-3.4 * t) * Math.Cos(15 * t)) : 1f;
+        float w = W * pulse, h = H * pulse;
+        var box = new Rect2(Cx - w / 2, Cy - h / 2, w, h);
+        DrawRect(box, new Color("#0b1620", .86f));
+        DrawRect(box, new Color(UiKit.Jade, .9f), false, 2);
+        // 朝下的小尖角：读成"这是在跟你说话"，而不是一块贴在画面上方的公告板。
+        DrawColoredPolygon([new(Cx - 11, Cy + h / 2), new(Cx + 11, Cy + h / 2), new(Cx, Cy + h / 2 + 15)], new Color("#0b1620", .86f));
+        DrawString(font, new(Cx - w / 2, Cy + h / 2 - 16), "点击鼠标攻击敌人",
+            HorizontalAlignment.Center, w, (int)(21 * pulse), UiKit.Jade);
     }
 
     /// <summary>按法术 ID 分流：每个技能用不同的形状、配色与节奏，使 15 个法术在画面上可辨认。</summary>
@@ -504,6 +627,8 @@ public partial class BattleView : Control
             case "sky_drop": DrawSkyDropBlade(effect, x); return;
             case "arc_homing": DrawArcBlade(effect, x); return;
             case "line_shot": DrawPierceBlade(effect, x, false); return;
+            // 近战普攻（普攻专用形态）：不飞，画成"拔出背上的剑挥一记"。
+            case "melee_slash": DrawMeleeSlash(effect, x); return;
             case "line_pierce":
                 // 同样是 line_pierce，两招的读法不同：剑气流云壁是贴地的弧形剑气、天剑是横空斩出的巨剑，
                 // 其余仍走原来的平射贯穿剑。形态只决定"怎么飞、怎么命中"，观感由技能 ID 分流。
@@ -518,6 +643,29 @@ public partial class BattleView : Control
             default: // 剑灵弹丸等未指定形态的直线弹道
                 DrawRect(new(x - 26, 289, 46, 4), UiKit.Jade); DrawRect(new(x - 3, 275, 4, 17), UiKit.Gold); break;
         }
+    }
+
+    /// <summary>
+    /// 近战普攻：土豆拔出背上的剑挥一记——一道从斜上扫到斜下的弧随进度铺开再淡出，剑本身也跟着扫。
+    ///
+    /// 锚在**玩家当前的屏幕位置**而不是传进来的 <paramref name="x"/>：那个 X 是出手那一刻冻结的，
+    /// 而挥砍这 0.22 秒里角色还在往前走，钉在旧位置会读成"剑气留在了原地"。
+    /// 伤害早在出手当拍就结算完了（见 `GameSession` 的 `melee_slash` 分支），这里纯粹是那一下的余韵。
+    /// </summary>
+    private void DrawMeleeSlash(CombatEffect effect, float x)
+    {
+        float t = (float)(1 - effect.Life / Math.Max(1e-6, effect.MaxLife));   // 0 → 1
+        // 剑锋扫过的角度：前段只划过一小截，末段铺满整个扇面。
+        float sweep = Mathf.Lerp(-1.2f, 1.0f, Mathf.Min(1f, t * 1.7f));
+        float fade = 1 - t * .6f;
+        // 支点取**身体前缘**（贴图 136 宽、中心在 PlayerScreenX，前缘约 +68）：取在身体中间的话，
+        // 剑身根部会埋进土豆肚子里，读成"剑插在土豆身上"而不是"抡出去"。
+        var arm = new Vector2(x + 46, 296);
+        DrawArc(arm, 92, -1.2f, sweep, 24, new Color(UiKit.Jade, .85f * fade), 8);
+        DrawBlade(arm.X, arm.Y, sweep, 84, new Color(UiKit.Jade, fade), new Color(UiKit.Gold, fade));
+        // 剑锋最前端点一颗亮斑，让"扫到哪儿"一眼看得出来。
+        DrawCircle(new(arm.X + Mathf.Cos(sweep) * 92, arm.Y + Mathf.Sin(sweep) * 92),
+            7 * fade, new Color(1, 1, 1, .7f * (1 - t)));
     }
 
     /// <summary>画一支剑：剑身多边形 + 剑格横档。角度 0 为剑尖朝右、+90° 为朝下。</summary>
@@ -1200,6 +1348,71 @@ public partial class BattleView : Control
     {
         if (_textures.TryGetValue(id, out var texture))
             DrawTextureRect(texture, new(x - size * sx / 2, bottom - size * sy, size * sx, size * sy), false, color ?? Colors.White);
+    }
+
+    /// <summary>
+    /// 出生动画：从 .2 倍弹到 1 倍，带一次过冲与一圈衰减的挤压振荡（"果冻"）。
+    /// 缩放交给 `Sprite` 的 `sx`/`sy`——那是绕**底部中心**的，所以怪是从地里"弹"出来的，
+    /// 而不是从身体中心胀开。过了 <see cref="SpawnLife"/> 直接返回 (1,1)，稳态一点不受影响。
+    /// </summary>
+    private static (float Sx, float Sy) SpawnSquash(double age)
+    {
+        if (age >= SpawnLife || age < 0) return (1, 1);
+        float t = (float)(age / SpawnLife);
+        float grow = Mathf.Lerp(.2f, 1f, 1 - Mathf.Exp(-6f * t) * Mathf.Cos(10f * t));   // 小 → 过冲 → 1
+        float wobble = Mathf.Exp(-8f * t) * Mathf.Cos(16f * t);                          // 果冻抖，体积大致守恒
+        return (grow * (1 + .12f * wobble), grow * (1 - .12f * wobble));
+    }
+
+    /// <summary>取一只怪当前的出场信息（贴图 / 世界 X / 底边 / 尺寸 / 颜色）。绘制与尸体快照共用。</summary>
+    private EnemyVisual Of(EnemyState enemy)
+    {
+        float size = enemy.Kind switch { "boss" => 194, "rift" => 174, "elite" => 125, _ => 96 };
+        // 飞行单位浮空：影子仍压在地面线上，所以"飞着"一眼可辨。
+        float y = 368;
+        if (Session.Config.Monsters[enemy.MonsterId].Layer == "air") y -= 92 + (float)Math.Sin(Session.Elapsed * 2 + enemy.Id) * 7;
+        else if (enemy.Kind == "rift") y -= (float)Math.Sin(Session.Elapsed * 2) * 7;
+        // 寒冷先于裂隙封印判定：被寒气侵住的敌人整只染成冰蓝，一眼可辨。
+        var tint = enemy.ChillUntil > 0 ? new Color(.55f, .74f, 1f)
+            : enemy.Kind == "rift" && !Session.RiftUnlocked ? new Color(.6f, .6f, .7f) : Colors.White;
+        return new(Session.Config.Monsters[enemy.MonsterId].Visual, enemy.X, y, size, tint);
+    }
+
+    private void SpawnCorpse(EnemyVisual v)
+    {
+        if (_corpses.Count >= CorpseLimit) return;
+        _corpses.Add(new Corpse { Visual = v.Sprite, WorldX = v.WorldX, Bottom = v.Bottom, Size = v.Size, Tint = v.Tint, Life = CorpseLife, MaxLife = CorpseLife });
+    }
+
+    /// <summary>
+    /// 玩家阵亡：把场上所有敌人**就地转成尸体**（各爆一下），并停止绘制"活着的"那一份。
+    ///
+    /// **只影响绘制**——`Battle.Enemies` 一个都不动：模拟层的重置仍发生在复活读条归零那一刻，
+    /// 所以"倒地期间位置、伤势、刷怪进度都还在"那条口径不受影响（自检里有用例钉着）。
+    /// 之所以在**阵亡这一拍**就落尸体，是因为真正的清场要等 2 秒后读条走完——那时画面早就亮回来了，
+    /// 让怪在那时候凭空消失才是突兀的那一下。这里落的尸体寿命很短，正好跟着画面压暗一起淡掉。
+    /// </summary>
+    public void BeginDeathWipe()
+    {
+        foreach (var enemy in Session.Battle.Enemies) SpawnCorpse(Of(enemy));
+        _hideLiveEnemies = true;
+    }
+    public void EndDeathWipe() => _hideLiveEnemies = false;
+
+    /// <summary>尸体：先爆一圈白光与冲击环，身体同时渐隐。画在敌人那一层（角色之下、地面效果之上）。</summary>
+    private void DrawCorpses()
+    {
+        foreach (var c in _corpses)
+        {
+            float t = (float)(1 - c.Life / c.MaxLife);
+            float x = X(c.WorldX);
+            if (x < -200 || x > 2200) continue;
+            var tint = c.Tint; tint.A = 1 - t;
+            Sprite(c.Visual, x, c.Bottom, c.Size, tint);
+            float cy = c.Bottom - c.Size * .5f;
+            DrawCircle(new(x, cy), c.Size * (.25f + t * .45f), new Color(1, 1, 1, .55f * (1 - t)));
+            DrawArc(new(x, cy), c.Size * (.30f + t * .50f), 0, Mathf.Tau, 24, new Color(1, 1, 1, .35f * (1 - t)), 3);
+        }
     }
 
     /// <summary>落地扬尘。画在主角**之前**，读作"从脚下扬起来的"，而不是糊在身上。</summary>

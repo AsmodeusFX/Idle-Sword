@@ -1,4 +1,4 @@
 id,group_id,item_id,amount
 first_core,boss_first,core,1
-first_gold,boss_first,gold,100
-repeat_gold,boss_repeat,gold,60
+first_gold,boss_first,gold,20
+repeat_gold,boss_repeat,gold,12

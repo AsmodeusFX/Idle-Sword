@@ -81,4 +81,16 @@ public sealed partial class GameSession
         State.Talents[id] = level;
         return Changed($"{r.Text("name")} 提升至 {level} 级");
     }
+
+    /// <summary>
+    /// **调试用**：把「剑气」这个解锁在开 / 关之间翻转，用来对照近战与远程两种普攻形态
+    /// （正常途径是在修行树上点它）。按 `effect` 找节点而不是写死 id——节点改名不会让它失效。
+    /// </summary>
+    public bool DebugToggleRangedBasic()
+    {
+        var node = Config.Rows("Talent").First(r => r.Text("effect") == "ranged_basic");
+        bool on = State.Talents.GetValueOrDefault(node.Text("id")) > 0;
+        State.Talents[node.Text("id")] = on ? 0 : 1;
+        return !on;
+    }
 }

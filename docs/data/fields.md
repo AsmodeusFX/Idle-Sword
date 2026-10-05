@@ -18,7 +18,7 @@
 | attack_interval | number | 攻击间隔（秒，大于0） |
 | move_speed | number | 移动速度（逻辑单位/秒） |
 | attack_type | enum | melee / ranged / magic / none |
-| gold | number | 击杀必得灵钱 |
+| gold | number | 击杀必得灵石 |
 | visual | string | Assets/visuals.json 中的表现 ID。**此处写错不再静默**：`BattleView._Ready` 会核对每个 ID 是否在映射里，缺失写进 `LoadError`（冒烟测试直接失败）。校验放在表现层是有意的——资源清单的知识不塞进 `GameConfig` |
 
 ## level.csv
@@ -60,7 +60,12 @@
 | base_value | number | 属性基础值；百分比用0～1表示 |
 | format | enum | 显示提示 integer / percent / decimal |
 
-其中 `basic_interval`（普攻间隔，秒）、`basic_power`（普攻倍率，乘最终攻击）、`basic_range`（普攻射程）三行是**普通攻击**的参数，校验为**必须大于 0**（其余属性允许为 0）。普攻的规则见 [../design/core_rules.md](../design/core_rules.md) 的「战斗」一节。
+其中 `basic_interval`（普攻间隔，秒）、`basic_power`（普攻倍率，乘最终攻击）、`basic_range`（普攻射程）、`melee_range`（近战普攻射程）、`melee_stop_range`（近战停步距离）五行是**普通攻击**的参数，校验为**必须大于 0**（其余属性允许为 0）。普攻的规则见 [../design/core_rules.md](../design/core_rules.md) 的「战斗」一节。
+
+**普攻有近战 / 远程两种形态**（`GameSession.MeleeBasic`）：远程用 `basic_range` + `stop_range`，近战用 `melee_range` + `melee_stop_range`。近战不是"换个画法"——射程与停步距离都真的缩短，角色要走进去才够得着。两条不变量：
+
+- `melee_range ≥ melee_stop_range`（普攻射程不小于停步距离）——否则角色站定了却打不到怪，表现为**停在原地永远不出手**且不报任何错。
+- 一个伤害法术都没学时，裂隙停步的回落（`GameSession.AttackRange`）**跟着形态走**：近战回落到 `melee_range`。仍回落到远程的 950 的话，角色会停在离裂隙 950 处"以为够得着"，而近战只有 150——**裂隙打不掉、整关卡死**。
 
 ## SwordLevel.csv
 
@@ -69,7 +74,7 @@
 | id | string | 稳定唯一 ID |
 | name | string | 中文显示名称 |
 | default_unlocked | bool | 0或1 |
-| cost_gold | number | 灵钱消耗；天赋按当前等级+1乘此值 |
+| cost_gold | number | 灵石消耗；天赋按当前等级+1乘此值 |
 | order | integer | 排序；关卡顺序不得重复 |
 
 ## SwordSkill.csv
@@ -223,7 +228,7 @@
 - 每次**普通攻击**真正出手的那一刻（见 `fightattr.csv`），对每个「已习得、当前冷却就绪、`trigger_chance > 0`」的法术各摇一次；命中则释放，并把冷却重置为完整值。冷却未就绪的不摇——省下一次随机数，也让「冷却就绪才可能触发」这句话成立。
 - **概率可以逐次累加**（`trigger_chance_step > 0`）：没摇中就加上一步，摇中后清零。它把"看脸"换成"越打越近"：既不会冷却一好就放，也不会连十几次摇不中。**当前没有任何在役法术用它**（`step` 全为 0，这一路退化成固定概率）——寒冰龙卷曾经用过（15% 起、每次普攻 +5%），后来妖王整层去概率化时改回了固定冷却，机制保留在代码里供参悟扩展复用。
 - 因此配置里的 `cooldown` 对神通是**最短触发间隔**，实际间隔由触发概率主导：普通攻击每秒一次，概率 p 对应平均 1/p 秒一次。
-  **全名单只剩一个神通**：07 御雷真诀（`trigger_chance` 10%，冷却 5s → 期望周期 ≈ 5 + 10 = **15 秒**）。妖王三式曾经都是概率触发（都填 0.3 的临时调试值），实测下来"整个境界不可控、成长反馈不明显"，于是 02 焚天剑诀与 12 寒冰龙卷改回固定冷却——玩家花 1800 灵钱解锁一整个境界，拿到的该有"我说了算"的手段。
+  **全名单只剩一个神通**：07 御雷真诀（`trigger_chance` 10%，冷却 5s → 期望周期 ≈ 5 + 10 = **15 秒**）。妖王三式曾经都是概率触发（都填 0.3 的临时调试值），实测下来"整个境界不可控、成长反馈不明显"，于是 02 焚天剑诀与 12 寒冰龙卷改回固定冷却——玩家花 1800 灵石解锁一整个境界，拿到的该有"我说了算"的手段。
 - 神通**不参与**「暴击缩短一个随机技能的冷却」的候选池：它们的冷却只是最短间隔，缩几秒几乎等于白给（与排除增益类法术同一口径）。
 - 技能预览模式下普攻是关掉的，神通改为按预览节奏走 `GameSession.ForceRelease` 显式释放，否则在对照台里永远看不到它们出手。
 
@@ -240,12 +245,29 @@
 | max_level | integer | 最大等级，至少 1 |
 | cost_currency | reference | `item.csv` 里 `kind=currency` 的道具（`gold` / `core`）。**每个节点只花一种货币** |
 | cost | string | **每级消耗列表**，`\|` 分隔。第 *i* 项 = 从 *i−1* 级点到 *i* 级的价，**项数必须等于 `max_level`** |
-| effect | enum | `atk` / `hp` / `auto_intent` / `none`。加载期校验取值，未知值直接拒绝——`TalentBonus` 按它分类查询，填错会让这个节点**静默失效** |
-| effect_per_level | number | 每级效果量。`atk` / `hp` 是**百分比**（0.1 = +10%） |
+| effect | enum | 见下面两类。加载期校验取值，未知值直接拒绝——`TalentBonus` 按它分类查询，填错会让这个节点**静默失效** |
+| effect_per_level | number | 每级效果量。**数值类**按 `effect_per_level × 等级` 求和；**开关类**只看"大于 0"，所以那几个的 `max_level` 必须是 1 |
 | icon | enum | `attack` / `defense` / `utility` / `special`。界面上按 `node_<icon>` 去 `visuals.json` 取图 |
 
+**效果分两类**：
+
+| 类 | 取值 | 语义 |
+| --- | --- | --- |
+| **数值** | `atk`（百分比）/ `hp`（百分比）/ **`atk_flat`（固定攻击）/ `hp_flat`（固定气血）/ `drop_flat`（怪物掉落）** | 求和后加进 `Attack` / `MaxHp` / 击杀掉落。**平攻平血加在乘区之外**——并进乘区的话后期会被装备与百分比放大成完全不同的量级 |
+| **开关** | `auto_basic`（激活自动攻击）/ `ranged_basic`（普攻转远程）/ `auto_intent`（在线自动参悟）/ `none`（占位） | "大于 0 即已生效"。加载期**强制 `max_level == 1`**：写成多级的话"点第二级"什么都不会发生，是典型的静默失效 |
+| **解锁** | `realm_system` / `forge_system` / `intent_system` | 开关类的一个子类，**约定以 `_system` 结尾**，且**必须登记在 `Systems.ByEffect` 里**（漏登记的后果是那个系统**永久锁死且不报错**）。玩家点亮这个节点即解锁对应系统的页签 |
+
+> `drop_flat` 的作用范围**只有一处**：`GameSession.HurtEnemy` 里那一行 `monster.gold`。
+> 因此它覆盖普通怪 / 精英 / BOSS（三者都走那一行），**但排除裂隙**（`rift.gold = 0`，
+> 平白 +1 读成"开一道门送一块灵石"），也**不含** `drop.csv` 的奖励组——那是手工配的关卡节点奖励，
+> BOSS 已经在自身那一笔里拿过一次，两处都加等于对 BOSS 重复计一遍天赋。
+>
+> **过渡期的口径**：修行节点一律投**固定值**（`atk_flat` / `hp_flat`），不投百分比——前期数值小，
+> "再来一下能不能打死"要能一眼算出来。百分比那条路径（`atk` / `hp`）保留着，后期要投再投。
+> `auto_intent`（在线自动参悟）**当前没有任何节点承载**：用户拍板该功能暂不投放，做到那一步再定挂哪。
+> 枚举与消费点都留着，自检用内存改配置保住这条路径的覆盖。
+>
 > `effect = none` 是**编辑器给新节点补的占位行**：可购买却没有效果 = 让玩家白花钱，所以加载期强制它**每级消耗为 0**。
-> 做完一版 50 节点的测试配置，`t_atk_NN` 一律 +1% 攻击、`t_hp_NN` 一律 +1% 气血，方便验证星图本身。
 
 ## TalentLayout.csv（修行星图 · **布局**表，归节点编辑器所有）
 
@@ -274,9 +296,9 @@
 | id | string | 稳定唯一 ID |
 | name | string | 中文显示名称 |
 | base_atk | number | 武器基础攻击 |
-| craft_cost | number | 打造并替换装备消耗灵钱 |
+| craft_cost | number | 打造并替换装备消耗灵石 |
 | upgrade_cost | number | 武器每次淬炼成本基数 |
-| refine_cost | number | 洗练灵钱成本 |
+| refine_cost | number | 洗练灵石成本 |
 
 ## SwordUpgrade.csv
 
@@ -321,7 +343,7 @@
 | name | string | 中文显示名称 |
 | category | string | 剑灵增强类别，同一剑灵不可重复 |
 | power | number | 伤害/效果倍率 |
-| cost_gold | number | 灵钱消耗；天赋按当前等级+1乘此值 |
+| cost_gold | number | 灵石消耗；天赋按当前等级+1乘此值 |
 
 ## wave.csv
 
@@ -337,6 +359,10 @@
 | count_max | integer | 只数的**封顶**（不小于 `count`）。到了就不再涨 |
 
 **一条波次刷什么怪由子表 `wave_unit.csv` 决定**（见下），因为一条波次要混编多种怪，一行装不下。
+
+> **`wave_10` 是第 1 关专用的教学波**：`count = count_max = 1`（每波只刷 1 只，感知清晰明了）、
+> `elite_every = 99`（教学段不刷精英）。它是全表唯一一条**只服务一个关卡**的波次，
+> 因为第 1 关要的是"看得清每一次交手"，而不是"随关卡放大的压力"。
 
 `hp_scale` / `atk_scale` 是**波次自身**的强弱梯度，用来做"同一关里这一波比那一波硬"；**只作用于 `kind = normal`**，精英 / BOSS / 裂隙只吃 `level.csv` 的关卡倍率——它们是关卡节点，不是波次阵容的一部分。上界 5 是防手滑（想写 1.2 写成 12），量级调整应该去改 `level.csv` 的关卡倍率，不要在波次系数上做跳变。
 
@@ -458,7 +484,7 @@
   - 射出的小剑 `index` 传 1，不占"技能名标签"与"暴击缩冷却"的名额。护盾不在时什么都不做。
   - 自检有一条护栏：**每个法术的 `range` 都不短于预览靶距（520）**——射程比靶距还短的法术在预览页永远演示不出任何东西。
 - **增益类法术的升级**：峰值强度（`secondary_value`）**不随等级变**，成长全在**覆盖率**上——实际冷却 = `max(持续 × buff_cooldown_floor_ratio, 冷却 × (1 - buff_cooldown_per_level × (技能等级-1)))`。下限把覆盖率封在 **80%**（`floor_ratio` 1.25 ⇔ 1/1.25），避免变成常驻——与「攻速不加速增益类法术」是同一条护栏。`buff_cooldown_per_level` 默认 0.02。
-  - 起因：`仙风云体术` / `醉仙望月步` 的 `power = 1`，因此 `CastBuff` 不写共享倍率窗，而它们真正的强度走 `secondary_value`（定值）——**升级原本完全没有收益**，玩家花灵钱点「强化」什么都没发生。
+  - 起因：`仙风云体术` / `醉仙望月步` 的 `power = 1`，因此 `CastBuff` 不写共享倍率窗，而它们真正的强度走 `secondary_value`（定值）——**升级原本完全没有收益**，玩家花灵石点「强化」什么都没发生。
   - `万剑归心`（`power 1.5`，走倍率窗）与 `身外身`（继承比例随等级涨）原本就有强度成长，**再加上覆盖率成长会双重收益**——`身外身` 因此在后段偏强，已在 [balance_ttk.md](../design/balance_ttk.md) 第 9 节记为待复核项。
 - **目标中途死亡的补救**：追踪弹（`hover_homing` / `arc_homing`）与定点弹（`target`）在**发射时**锁定目标，而目标可能在弹丸飞到之前就被别的技能打死。原先这种情况**一次伤害都不结算**——青元剑芒专挑残血，于是系统性白飞；御雷真诀 / 斩鬼神的 15~30 秒大招也会白白打空。现在分两条路：
 
@@ -470,7 +496,7 @@
   - 两条都只在落点附近找、**不改追远处**：多发齐射若都能改追远处，会收敛到同一只（`Picks` 刻意"尽量不重复"就是为了铺开）。
   - 表现层配套修了一处：`FlightProgress` 原先在目标消失时回退成 `x + 200`，把进度钉死在弧顶附近，剑芒因此**一直飘在半空、再凭空消失**；现在改为飞向 `TargetX`（它最后所在的位置）。
 - 普通攻击伤害：`最终攻击 × fightattr.basic_power`，每 `fightattr.basic_interval` 秒对最近的合法目标平射一柄飞剑（见 `fightattr.csv` 一节）。它照常吃暴击，但**不触发**「暴击缩短一个随机技能的冷却」。
-- `starting_gold`：初始灵钱120；`cell_width`：1920；`respawn_seconds`：复活等待秒数。
+- `starting_gold`：初始灵石（教学期是 **0**——第一点修为必须靠杀怪换来；它是全表**唯一允许为 0** 的全局设置）；`cell_width`：1920；`respawn_seconds`：复活等待秒数。
 - 接近裂隙的停步判定取**已习得法术的最大射程**（`GameSession.AttackRange`），**不并入普攻射程**：并进去会让角色停在裂隙射程外空转。普攻射程单列在 `fightattr.basic_range`，它不小于停步距离，因此角色站定时必定够得着。
 - `pet_draw_cost`、`pet_duplicate_gold`：召唤成本与重复返还。
 - `fixed_step`：模拟固定步长；`save_interval`：自动存档间隔；`enemy_visual_limit`：仅绘制数量上限，不限制怪物存在数量。

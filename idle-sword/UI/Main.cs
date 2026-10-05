@@ -10,15 +10,20 @@ public partial class Main : Control
     private GameSession _game = null!;
     private SaveStore _store = null!;
     private Control _page = null!;
+    // 左排页签（顺序 = TabSystems 的下标）。
+    private readonly List<Button> _tabs = [];
+    // 每个页签角上的小锁，与 `_tabs` 一一对应。
+    private readonly List<LockBadge> _tabBadges = [];
+    // 未解锁时压在整个操作区上的遮罩，与解锁那一刻的炸开动画层。
+    private LockMask _lockMask = null!;
+    private LockFx _lockFx = null!;
     private BattleView _battle = null!;
     private Label _wallet = null!, _hpText = null!, _stage = null!, _notice = null!;
     private ProgressBar _hp = null!;
     private Button _loop = null!;
     private OptionButton _levelSelect = null!;
-    private Button _previewToggle = null!;
     private readonly List<string> _levelIds = [];
     private readonly List<Action> _bindings = [];
-    private readonly List<Button> _tabs = [];
     private int _selectedTab, _intentTab = -1;
     private double _accumulator, _saveClock, _refreshClock;
     private bool _failed, _testMode;
@@ -62,6 +67,19 @@ public partial class Main : Control
             // 并且会让 Save 直接返回（见 Save），免得开发时拿干净的 level-1 状态把真存档覆盖掉。
             var loaded = (_testMode || _forcePrologue) ? null : _store.Load(config);
             _game = new GameSession(config, loaded);
+            // 冒烟 / 截图跑的是**后期盘面**：系统全开、「生根」已点（自动出手）、「剑气」已学（远程）。
+            // 教学期那一段（全锁 + 近战 + 只能点）是另一套前提，由专门的断言覆盖；
+            // 不这么做的话主线会话会卡在第一格——没买「生根」就不会自动出手，玩家不动，整条冒烟都推不动。
+            if (_testMode)
+            {
+                _game.UnlockAllSystems();
+                _game.State.Talents["t_auto"] = 1;
+                _game.State.Talents["t_ranged"] = 1;
+                // 开局不给钱是**玩法**的选择（第一点修为得靠杀怪换来），而冒烟点的是"后期盘面"：
+                // 它要能把节点点起来验 UI 接线。给一笔钱而不是把节点直接写成高等级——
+                // 后者绕过了 `BuyTalent` 那条真正的接线，等于把要验的东西验掉了。
+                _game.State.Wallet["gold"] = 10000;
+            }
             _game.PersistRequested += Save;
             if (_store.Warning is not null) _saveStatus = _store.Warning;
             BuildShell(); ShowPage(0); Refresh(); StartBgm();
@@ -94,36 +112,61 @@ public partial class Main : Control
         var settings = UiKit.Button(this, "设置", 1592, 20, 120, 42, ToggleSettings);
         settings.TooltipText = "画面、音频与进度重置。";
         var saveButton = UiKit.Button(this, "保存", 1730, 20, 150, 42, Save);
-        _hp = new ProgressBar { ShowPercentage = false }; UiKit.Place(_hp, 34, 79, 465, 20);
+        _hp = new ProgressBar { ShowPercentage = false }; UiKit.Place(_hp, 34, 72, 465, 18);
         _hp.AddThemeStyleboxOverride("background", UiKit.Box(new Color("#263946"), 3)); _hp.AddThemeStyleboxOverride("fill", UiKit.Box(new Color("#89bda8"), 3)); AddChild(_hp);
-        _hpText = UiKit.Label(this, "", 35, 104, 500, 32, 18, UiKit.Muted);
-        _stage = UiKit.Label(this, "", 565, 76, 760, 54, 23, UiKit.Gold);
-        _loop = UiKit.Button(this, "", 1570, 83, 310, 42, () => _game.ToggleLoop());
+        _hpText = UiKit.Label(this, "", 35, 94, 500, 30, 18, UiKit.Muted);
+        _stage = UiKit.Label(this, "", 545, 64, 720, 52, 23, UiKit.Gold);
+        // 关卡选择与"自动推进 / 本关循环"并排放在顶栏这一行。
+        // 中间那条横带（原来装关卡选择与技能预览的那条）**整条撤掉**了，具体见下面 _page 处的说明。
+        _levelSelect = new OptionButton(); UiKit.Place(_levelSelect, 1276, 70, 336, 42); AddChild(_levelSelect);
+        _levelSelect.ItemSelected += index => { if (index < _levelIds.Count) { _game.SelectLevel(_levelIds[(int)index]); Refresh(); } };
+        _loop = UiKit.Button(this, "", 1626, 70, 258, 42, () => _game.ToggleLoop());
         _battle = new BattleView { Session = _game };
         _battle.HitLanded += heavy => PlaySfx(heavy ? "sfx_hit_heavy" : "sfx_hit");
         _battle.EnemyDefeated += () => PlaySfx("sfx_kill");
-        UiKit.Place(_battle, 0, 143, 1920, 400); AddChild(_battle);
+        UiKit.Place(_battle, 0, 128, 1920, 400); AddChild(_battle);
         _battleHome = _battle.Position; _battleHomeSize = _battle.Size;   // 过场里会临时挪位置与放大，见 StartPrologue
-        var noticePanel = UiKit.PanelAt(this, 24, 552, 1872, 64);
-        _notice = UiKit.Label(this, "", 46, 559, 1350, 48, 21, UiKit.Jade);
-        _previewToggle = UiKit.Button(this, "技能预览", 1404, 563, 120, 42, TogglePreview);
-        _previewToggle.TooltipText = "用独立会话逐个播放 15 个法术，不写存档；预览期间主线挂机暂停。";
-        _levelSelect = new OptionButton(); UiKit.Place(_levelSelect, 1530, 563, 340, 42); AddChild(_levelSelect);
-        _levelSelect.ItemSelected += index => { if (index < _levelIds.Count) { _game.SelectLevel(_levelIds[(int)index]); Refresh(); } };
-        // **只有 4 个页签**：剑灵系统暂缓（用户决定先屏蔽入口，名字未定），PetPage 保留在代码里但不挂入口。
-        // 页签等距铺满整行：4 个 × 360 宽，间隔 (1872 − 360) / 3 = 504。
-        string[] names = ["01  修行", "02  境界 · 法术", "03  铸造", "04  参悟"];
-        for (int i = 0; i < names.Length; i++) { int tab = i; _tabs.Add(UiKit.Button(this, names[i], 24 + i * 504, 632, 360, 56, () => ShowPage(tab))); }
-        _page = new Control(); UiKit.Place(_page, 24, 704, 1872, 316); AddChild(_page);
+        // 提示行**不再有底板面板**：它原来占着一条 64px 高的横带，撤掉之后那段纵向空间归功能区。
+        _notice = UiKit.Label(this, "", 40, 536, 1840, 34, 21, UiKit.Jade);
+        // **页签改成左侧竖排**。原来横排占掉一整个 56px 高的横带，而画布是"左右宽、上下紧"——
+        // 竖排之后横向让出 128px，纵向净赚 ~150px，功能区从 316 高变成 452 高（星图节点因此能放大 65%）。
+        // 只留 4 个页签：剑灵系统暂缓（用户决定先屏蔽入口，名字未定），PetPage 保留在代码里但不挂入口。
+        // 「境界」改叫「**法术**」：这一页装的是"学哪些剑诀"，境界突破只是它内部的阶梯。
+        string[] names = ["修行", "法术", "铸造", "参悟"];
+        for (int i = 0; i < names.Length; i++)
+        {
+            int tab = i;
+            var button = UiKit.Button(this, names[i], 24, 580 + i * 118, 128, 104, () => ShowPage(tab));
+            button.AddThemeFontSizeOverride("font_size", 25);
+            _tabs.Add(button);
+            // 角上的小锁：锁着的页签一眼看得见（置灰只说明"点不动"，说不出为什么）。
+            var badge = new LockBadge();
+            badge.Locked = true;
+            UiKit.Place(badge, 96, 4, 26, 26);
+            button.AddChild(badge);
+            _tabBadges.Add(badge);
+        }
+        // 功能区：让出左侧竖排页签的宽度后剩下的全部空间。
+        _page = new Control(); UiKit.Place(_page, 168, 580, 1728, 452); AddChild(_page);
         // 修行星图是**常驻控件**（不放进 _page，理由见 TalentMap.cs 的说明），盖在同一个矩形上。
         BuildTalentMap();
+        // 未解锁时压在整个操作区上的遮罩（含修行星图那一片：它俩本来就共用一个矩形）。
+        // **必须在 `_talentRoot` 之后创建**——星图自带一块底板 Panel，加在遮罩之后就会把遮罩整个盖住，
+        // 表现为"锁着修行却照样看得到星图"。加在 `_page` 与 `_talentRoot` 之后才盖得住这两者。
+        // `MouseFilter` 由 RefreshTabs 按状态切：锁着时 Stop（拦点击），开着时 Ignore（一点都不挡）。
+        _lockMask = new LockMask(); UiKit.Place(_lockMask, 168, 580, 1728, 452); AddChild(_lockMask);
+        // 解锁炸开的动画层：铺满整屏、永远不拦点击。加在这里，于是页签、操作区、星图都在它下面。
+        _lockFx = new LockFx(); UiKit.Place(_lockFx, 0, 0, 1920, 1080); AddChild(_lockFx);
         // 节点编辑器：整屏覆盖的开发期工具，默认关着，从 GM 面板进。**不进 _hudNodes**——
         // 它本来就不是给玩家看的，序章收 HUD 时不必管它。
         BuildTalentEditor();
-        var bottomLeft = UiKit.Label(this, "初版试炼  ·  在线自动战斗  ·  离线不产出", 32, 1040, 1050, 28, 17, UiKit.Muted);
-        var bottomRight = UiKit.Label(this, "每关首杀灵核 ×1   /   长路无重置", 1460, 1040, 420, 28, 17, UiKit.Gold);
+        var bottomLeft = UiKit.Label(this, "初版试炼  ·  在线自动战斗  ·  离线不产出", 180, 1044, 1050, 28, 17, UiKit.Muted);
+        var bottomRight = UiKit.Label(this, "每关首杀灵核 ×1   /   长路无重置", 1480, 1044, 420, 28, 17, UiKit.Gold);
         // 过场要收起来的 HUD。**故意不含标题**——开场挂着游戏名是想要的。
-        _hudNodes.AddRange([_wallet, _hp, _hpText, _stage, _loop, _previewToggle, _levelSelect, _notice, noticePanel, _page, _talentRoot,
+        // **星图与锁那三层（`_talentRoot` / `_lockMask` / `_lockFx`）刻意不在这里**：它们把守的矩形是
+        // 同一块，而且星图的可见性本来就跟着"修行锁没锁"走——交给 `RefreshHudLayers` 一处算，
+        // 否则过场结束那一趟 `SetHudVisible(true)` 会**把锁着的星图一起点亮**（表现为"进到第 1 关，锁没了"）。
+        _hudNodes.AddRange([_wallet, _hp, _hpText, _stage, _loop, _levelSelect, _notice, _page,
                             gm, settings, saveButton, bottomLeft, bottomRight]);
         foreach (var tab in _tabs) _hudNodes.Add(tab);
         // 过场遮罩。**必须最后添加**：它要盖住包括顶栏与页签在内的整屏——这是一次换场，不是一块面板。
@@ -151,6 +194,12 @@ public partial class Main : Control
             TrackSkillCasts(Active);
         }
         TrackFirstKills();
+        // 阵亡/复活的表演走**渲染时钟**：模拟在读条期间是暂停的，用固定步推进的话动画会卡住。
+        TrackDeath(delta);
+        // 解锁那半秒的"先罩住、再碎开"也走渲染时钟。
+        TickSystemReveal(delta);
+        // 星图的平滑平移也得走渲染时钟（放 Refresh 里会一顿一顿的，那是 6.7Hz）。
+        if (_talentRoot.Visible) TickTalentPan(delta);
         TickSettings(delta);
         TickDamage(delta);
         _saveClock += delta; _refreshClock += delta;
@@ -189,10 +238,18 @@ public partial class Main : Control
             // 星图的节点**没有文字**（只有图标），所以不能再用 Press(前缀) 找它——改按 Name 找，
             // 顺带证明节点真的是可点的 Button（这正是当初把它们做成真 Button 而不是自绘的原因）。
             ShowPage(0); Refresh();
+            // 星图取景的口径：**新节点在框内就一点不动**，只有长到框外才把画面推过去。
+            // 买根节点会让 t_hp/t_atk 冒出来，它们就在右边一点点、本来就在框内——所以画面必须纹丝不动。
+            float talentPanBefore = TalentPanXForCheck;
             var talentRoot = Buttons(this).FirstOrDefault(b => b.Name == "talent_node_t_root")
                 ?? throw new Exception("Talent node button is missing");
             talentRoot.EmitSignal(Button.SignalName.Pressed);
             if (_game.State.Talents.GetValueOrDefault("t_root") != 1) throw new Exception("Talent UI action failed");
+            if (Math.Abs(TalentPanXForCheck - talentPanBefore) > .01) throw new Exception("Talent view moved for an on-screen node");
+            // 反向：点亮 col 9 的节点，它的孩子（col 10）会冒出来——那已经在框外了，画面应该滑过去。
+            float panBeforeReveal = TalentPanXForCheck;
+            TalentDemo(("t_hp_14", 1));
+            if (TalentPanXForCheck >= panBeforeReveal) throw new Exception("Talent view did not reveal an off-screen node");
             _intentTab = -1; ShowPage(3); Refresh(); Press("◇");
             var collect = _page.GetChildren().OfType<Button>().First(b => b.Text.StartsWith("移入收取"));
             collect.EmitSignal(Control.SignalName.MouseEntered);
@@ -294,6 +351,9 @@ public partial class Main : Control
             // 普攻：每秒向最近合法目标平射一柄飞剑，间隔走配置。它不带来源法术（Skill 为空），
             // 因此不会被当成第 16 个法术混进任何按技能分流的地方。
             var basicSession = new GameSession(_game.Config, seed: 1);
+            // 这个独立会话也要**后期盘面**：不点「生根」「剑气」的话它是教学期状态——
+            // 近战射程 150、而且根本不会自动出手，靶子摆在 400 就永远打不到。
+            basicSession.State.Talents["t_auto"] = 1; basicSession.State.Talents["t_ranged"] = 1;
             for (int cell = 0; cell < basicSession.Level.Cells; cell++) basicSession.Battle.Spawns[cell] = new() { Passed = true };
             basicSession.Battle.Enemies.Clear(); basicSession.State.Skills.Clear(); basicSession.Battle.Cooldowns.Clear();
             var basicTarget = new EnemyState
@@ -517,15 +577,138 @@ public partial class Main : Control
             TogglePreview();
             // 实际实现在 CaptureFrame（类级），序章也要用它逐阶段留图。
             async Task Capture(string suffix) { if (!await CaptureFrame(suffix)) throw new Exception("Capture failed: " + suffix); }
+            // 等"先罩住、再碎开"那半秒走完。它是个**渲染时钟**的倒计时，所以只能按帧轮询；
+            // 上限给得很宽松——无窗口自检下帧跑得飞快，真正的约束是 `RevealHold` 那 0.45 秒。
+            async Task AwaitReveal()
+            {
+                for (int i = 0; i < 20000 && _revealTab >= 0; i++)
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                if (_revealTab >= 0) throw new Exception("揭示动画没有收尾");
+            }
+            // 出生动画：新刷出来的怪应当是从地里"弹"出来的（见 SpawnSquash，只在头 0.35 秒生效）。
+            // **不能拿"场上刚出现的一批"来验**——那不是新刷的，是进关/读档后对场上现有怪的"补录"，
+            // 故意不弹（见 `_skipSpawnAnim`，那是为了读档不整场一起弹一下）。
+            // 要等的是 `FreshSpawns` 涨一只：那才是玩家走到刷新点时"怪突然出现"的那一种，
+            // 也正是这一条反馈针对的情况。放在这里是因为**这一段游戏是在自然跑的**，刷新点会真的被走到；
+            // 换到冒烟末尾（重置之后）就不行了——重开一局要走到下一个刷新点，等待窗口撑不住。
+            // 等待按**模拟时钟**计时，不能按帧数：`_Process` 的固定步循环让模拟按真实时间推进，
+            // 所以"走到下一个刷新点"需要多少**帧**完全取决于帧率——无窗口自检一秒能跑几百帧，
+            // 600 帧可能连半秒模拟都不到，窗口化下同样的 600 帧却有十秒。按帧数写就是抽签。
+            int spawnedBefore = _battle.FreshSpawns;
+            double spawnDeadline = _game.Elapsed + 30;
+            for (int i = 0; i < 20000 && _battle.FreshSpawns == spawnedBefore && _game.Elapsed < spawnDeadline; i++)
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (_battle.FreshSpawns == spawnedBefore) throw new Exception("No fresh spawn to capture the birth animation");
+            // 一帧一张紧着拍：那条曲线头两三帧就走完大半，"缩到很小"只有第一张看得到。
+            for (int i = 0; i < 5; i++) { await Capture("-spawn" + i); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
             // 前 4 张对应 4 个页签；第 5 张是 PetPage——它的页签入口已屏蔽（剑灵系统暂缓），
             // 但页面本身与接线都留着，照旧截一张，等于给这个暂时不可达的页面留一份回归覆盖。
             for (int i = 0; i < 5; i++) { ShowPage(i); Refresh(); await Capture("-page" + i); }
+            // 系统解锁门：锁上「法术」切过去该是一张**说明页**（纯文字，没有真内容），解锁后恢复。
+            // 页签本身始终可见——隐藏会让上面那圈按下标取的断言全乱，见 `Main.TabSystems` 的说明。
+            _game.State.UnlockedSystems.Remove(Systems.Realm);
+            _game.State.Talents["t_realm"] = 0;   // 解锁有**两个来源**，只清其中一个不算锁上（见 GameSession.Unlocked）
+            ShowPage(1); Refresh();
+            if (!_tabs[1].Disabled) throw new Exception("A locked system's tab should be disabled");
+            // 锁的三件套：页签角上的小锁、操作区上的遮罩、遮罩拦点击。
+            if (!_tabBadges[1].Locked) throw new Exception("A locked tab should carry the padlock badge");
+            if (!_lockMask.Locked || _lockMask.MouseFilter != MouseFilterEnum.Stop)
+                throw new Exception("A locked tab should mask the work area and swallow clicks");
+            if (Buttons(_page).Any()) throw new Exception("A locked page should be copy only, not the real content");
+            await Capture("-locked");
+            _game.State.UnlockedSystems.Add(Systems.Realm);
+            ShowPage(1); Refresh();
+            if (_tabs[1].Disabled) throw new Exception("Unlocking should re-enable the tab");
+            if (_tabBadges[1].Locked) throw new Exception("Unlocking should drop the padlock badge");
+            // **解锁那一下是"先罩住、再碎开"**（用户要求）：这一拍遮罩还压着、还拦着点击，
+            // 但底下的**真内容**已经铺好了；而且**强制切到了这一页**——否则解锁发生在别的页面上，
+            // 玩家根本不会注意到多了个功能。
+            if (!_lockMask.Locked || _lockMask.MouseFilter != MouseFilterEnum.Stop || _selectedTab != 1)
+                throw new Exception("Unlocking should switch to the new tab and hold the mask over it");
+            if (!Buttons(_page).Any()) throw new Exception("The real content should already be underneath");
+            await Capture("-unlocked");   // 罩住 + 碎开的那几帧
+            await AwaitReveal();
+            if (_lockMask.Locked || _lockMask.MouseFilter != MouseFilterEnum.Ignore)
+                throw new Exception("The reveal mask should drop by itself");
+            ShowPage(0); Refresh();
+
+            // 星图与锁那三层共用同一块矩形，**方向相反的两条**都真出过问题：
+            // ① 过场收 HUD 时，遮罩与炸开层必须一起收——不然序章画面上会挂着一把锁
+            //    （重置会重播序章，所以在"重置完锁还挂在画面里"那里露头）。
+            // ② 过场结束**不能**把锁着的星图一起点亮——否则就是"进到第 1 关，锁没了、星图却露出来"。
+            SetHudVisible(false);
+            if (_lockMask.Visible || _lockFx.Visible || _talentRoot.Visible)
+                throw new Exception("Cutscene must hide the star map and the lock layers");
+            SetHudVisible(true);
+            if (!_lockMask.Visible) throw new Exception("The lock mask should come back with the HUD");
+            // 锁着修行 = 星图不该露面 + 遮罩压着；解锁之后两样一起翻过来。
+            _game.State.UnlockedSystems.Remove(Systems.Cultivation);
+            ShowPage(0); Refresh();
+            if (_talentRoot.Visible) throw new Exception("A locked 修行 must not show the star map");
+            if (!_lockMask.Locked) throw new Exception("A locked 修行 must mask the work area");
+            await Capture("-star-locked");   // 锁着的星图那一片：该只有遮罩与锁，不该露出节点
+            _game.State.UnlockedSystems.Add(Systems.Cultivation);
+            ShowPage(0); Refresh();
+            await AwaitReveal();
+            if (!_talentRoot.Visible || _lockMask.Locked)
+                throw new Exception("Unlocking 修行 should reveal the star map and drop the mask");
+            // 这一张是给"**遮罩真的从画面上消失了**"留的：`Locked = false` 只是状态，
+            // 少了 `QueueRedraw` 的话上一帧那块遮罩会**一直挂着**——状态断言抓不到，只有看图才看得见。
+            await Capture("-star-unlocked");
+
+            // 星图前三列的**形状**：清空天赋、只点亮根，应当冒出**三条支**（生存 / 掉落+1 / 输出）。
+            // 这一段是给"树形重排"留的验收图——断言只能验拓扑，验不了"看起来是不是三支"。
+            // 拍完把天赋原样放回去：后面还有依赖盘面的断言（自动攻击、剑气都挂在这上面）。
+            var keptTalents = new Dictionary<string, int>(_game.State.Talents);
+            _game.State.Talents.Clear();
+            if (!_talentRoot.Visible) ShowPage(0);
+            ResetTalentView();   // 内容变少了，平移量得跟着归零，否则拍到的是空白（顺带验那条修复）
+            Refresh(); await Capture("-root-only");
+            _game.State.Talents["t_root"] = 1;
+            Refresh(); await Capture("-three-branches");
+            _game.State.Talents["t_drop"] = 1;
+            Refresh(); await Capture("-drop-line");
+            _game.State.Talents.Clear();
+            foreach (var (id, level) in keptTalents) _game.State.Talents[id] = level;
+            ShowPage(0); Refresh();
+
+            // 另三条门也各走一遍「锁着 → 说明页」，确认四个页签挂的是**各自的**系统而不是同一个。
+            for (int tab = 2; tab <= 3; tab++)
+            {
+                _game.State.UnlockedSystems.Remove(TabSystems[tab]!);
+                ShowPage(tab); Refresh();
+                if (!_tabs[tab].Disabled) throw new Exception($"Tab {tab} should follow its own system");
+                if (!_tabBadges[tab].Locked || !_lockMask.Locked) throw new Exception($"Tab {tab} did not get locked visuals");
+                if (Buttons(_page).Any()) throw new Exception($"Locked tab {tab} should be copy only");
+                _game.State.UnlockedSystems.Add(TabSystems[tab]!);
+                ShowPage(tab); Refresh();
+                await AwaitReveal();   // 解锁那一下会先罩住半秒（见 OnSystemUnlocked），等它碎开再看
+                if (_tabs[tab].Disabled || _tabBadges[tab].Locked || _lockMask.Locked) throw new Exception($"Tab {tab} did not come back");
+            }
+            // GM 一键解锁：四个系统一次全开。**先真的全锁上**（连修行节点那份推导来源一起撤），
+            // 否则"解锁成功"可能只是因为本来就开着。
+            var unlockIds = _game.Config.Rows("Talent")
+                .Where(r => Systems.ByEffect.ContainsKey(r.Text("effect"))).Select(r => r.Text("id")).ToArray();
+            var kept = unlockIds.ToDictionary(id => id, id => _game.State.Talents.GetValueOrDefault(id));
+            foreach (var id in unlockIds) _game.State.Talents[id] = 0;
+            _game.State.UnlockedSystems.Clear();
+            ShowPage(1); Refresh();
+            if (!TabLocked(1) || !TabLocked(2)) throw new Exception("Systems should all be locked before the GM unlock");
+            Tap("GM");   // 面板是懒建的，不先开出来就没有那个按钮可点
+            if (_gmRoot is null || !_gmRoot.Visible) throw new Exception("GM panel did not open");
+            Tap("一键解锁");
+            if (!Systems.All.All(_game.Unlocked)) throw new Exception("GM unlock did not open every system");
+            ShowPage(1); Refresh();
+            if (TabLocked(1) || TabLocked(2)) throw new Exception("GM unlock did not re-enable the tabs");
+            CloseGm();   // 用方法关而不是 `Tap("关闭")`：同时开着别的面板时全树第一个"关闭"未必是它
+            foreach (var (id, level) in kept) _game.State.Talents[id] = level;   // 把修行树还原，别搅乱后面的断言
+            ShowPage(0); Refresh();
             // 星图单独留两张：一张点亮前几层（看清三态、连线、满级金框），一张把悬停说明条调出来。
             // 看完就把这些等级撤掉——后面还有重置相关的断言，别留在状态里。
             var demo = new (string Id, int Level)[] { ("t_root", 5), ("t_hp", 2), ("t_atk", 5), ("t_auto", 1), ("t_atk_01", 1), ("t_hp_01", 1), ("t_atk_02", 1) };
             foreach (var (id, level) in demo) _game.State.Talents[id] = level;
             ShowPage(0); Refresh(); await Capture("-talent");
-            TalentShowTipForCapture("t_hp"); await Capture("-talent-tip");
+            TalentShowTipForCapture("t_hp"); await Capture("-talent-tip"); TalentHideTipForCapture();
             // 节点编辑器：截一张，并**真的走一遍保存**——保存只整份重写布局表，写的是同一份数据，
             // 所以这是条无损的往返验证；"保存被取消/失败"会被下面这条断言抓住。
             ToggleTalentEditor(); await Capture("-talent-editor");
@@ -564,6 +747,72 @@ public partial class Main : Control
             Tap("无敌：开");
             if (_game.PlayerInvincible) throw new Exception("GM invincibility did not turn off");
             _game.Battle.PlayerHp = _game.MaxHp;
+            // 普攻形态：切近战 → **点画面要真的挥出一下** → 再切回远程。
+            // 点击直接调 `_GuiInput`，与 Godot 真实路由走的是同一个入口（`MouseFilter = Stop` 那条链的另一半
+            // 是"战斗区里没有别的可点东西"，那是布局事实，冒烟断言不了）。不伪造视口坐标：
+            // 无窗口自检下视口不一定有尺寸，推事件反而更假。
+            Tap("普攻：远程");
+            if (!_game.MeleeBasic || !_meleeButton.Text.StartsWith("普攻：近战"))
+                throw new Exception($"GM melee toggle did not take: {_meleeButton.Text}");
+            // 用**独立会话**跑这一段，与上面几场同一个套路：主线会话的自动普攻每步都会出手，
+            // 会把"抬手不触发""冷却没过不再出一手"两条断言全搅乱。这一场关掉自动，场上只有玩家点出来的那一手。
+            // 全新会话 = 教学期盘面：没点「剑气」所以是近战，没点「生根」所以不会自动出手。
+            var melee = new GameSession(_game.Config, seed: 1) { BasicAttackEnabled = false };
+            for (int cell = 0; cell < melee.Level.Cells; cell++) melee.Battle.Spawns[cell] = new() { Passed = true };
+            melee.Battle.Enemies.Clear(); melee.State.Skills.Clear();
+            var slam = _game.Config.Monsters["slime"];
+            var dummy = new EnemyState
+            {
+                Id = melee.Battle.NextEnemyId++, MonsterId = slam.Id, Kind = slam.Kind,
+                // 摆在 100：近战射程（150）内、停步距离（120）内 —— 站定就能砍到，且不会继续往前挤。
+                X = melee.Battle.PlayerX + 100, Hp = 1e6, MaxHp = 1e6,
+                Atk = 0, AttackTimer = 999, StunUntil = 1e9,
+            };
+            melee.Battle.Enemies.Add(dummy);
+            _battle.Session = melee;
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            void Click(bool pressed) => _battle._GuiInput(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = pressed });
+            melee.Battle.Cooldowns[GameSession.BasicAttackKey] = 0;
+            double swingHp = dummy.Hp;
+            Click(true);
+            // 挥砍是"出手当拍进 Effects、在同一次 Step 的 TickEffects 里结算"的，点完**要先推进一步**
+            // 才看得到掉血——真机上也是这个口径：点下去到伤害落地最多差一个固定步（50ms）。
+            if (!melee.Effects.Any(e => e.Trajectory == "melee_slash"))
+                throw new Exception("Clicking the battle view did not produce a melee swing");
+            melee.Step(.05);
+            if (dummy.Hp >= swingHp) throw new Exception("The melee swing did not land on the target");
+            if (melee.Battle.Cooldowns[GameSession.BasicAttackKey] <= 0) throw new Exception("The swing did not start the interval");
+            // 冷却没过再点一下：**不该再出一手**——点击只是"自己扣扳机"，不会凭空多出输出，
+            // 这也正是「激活自动攻击」的价值所在（省的是手，不是伤害）。
+            double afterOne = dummy.Hp;
+            Click(true);
+            melee.Step(.05);
+            if (dummy.Hp < afterOne) throw new Exception("A second click landed while the interval was still running");
+            // 抬手不该触发（否则一次拖拽会多打一下）。冷却清零，保证"没掉血"不是因为还没转好。
+            melee.Battle.Cooldowns[GameSession.BasicAttackKey] = 0;
+            melee.Effects.Clear();
+            Click(false);
+            melee.Step(.05);
+            if (dummy.Hp < afterOne) throw new Exception("Releasing the button swung a second time");
+            if (capturePath is not null)
+            {
+                // 留一张挥剑的图：斩击弧 + 剑本身 + 贴身站位。
+                // ① **不要**在截图前 Step——一步之后那条弧已经扫过大半，拍到的会是收势；
+                // ② 把 GM 面板收起来再拍，否则它正好盖在战斗区中间（后面还要用它，所以拍完开回来）。
+                CloseGm();
+                // 教学期气泡：这一刻还没点亮「生根」，所以"点击鼠标攻击敌人"应当飘在画面中央靠上。
+                await Capture("-hint");
+                melee.Effects.Clear();
+                melee.Battle.Cooldowns[GameSession.BasicAttackKey] = 0;
+                Click(true);
+                await Capture("-melee");
+                OpenGm();
+            }
+            _battle.Session = _game;
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            Tap("普攻：近战");
+            if (_game.MeleeBasic) throw new Exception("GM melee toggle did not turn back off");
             // 伤害统计：开面板 → 断言统计到了东西 → 重置 → 关面板。数据源是 `_battle.Session`（当前在看的那一场）。
             Tap("伤害统计");
             if (_damageRoot is null || !_damageRoot.Visible) throw new Exception("Damage panel did not open");
@@ -594,7 +843,7 @@ public partial class Main : Control
             if (_game.State.Weapon != "sword_wood" || _game.State.WeaponLevel != 1) throw new Exception("Forge UI action failed");
             ShowPage(4); Refresh(); Press("召唤");
             if (_game.State.EquippedPets.Count != 1) throw new Exception("Pet UI action failed");
-            // 突破音走的是"带专属成功音的 Act"路径；突破要花灵钱，GM 之后才有，所以放在这里。
+            // 突破音走的是"带专属成功音的 Act"路径；突破要花灵石，GM 之后才有，所以放在这里。
             ShowPage(1); Refresh(); Press("突破");
             if (SfxCount("sfx_breakthrough") == 0) throw new Exception("Breakthrough SFX never fired");
             if (capturePath is not null)
@@ -641,10 +890,31 @@ public partial class Main : Control
             if (_game.State.Amount("gold") != goldBefore || _game.State.Skills.Count != skillsBefore) throw new Exception("Reset fired on the first click");
             Tap("确认重置");
             if (_game.State.Amount("gold") != _game.Config.Setting("starting_gold") || _game.State.Amount("core") != 0 || _game.State.UnlockedLevels.Count != 1) throw new Exception("Reset did not restore the initial state");
-            // 重置后法术数为 0：开局不再白送御剑术，得自己花灵钱学（见 GameSession 构造器）。
+            // 重置后法术数为 0：开局不再白送御剑术，得自己花灵石学（见 GameSession 构造器）。
             if (_game.State.FirstKills.Count != 0 || _game.State.Skills.Count != 0) throw new Exception("Reset left progress behind");
             if (_settingsRoot.Visible) throw new Exception("Settings panel should close after reset");
             if (_preview is not null || !ReferenceEquals(_battle.Session, _game)) throw new Exception("Reset must leave preview mode and rebind the battle view");
+            // 阵亡与复活的四拍：强制死一次、逐拍留图。**放在最后**——它会整关重置，
+            // 放前面会把上面那些依赖关卡状态的断言搅乱。帧数是按 60fps 估的，只看个大概齐。
+            // 先让游戏**自然跑几帧**把怪刷出来。**不要用同步的一大串 `Step`**：那会把这一帧的
+            // 真实 delta 撑大，下一帧的固定步循环就一口气走完整个 2 秒复活读条——倒地演出整个被跳过去。
+            // （排查"尸体画不出来"就是栽在这里：读条一帧走完 → EnterLevel 换了 BattleState →
+            //  换场守卫把刚落的尸体全清了。真机 60fps 下不会这样。）
+            // 等待按**模拟时钟**而不是帧数：同样的帧数在无窗口自检下可能连半秒模拟都不到（帧率越高模拟越慢），
+            // 窗口化下却是十秒——按帧数写就是抽签。下面的 `DeathFrames` 仍按帧数，那是估演出时长，另当别论。
+            double wipeDeadline = _game.Elapsed + 30;
+            for (int i = 0; i < 20000 && _game.Battle.Enemies.Count == 0 && _game.Elapsed < wipeDeadline; i++)
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (_game.Battle.Enemies.Count == 0) throw new Exception("No enemies on the field to wipe for the death capture");
+            _game.Battle.PlayerHp = 0;   // 下一帧的固定步就会判死，不必自己 Step
+            async Task DeathFrames(int n) { for (int i = 0; i < n; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+            await DeathFrames(5); await Capture("-death-burst");   // ① 怪物爆开的那几帧
+            await Capture("-death-corpses");                       // 尸体渐隐（与上一张隔一帧，看得到残影）
+            await DeathFrames(17); await Capture("-death-fall");   // ① 向后倒 + 画面压暗
+            await DeathFrames(18); await Capture("-death-cut");    // ② 全暗、镜头切回关卡起点
+            await DeathFrames(26); await Capture("-death-drop");   // ③ 画面变亮 + 从天上落下
+            await DeathFrames(40); await Capture("-death-land");   // ④ 落地压扁 + 扬尘
+            await DeathFrames(50);                                 // 让读条走完，回到常态
             // 真实窗口路径：--capture 是有显示的，这里验证分辨率确实落到窗口上。
             if (capturePath is not null)
             {
@@ -723,16 +993,21 @@ public partial class Main : Control
         var s = _game.State;
         // 战斗读数跟随当前会话：预览时显示预览会话，钱包始终是玩家真实钱包。
         var shown = Active;
-        _wallet.Text = $"灵钱  {UiKit.Number(s.Amount("gold"))}       灵核  {s.Amount("core"):0}       攻击  {UiKit.Number(shown.Attack)}";
+        // 货币名一律从 `item.csv` 取：写死的话改名时这里会静默留在旧名上（界面上同时出现两个叫法）。
+        _wallet.Text = $"{_game.CurrencyName("gold")}  {UiKit.Number(s.Amount("gold"))}       "
+            + $"{_game.CurrencyName("core")}  {s.Amount("core"):0}       攻击  {UiKit.Number(shown.Attack)}";
         _hp.MaxValue = shown.MaxHp; _hp.Value = shown.Battle.PlayerHp;
         _hpText.Text = $"气血  {UiKit.Number(shown.Battle.PlayerHp)} / {UiKit.Number(shown.MaxHp)}     {_saveStatus}";
-        _previewToggle.Text = _preview is null ? "技能预览" : "退出预览";
         _stage.Text = _preview is null
             ? $"{_game.Level.Name}     第 {_game.Battle.Cell + 1:00} / {_game.Level.Cells} 格     在场 {_game.Battle.Enemies.Count} 敌"
             : $"技能预览    第 {_previewSkill + 1:00} / {PreviewSkillIds.Count} 个法术    {_game.Config.Skills[PreviewSkillId].Name}";
         _notice.Text = _gameNotice ?? _game.Message;
         if (_talentRoot.Visible) RefreshTalentMap();
-        _loop.Text = s.LoopLevel ? "整关循环  /  点击自动推进" : "自动推进  /  点击循环本关";
+        RefreshTabs();   // 解锁常常发生在战斗里（首杀小怪），页签得当场亮起来，而不是等玩家切一次页
+        // 就一个开关：**亮 = 自动推进，灭 = 本关循环**。文字只写当前状态，不再写"点一下会怎样"——
+        // 那半句在两种状态下各占 8 个字，是它原来必须做那么宽的原因。
+        _loop.Text = s.LoopLevel ? "本关循环" : "自动推进";
+        _loop.AddThemeColorOverride("font_color", s.LoopLevel ? UiKit.Muted : UiKit.Gold);
         if (_levelIds.Count != s.UnlockedLevels.Count)
         {
             _levelSelect.Clear(); _levelIds.Clear();
@@ -784,21 +1059,129 @@ public partial class Main : Control
         _sfxPlayers = [];
         _music = null;
     }
+    /// <summary>
+    /// 页签 → 系统 id。第 5 个（剑灵）留空：它本来就没有入口，不该被门挡住。
+    /// 每个系统的解锁途径见 <see cref="Systems.ByEffect"/> 与 `GameSession.Unlocked`。
+    /// </summary>
+    private static readonly string?[] TabSystems =
+        [Systems.Cultivation, Systems.Realm, Systems.Forge, Systems.Intent, null];
+
+    private bool TabLocked(int tab) => TabSystems[tab] is { } system && !_game.Unlocked(system);
+
+    /// <summary>上一轮的锁定状态。用来发现"**刚刚**解锁了"——解锁那一刻要炸一下，见 <see cref="OnSystemUnlocked"/>。</summary>
+    private readonly bool[] _tabWasLocked = new bool[5];
+
+    /// <summary>
+    /// 解锁"揭示"的进行状态：新功能强制切过去之后，先被遮罩罩住一拍，到点那一刻碎开、露出内容。
+    /// `-1` = 没有正在进行的揭示。走**渲染时钟**（`_Process` 的 delta），与其它演出同一套路。
+    /// </summary>
+    private const double RevealHold = .45;
+    private int _revealTab = -1;
+    private double _revealClock;
+
+    private void TickSystemReveal(double delta)
+    {
+        if (_revealTab < 0) return;
+        _revealClock -= delta;
+        if (_revealClock > 0) return;
+        _revealTab = -1;
+        _lockFx.Play(_lockMask.GetGlobalRect().GetCenter(), 96);
+        RefreshTabs();   // 遮罩落下，新内容露出来
+    }
+
+    /// <summary>过场（序章）期间收起了 HUD。</summary>
+    private bool _hudHidden;
+
+    /// <summary>
+    /// 星图与锁那三层的可见性**统一在这里算**（`_talentRoot` / `_lockMask` / `_lockFx` 共用同一块矩形）。
+    ///
+    /// 不能只靠 `SetHudVisible(true)` 一把全亮：修行锁着时星图本来就不该显示，
+    /// 而过场结束那一趟会把它一起点亮——现象就是"进到第 1 关，锁没了、星图却露出来了"。
+    /// </summary>
+    private void RefreshHudLayers()
+    {
+        bool shown = !_hudHidden;
+        _talentRoot.Visible = shown && _selectedTab == 0 && _preview is null && !TabLocked(0);
+        _lockMask.Visible = shown;
+        _lockFx.Visible = shown;
+    }
+
+    /// <summary>
+    /// 页签的可用性与配色。**也挂在 <see cref="Refresh"/> 上**：解锁可能发生在别的页面上
+    /// （在战斗中击杀第一只怪就解锁了修行），页签该当场亮起来，而不是等玩家切一次页。
+    /// </summary>
+    private void RefreshTabs()
+    {
+        int fresh = -1;   // 刚刚解锁的那个页签（出循环再处理，见下）
+        for (int i = 0; i < _tabs.Count; i++)
+        {
+            // 预览期间页面固定为法术列表，禁用页签避免切走后状态与画面不一致。
+            bool locked = TabLocked(i) || _preview is not null;
+            _tabs[i].Disabled = locked;
+            _tabs[i].AddThemeColorOverride("font_color",
+                i == _selectedTab && !locked ? UiKit.Gold : UiKit.Muted);
+            if (i < _tabBadges.Count) _tabBadges[i].Locked = locked;
+            // **刚刚解锁**：先记下状态、出循环再处理——处理会**切页**，切页又会绕回来调本方法，
+            // 在循环里当场触发会变成一段绕来绕去的重入。
+            bool wasLocked = _tabWasLocked[i];
+            _tabWasLocked[i] = TabLocked(i);
+            if (wasLocked && !TabLocked(i)) fresh = i;
+        }
+        // 选中的页锁着时压上遮罩；解锁的瞬间它跟着碎掉（见 OnSystemUnlocked）。
+        // 揭示期间**无条件**压着——那半秒是刻意的"先罩住、再碎开"。
+        _lockMask.Locked = _revealTab >= 0 || (_preview is null && TabLocked(_selectedTab));
+        _lockMask.MouseFilter = _lockMask.Locked ? MouseFilterEnum.Stop : MouseFilterEnum.Ignore;
+        RefreshHudLayers();
+        if (fresh >= 0) OnSystemUnlocked(fresh);
+    }
+
+    /// <summary>
+    /// 某个系统**刚刚**解锁：页签角上的锁炸开，并且**强制切到那一页**、用遮罩把它先罩住一拍，
+    /// 到点再碎开露出内容。
+    ///
+    /// 为什么要强制切页 + 先罩住（用户要求）：系统是逐个开的，解锁本身在别的页面上发生
+    /// （在星图上点出「法术」、在战斗里杀掉第一只怪），不切过去的话玩家根本不会注意到多了个功能；
+    /// 而直接切过去、内容瞬间铺满，又容易被当成"我刚才点到哪了"。先罩住半秒再碎开，
+    /// 这一下就成了一次**有始有终的揭示**，与页签上那把锁碎掉是同一拍。
+    /// </summary>
+    private void OnSystemUnlocked(int tab)
+    {
+        if (tab < _tabBadges.Count) _lockFx.Play(_tabBadges[tab].GetGlobalRect().GetCenter(), 44);
+        _selectedTab = tab;
+        ShowPage(tab);            // 这一趟铺的是**真页面**；遮罩只是罩在它上面，不是"锁定页"
+        _revealTab = tab;
+        _revealClock = RevealHold;
+        RefreshTabs();
+    }
+
     private void ShowPage(int tab)
     {
         _selectedTab = tab; _bindings.Clear();
         foreach (var child in _page.GetChildren()) { _page.RemoveChild(child); child.QueueFree(); }
-        for (int i = 0; i < _tabs.Count; i++)
-        {
-            // 预览期间页面固定为法术列表，禁用页签避免切走后状态与画面不一致。
-            _tabs[i].Disabled = _preview is not null;
-            _tabs[i].AddThemeColorOverride("font_color", i == tab && _preview is null ? UiKit.Gold : UiKit.Muted);
-        }
-        // 修行是常驻星图（不在 _page 里），这里只切可见性——重建的话平移量与按钮身份都会丢。
-        _talentRoot.Visible = tab == 0 && _preview is null;
-        if (_talentRoot.Visible) { Recenter(); RefreshTalentMap(); }
+        // 修行是常驻星图（不在 _page 里），它**只切可见性**、不重建——重建的话平移量与按钮身份都会丢。
+        // 可见性由 `RefreshTabs → RefreshHudLayers` 一处算（还要看锁没锁、过场收没收），这里不重复写。
+        RefreshTabs();
+        // **不重置平移**：切走再切回来应该还停在原处。"居中"按钮已按用户要求删掉，平移全交给拖拽。
+        if (_talentRoot.Visible) RefreshTalentMap();
         if (_preview is not null) { PreviewPage(); return; }
+        if (TabLocked(tab)) { LockedPage(_tabs[tab].Text); return; }
         switch (tab) { case 0: break; case 1: SkillPage(); break; case 2: ForgePage(); break; case 3: IntentPage(); break; case 4: PetPage(); break; }
+    }
+
+    /// <summary>
+    /// 未解锁的系统页：**说清为什么锁着、怎么解开**，而不是甩一张空页给玩家。
+    /// 页签本身保留可见但置灰——一来"还有东西没开"本身就是盼头，二来隐藏页签会把冒烟里
+    /// 按下标取页签的断言全打乱（`PetPage` 就是靠这个留着一份回归覆盖的）。
+    /// </summary>
+    private void LockedPage(string title)
+    {
+        UiKit.Label(_page, $"{title} · 尚未开启", 60, 140, 1200, 60, 40, UiKit.Muted);
+        string hint = title switch
+        {
+            "修行" => "击败前方之敌，修行自会显现。",
+            _ => $"在修行星图上点亮「{title}」。",   // 其余四个都挂在「生根」底下，各自花一颗灵核
+        };
+        UiKit.Label(_page, hint, 60, 216, 1200, 40, 24, UiKit.Muted);
     }
     private void Act(Func<bool> action, string? successSfx = null)
     {

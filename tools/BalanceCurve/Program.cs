@@ -9,10 +9,17 @@ using IdleSword.Core;
 //
 // 口径与推导见 docs/design/balance_ttk.md 与 docs/design/skill_realms.md。
 
-const double BaseAttack = 25;      // fightattr.atk：主轴的起点，不含武器与剑意
+const double BaseAttack = 10;      // fightattr.atk：主轴的起点，不含武器与剑意
 const double BasicPower = 1;       // fightattr.basic_power
-const double StandardHp = 88;      // 标准小怪（青苔妖）的基础 HP，SU 的载体
-const double StandardHits = 3.5;   // 裸开局"N 下普攻打死后标准怪"的锚点
+const double StandardHp = 30;      // 标准小怪（青苔妖）的基础 HP，SU 的载体
+const double StandardHits = 3;     // 裸开局"N 下普攻打死后标准怪"的锚点
+// **前几关是手抠的教学段**，不参与生成：它们的 `cells` 与 BOSS 血量都是按"点几下修为就能过"定的，
+// 让生成器再算一遍只会把它冲掉。跳过之后 `--check` 也跳过同样的行，两边口径一致。
+//
+// 为什么要三段：**「BOSS = 75 只标准怪」这个比例是旧刻度下的设计**（那时玩家有整套法术链），
+// 而前期玩家只会点击。所以前三关的 BOSS 按 5 / 10 / 20 SU 手抠成一条缓坡
+// （`boss.hp × boss_hp` = 150 / 300 / 600），正好对上"拿到自动攻击 → 剑气 → 法术"那三个节奏。
+const int HandTunedLevels = 3;
 const double EliteSu = 10;         // 精英 = 10 SU（monster.csv 的 elite.hp 必须是 EliteSu × StandardHp）
 const double BossSu = 75;          // BOSS = 75 SU（boss.hp 同理）
 const double RiftRatio = 0.9;      // 裂隙 = 0.9 × 标准怪（它是一道门，不是一场战斗）
@@ -170,6 +177,8 @@ var output = new List<IEnumerable<string>> { header };
 foreach (var row in rows)
 {
     int order = row.Int("order");
+    // 教学关原样保留：它们是手抠的，生成器不许碰（`--check` 也一并跳过，否则每跑一次必报不一致）。
+    if (order <= HandTunedLevels) { output.Add(header.Select(c => row.Text(c))); continue; }
     double hp = NormalHp(order), atk = NormalAtk(order);
     // 精英 / BOSS / 裂隙的基础 HP 已经在 monster.csv 里按 SU 份额定好了（880 = 10 SU、6600 = 75 SU），
     // 所以它们的关卡倍率**就是 normal_hp 本身**——再乘一次 SU 份额就成了双重计数。

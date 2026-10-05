@@ -9,7 +9,13 @@ void Assert(bool condition, string message) { if (!condition) throw new Exceptio
 void Check(string name, Action test) { test(); passed++; Console.WriteLine("PASS " + name); }
 // 普攻默认关掉：受控用例要的是确定的伤害预算，而普攻每秒都在加伤害、也在消耗随机数。
 // 需要验证真实循环的用例显式传 basic: true。
-GameSession New(bool basic = false) { var g = new GameSession(config, seed: 42) { BasicAttackEnabled = basic }; return g; }
+GameSession New(bool basic = false) { var g = new GameSession(config, seed: 42) { BasicAttackEnabled = basic }; GrantLateGame(g); return g; }
+// 受控用例要的是**后期盘面**：已经点过「生根」（自动出手）与「剑气」（远程）。教学期恰恰相反——
+// 近战 + 不能自动出手，那两态由 `Melee` 与下面几条用例专门覆盖。不给这两个节点的话，
+// 950 射程的靶位、每秒一手的节奏、以及"移动会在 640 处停下"这些前提全都不成立。
+void GrantLateGame(GameSession g) { g.State.Talents["t_auto"] = 1; g.State.Talents["t_ranged"] = 1; }
+// 教学期的盘面：开局就是近战，且没点「生根」→ 不会自动出手，只能靠点击。
+GameSession Melee(GameConfig? cfg = null, bool basic = false) => new(cfg ?? config, seed: 42) { BasicAttackEnabled = basic };
 void Step(GameSession g, double seconds) { for (int i = 0; i < (int)Math.Ceiling(seconds / .05); i++) g.Step(.05); }
 void ToBoss(GameSession g)
 {
@@ -39,13 +45,35 @@ GameSession SalvoOn(GameConfig cfg, string skillId, double offset = 90)
 {
     // 靶场一律关掉普攻：否则每秒多出一支飞行效果，既有"数得到几支剑"的断言全会被污染，
     // 而且普攻还要抽随机数，同 seed 的可复现序列也会跟着漂。
-    var s = new GameSession(cfg, seed: 42) { BasicAttackEnabled = false }; s.Step(.05);
-    foreach (var e in s.Battle.Enemies) { e.Atk = 0; e.Hp = e.MaxHp = 1e8; e.X = s.Battle.PlayerX + offset; e.StunUntil = 1e9; }
+    var s = new GameSession(cfg, seed: 42) { BasicAttackEnabled = false };
+    GrantLateGame(s);   // 靶场一律按后期盘面（远程 + 已解锁自动出手），否则形态与停步全是教学期的
+    s.Step(.05);
+    // 三只叠在**同一个点**上——多目标形态的命中数全靠这个确定条件。
+    Dummies(s, 3, offset, 0);
     s.State.Skills.Clear(); s.State.Skills[skillId] = 1; s.Battle.Cooldowns.Clear(); s.Effects.Clear();
     s.Step(.05);
     return s;
 }
 GameSession Salvo(string skillId, double offset = 90) => SalvoOn(config, skillId, offset);
+
+/// <summary>
+/// 摆 <paramref name="count"/> 只定身高血靶（全是青苔妖 / 地面）。
+///
+/// **不再借关卡的第一波**：那个只数归 `wave.csv` 管，第 1 关改成"每波 1 只"的单只教学波之后
+/// 场上就只剩一只，而一堆用例要的是"确定的 N 只"这个条件。靶场该自己决定摆几只。
+/// </summary>
+void Dummies(GameSession g, int count, double startOffset, double step)
+{
+    g.Battle.Enemies.Clear();
+    var m = g.Config.Monsters["slime"];
+    for (int i = 0; i < count; i++)
+        g.Battle.Enemies.Add(new EnemyState
+        {
+            Id = g.Battle.NextEnemyId++, MonsterId = m.Id, Kind = m.Kind,
+            X = g.Battle.PlayerX + startOffset + i * step, Hp = 1e8, MaxHp = 1e8,
+            Atk = 0, AttackTimer = 999, StunUntil = 1e9,
+        });
+}
 
 Check("all tables / 100 stages / 15 skills / 60 intent upgrades", () => Assert(config.Levels.Count == 100 && config.Skills.Count == 15 && config.Rows("SwordUpgrade").Count == 60, "table counts"));
 Check("skill roster: three per realm, rearranged as designed", () => {
@@ -176,8 +204,10 @@ Check("reject duplicate IDs and dangling references", () => {
     Reject(() => GameConfig.Load(f => f == "wave_unit.csv" ? source[f].Replace("wave_1_slime,wave_1,slime", "wave_1_slime,wave_1,missing") : source[f]));
 });
 Check("reject repeat core and non-deterministic first-core quantity", () => {
-    Reject(() => GameConfig.Load(f => f == "drop.csv" ? source[f].Replace("boss_repeat,gold,60", "boss_repeat,core,1") : source[f]));
-    Reject(() => GameConfig.Load(f => f == "drop.csv" ? source[f].Replace("boss_first,core,1", "boss_first,core,2") : source[f]));
+    // **按列名改**而不是替换整行字面量：掉落的数值会随数值轮调整，写死 "boss_repeat,gold,60"
+    // 这种串会在改数值时**静默失配**——替换没命中，于是"拒绝"根本没发生，用例变成空断言。
+    Reject(() => GameConfig.Load(f => f == "drop.csv" ? Cell(source[f], "repeat_gold", "item_id", "core") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "drop.csv" ? Cell(source[f], "first_core", "amount", "2") : source[f]));
 });
 Check("reject malformed talent star map", () => {
     // 前置连成了环。刻意让两个节点**同一列**（t_hp 与 t_atk 都在 col 1），否则会先被
@@ -204,9 +234,10 @@ Check("reject malformed talent star map", () => {
     Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_auto|t_auto") : source[f]));
     // 引用不存在的节点
     Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_missing") : source[f]));
-    // prereq_state 与 prereq 条数对不上 / 取值非法
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_auto", "prereq_state", "max") : source[f]));
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_auto", "prereq_state", "active|bogus") : source[f]));
+    // prereq_state 与 prereq 条数对不上 / 取值非法。**用 `t_end`**：它是全表唯一挂两条前置的节点
+    // （`t_auto` 现在是"掉落 → 自动攻击"那条单线上的第二格，只有一条前置，写一个 state 反而是合法的）。
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq_state", "max") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq_state", "active|bogus") : source[f]));
     // 每级消耗的项数必须等于 max_level
     Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "cost", "30|60") : source[f]));
     // 未知 effect / icon
@@ -255,26 +286,32 @@ Check("reject invalid flight shape, count and arc band", () => {
         ? Cell(Cell(Cell(source[f], "wave_3_bat", "wave_id", "wave_1"), "wave_3_hawk", "wave_id", "wave_1"), "wave_3_slime", "wave_id", "wave_1")
         : source[f]));
 });
+// 第 1 关是**单只教学波**（`wave_10`，每波 1 只、不刷精英）——用户要的"感知清晰明了"。
+// 所以下面几条"一波几只"的用例要么按 1 只断言，要么挪到别的关卡去验（见混编那条）。
 Check("only current cell activates; uncleared waves accumulate", () => {
     var g = New(); g.Step(.05);
-    Assert(g.Battle.Spawns.Count == 1 && g.Battle.Enemies.Count == 3, "initial wave");
+    Assert(g.Battle.Spawns.Count == 1 && g.Battle.Enemies.Count == 1, "initial wave");
     foreach (var e in g.Battle.Enemies) { e.Hp = e.MaxHp = 1e8; e.Atk = 0; }
     Step(g, 6.2);
-    Assert(g.Battle.Spawns.Count == 1 && g.Battle.Spawns[0].Wave >= 2 && g.Battle.Enemies.Count >= 6, "stack wave");
+    Assert(g.Battle.Spawns.Count == 1 && g.Battle.Spawns[0].Wave >= 2 && g.Battle.Enemies.Count >= 2, "stack wave");
 });
 Check("walking can trigger a fresh wave before passing spawn", () => {
     var g = New(); g.Step(.05); g.Battle.Enemies.Clear();
     g.Battle.PlayerX = 1200; g.Battle.Spawns[0].Timer = .01; g.Step(.05);
-    Assert(g.Moving && g.Battle.Enemies.Count == 3 && !g.Battle.Spawns[0].Passed, "walking spawn");
+    Assert(g.Moving && g.Battle.Enemies.Count == 1 && !g.Battle.Spawns[0].Passed, "walking spawn");
 });
 Check("passing stops spawn without removing existing enemies", () => {
     var g = New(); g.Step(.05); g.Battle.PlayerX = 1449;
     foreach (var e in g.Battle.Enemies) e.X = 3000;
     g.Battle.Spawns[0].Timer = .01; g.Step(.05);
-    Assert(g.Battle.Spawns[0].Passed && g.Battle.Enemies.Count == 3, "pass lifecycle");
+    Assert(g.Battle.Spawns[0].Passed && g.Battle.Enemies.Count == 1, "pass lifecycle");
 });
 Check("waves mix several monster templates, spread across distinct spawn points", () => {
-    var g = New(); g.Step(.05);
+    // **改用第 7 关**：第 1 关现在是单只教学波（`wave_10`），验不了"多模板混编"。
+    // 第 7 关同样走 `wave_1`（前 50 关六循环），阵容与只数都还是原来的样子。
+    var g = New();
+    g.State.UnlockedLevels.Add("level_007"); g.SelectLevel("level_007");
+    g.Step(.05);
     Assert(config.WaveUnits["wave_1"].Count == 2, "wave_1 is configured from two templates");
     Assert(config.WaveUnits["wave_1"].Select(u => u.Weight).SequenceEqual([2, 1]), "并且是 2 : 1 的配比");
     Assert(g.Battle.Enemies.Count == 3, $"the wave still spawns three units in total: {g.Battle.Enemies.Count}");
@@ -282,17 +319,45 @@ Check("waves mix several monster templates, spread across distinct spawn points"
     Assert(kinds.SequenceEqual(["slime", "slime", "tank"]), "the mix matches the table: " + string.Join(",", kinds));
     Assert(g.Battle.Enemies.Select(e => e.X).Distinct().Count() == 3, "no two units share a spawn point");
 });
-Check("the bare opening needs 3.5 basic attacks per standard monster", () => {
-    // 开局不附带任何法术，也没有武器与天赋——这一条是 SU 刻度（标准怪 HP = 3.5 × 普攻）的唯一直接证据，
+Check("SU 锚点：裸开局 3 刀打死标准怪", () => {
+    // 开局不附带任何法术，也没有武器与天赋——这一条是 SU 刻度（标准怪 HP = 3 刀普攻）的唯一直接证据，
     // 也是整条关卡曲线的锚点。改 monster.csv 的 hp 列或 fightattr 的 atk 都会在这里断。
     var g = New(basic: true); g.Step(.05);
     Assert(g.State.Skills.Count == 0, "no skill is granted at the start");
-    Assert(g.Battle.Enemies.Count == 3, "the first wave is still the 3-unit baseline");
+    Assert(g.Battle.Enemies.Count == 1, "the tutorial's first wave is a single monster");
     Assert(Math.Abs(g.AttackRange - config.Attr("basic_range")) < 1e-9,
         $"with no skill, the rift stop range falls back to the basic attack range: {g.AttackRange}");
     var slime = g.Battle.Enemies.First(e => e.MonsterId == "slime");
-    Assert(Math.Abs(slime.MaxHp - 88) < 1e-9, $"the standard monster is 88 HP at stage 1: {slime.MaxHp}");
-    Assert(Math.Abs(slime.MaxHp / g.Attack - 3.5) < .05, $"which is 3.5 basic attacks: {slime.MaxHp / g.Attack:F2}");
+    Assert(Math.Abs(slime.MaxHp - 30) < 1e-9, $"标准怪 30 血：{slime.MaxHp}");
+    Assert(Math.Abs(slime.MaxHp / g.Attack - 3) < 1e-9, $"裸开局正好 3 刀一只：{slime.MaxHp / g.Attack:F2}");
+});
+Check("前期走一遍的账：见 BOSS 前 4~8 只 → 能点 3~4 级 → TTK 进 2 刀", () => {
+    // 这是整轮数值的**支点**（见 balance_ttk.md 的「前期模型」一节）：把
+    // 「走 4 格杀几只 → 掉多少灵石 → 能点几级 → 攻击到多少 → TTK 几刀」串成一条可断言的链。
+    // 以后改任何一格（掉率 / 节点价 / 怪的血）都会让它响，而不是让手感**静默**跑偏。
+    double gold = config.Monsters["slime"].Gold;
+    // 下界：走 4 个非 BOSS 格、每格 1 只。
+    var few = new GameSession(config, seed: 42);
+    few.State.Wallet["gold"] = 4 * gold;
+    Assert(few.BuyTalent("t_root") && few.BuyTalent("t_root") && few.BuyTalent("t_atk"), "4 只的钱够点 3 级");
+    double tk = config.Monsters["slime"].Hp / few.Attack;
+    Assert(tk <= 2 + 1e-9, $"点完这几级 TTK 必须进 2 刀：{tk:F2}");
+    // **而且刚好花到这儿**——钱能随手再点一级的话，"频繁加点"的节奏感就没了。
+    Assert(!few.BuyTalent("t_atk"), "4 只的钱不该还够多点一级");
+    // 上界：每格 2 只 ⇒ 8 只，点多一级，TTK 仍然在 2 刀以内。
+    var many = new GameSession(config, seed: 42);
+    many.State.Wallet["gold"] = 8 * gold;
+    many.BuyTalent("t_root"); many.BuyTalent("t_root"); many.BuyTalent("t_root"); many.BuyTalent("t_atk");
+    Assert(config.Monsters["slime"].Hp / many.Attack <= 2 + 1e-9,
+        $"8 只、点 4 级之后 TTK 仍要在 2 刀以内：{config.Monsters["slime"].Hp / many.Attack:F2}");
+});
+Check("第 1 关的 BOSS 必须够得到——它得是近战", () => {
+    // 玩家的移动上限恒比 BOSS 落点少 430（见 GameSession 里那段夹取），所以 BOSS 若是远程
+    // （`attack_range` 420），开局的近战普攻（150）**永远够不到它**；而想换远程就得点「剑气」或学法术，
+    // 两者都要灵核，灵核又只能从这只 BOSS 的首杀掉——**循环锁死**，教学关直接走不通。
+    var boss = config.Monsters[config.Levels[0].Boss];
+    Assert(boss.Range <= config.Attr("melee_range"),
+        $"第 1 关的 BOSS 得走进近战射程（{config.Attr("melee_range")}）里：它的 attack_range = {boss.Range}");
 });
 Check("伤害分级：多目标形态确实按波次人数结算，单体的只打一只", () => {
     // 这一条是 2026-10-05 那轮"把期望命中数写进模型"的**运行时**护栏：模型假定贯穿扫整波、单体只打一只，
@@ -301,11 +366,18 @@ Check("伤害分级：多目标形态确实按波次人数结算，单体的只�
     {
         var g = Salvo(id, 300);
         g.Battle.Enemies.Clear();
-        // 补到 N 只：用 GM 的波次加成多刷一波，比手搓 EnemyState 更贴近真实刷怪路径。
-        g.WaveBonus = Math.Max(0, enemies - 3);
-        g.Battle.Spawns[0].Timer = .01; g.Step(.05);
-        foreach (var e in g.Battle.Enemies)
-        { e.Hp = e.MaxHp = 1e8; e.X = g.Battle.PlayerX + 300; e.StunUntil = 1e9; }   // 叠在一处：只有形态在区分它们
+        // **直接摆 N 只青苔妖**，不再走"GM 波次加成"：加成是从普通怪原型里**随机**挑的，
+        // 抽到飞行单位就吃不进只打地面的招式（`skill_05` 是 `hits = ground`），命中数会随 seed 漂。
+        // 这条用例要的是"确定了 N 只在场"，随机刷怪是上一版夹具的隐患——第 1 关改成单只教学波
+        // 之后补的只数变多，它当场就暴露了。
+        var slime = config.Monsters["slime"];
+        for (int i = 0; i < enemies; i++)
+            g.Battle.Enemies.Add(new EnemyState
+            {
+                Id = g.Battle.NextEnemyId++, MonsterId = slime.Id, Kind = slime.Kind,
+                X = g.Battle.PlayerX + 300, Hp = 1e8, MaxHp = 1e8,   // 叠在一处：只有形态在区分它们
+                Atk = 0, AttackTimer = 999, StunUntil = 1e9,
+            });
         g.Battle.Cooldowns.Clear(); g.Effects.Clear();
         g.ResetDamageStats();
         Assert(g.ForceRelease(id), id + " released");
@@ -370,7 +442,8 @@ Check("波次只数随关卡放大，并止步于 count_max（硬约束）", () 
         g.State.UnlockedLevels.Add(id); g.SelectLevel(id); g.Step(.05);
         return g.Battle.Enemies.Count;
     }
-    Assert(Spawned(1) == 3, "第 1 关仍是 3 只（编制不变）");
+    // 第 1 关是**单只教学波**（`wave_10`）；其余关卡仍走各自的编制，随关卡放大。
+    Assert(Spawned(1) == 1, "第 1 关是单只教学波");
     Assert(Spawned(20) > Spawned(1) && Spawned(50) > Spawned(20) && Spawned(100) > Spawned(50), "越到后面刷得越多");
     // 上限是硬约束：把倍率调到很大，数量照样止步在 count_max。
     var huge = GameConfig.Load(f => f == "game_settings.csv" ? Cell(source[f], "wave_growth", "value", "9") : source[f]);
@@ -430,8 +503,10 @@ Check("GM 的波次加成：只加不改配比，且封顶在 20", () => {
     // 调试开关：`wave.csv` 保持正式数值，测试时临时加几只（种类随机）。加成**只影响之后刷出的波次**。
     var g = New();
     Assert(g.WaveBonus == 0, "默认不加");
+    // 基线只数**从 `wave.csv` 现取**，不写死：第 1 关改成单只教学波之后，写死的 3 会立刻错位。
+    int baseline = config.Waves[config.Levels[0].Wave].Count;
     g.WaveBonus = 5; g.Step(.05);
-    Assert(g.Battle.Enemies.Count == 3 + 5, $"第一波就按加成刷：{g.Battle.Enemies.Count}");
+    Assert(g.Battle.Enemies.Count == baseline + 5, $"第一波就按加成刷：{g.Battle.Enemies.Count}");
     Assert(g.Battle.Enemies.Select(e => e.MonsterId).Distinct().Count() > 2, "额外那几只从普通怪里随机挑（不是清一色）");
     g.WaveBonus = 999;
     Assert(g.WaveBonus == 20, "上限 20：刷怪落点是 40 + i×100 铺开的，堆太多会溢到下一格");
@@ -454,21 +529,27 @@ Check("wave strength coefficients scale normal monsters, and only those", () => 
     var b = New(); b.Step(.05);
     Assert(Math.Abs(b.Battle.Enemies[0].MaxHp - slime.Hp * l1.HpScale) < 1e-6, "the baseline stage keeps the plain stage multiplier");
     // 精英与 BOSS 是关卡节点、不是波次阵容的一部分，不该跟着"这波更硬"一起涨。
-    var e = New(); e.Step(.05);
+    // **换到第 7 关**验精英：第 1 关现在是单只教学波（`wave_10`，`elite_every = 99`），一辈子不刷精英。
+    var e = New();
+    e.State.UnlockedLevels.Add("level_007"); e.SelectLevel("level_007");
+    e.Step(.05);
     foreach (var m in e.Battle.Enemies) { m.Hp = m.MaxHp = 1e8; m.Atk = 0; }
     while (e.Battle.Spawns[0].Wave < e.Config.Waves["wave_1"].EliteEvery) { e.Battle.Spawns[0].Timer = .01; e.Step(.05); }
     var elite = e.Battle.Enemies.Last(m => m.Kind == "elite");
-    Assert(Math.Abs(elite.MaxHp - e.Config.Monsters["elite"].Hp * l1.EliteHp) < 1e-6, $"elites ignore the wave coefficient: {elite.MaxHp}");
+    Assert(Math.Abs(elite.MaxHp - e.Config.Monsters["elite"].Hp * e.Level.EliteHp) < 1e-6, $"elites ignore the wave coefficient: {elite.MaxHp}");
     ToBoss(b);
     var boss = Boss(b);
-    Assert(Math.Abs(boss.MaxHp - config.Monsters["boss"].Hp * l1.BossHp) < 1e-6, $"the boss ignores the wave coefficient: {boss.MaxHp}");
+    // BOSS 也**按关卡自己的 `boss_id` 现取**：第 1 关现在挂的是手抠的近战 BOSS（`boss_melee`），
+    // 写死 `Monsters["boss"]` 会在教学关特化时当场失配。
+    Assert(Math.Abs(boss.MaxHp - config.Monsters[l1.Boss].Hp * l1.BossHp) < 1e-6, $"the boss ignores the wave coefficient: {boss.MaxHp}");
 });
 Check("stages 1-50 keep the base waves; later stages switch to the new set", () => {
     var early = config.Levels.Where(l => l.Order <= 50).Select(l => l.Wave).Distinct().OrderBy(x => x).ToArray();
     var late = config.Levels.Where(l => l.Order > 50).Select(l => l.Wave).Distinct().OrderBy(x => x).ToArray();
     // 前 50 关**六循环**：第 1~6 关各一套不同的阵容偏向，之后再重复。后 50 关仍是原来的"更硬一档"三循环。
-    Assert(early.SequenceEqual(["wave_1", "wave_2", "wave_3", "wave_7", "wave_8", "wave_9"]),
-        "early stages cycle six line-ups: " + string.Join(",", early));
+    // 例外是**第 1 关**：它单独走 `wave_10`（每波 1 只、不刷精英的单只教学波），所以早期是六个循环 + 它这一条。
+    Assert(early.SequenceEqual(["wave_1", "wave_10", "wave_2", "wave_3", "wave_7", "wave_8", "wave_9"]),
+        "early stages cycle six line-ups plus the tutorial wave: " + string.Join(",", early));
     Assert(late.SequenceEqual(["wave_4", "wave_5", "wave_6"]), "late stages use the new trio: " + string.Join(",", late));
     Assert(config.WaveUnits.Keys.OrderBy(x => x).SequenceEqual(config.Waves.Keys.OrderBy(x => x)), "every wave has units");
 });
@@ -494,15 +575,24 @@ Check("in-range targets stop movement", () => {
     var g = New(); g.Step(.05); g.Battle.Enemies[0].X = g.Battle.PlayerX + 300;
     double x = g.Battle.PlayerX; g.Step(.05); Assert(g.Battle.PlayerX == x && !g.Moving, "stop");
 });
-Check("normal death resets progress and keeps resources", () => {
+Check("normal death keeps resources and resets to the level start after the fall", () => {
     var g = New(); g.Battle.PlayerX = 5000; g.State.Wallet["gold"] = 999; g.Battle.PlayerHp = 0; g.Step(.05);
-    Assert(g.Battle.Cell == 0 && g.Battle.PlayerX == 80 && g.State.Amount("gold") == 999 && g.Battle.RespawnTimer > 0, "normal death");
+    // 死亡瞬间**不重置关卡**（重置挪到复活那一刻），所以位置还停在死亡点——倒地演出就在那儿播。
+    // 注意这里判的是"没被挪回起点"而不是某个具体数值：阵亡是在这一步的末尾才判定的，
+    // 玩家已经先按移动速度走了一小段。
+    Assert(g.Battle.PlayerX != GameSession.LevelStartX && g.Battle.RespawnTimer > 0 && g.State.Amount("gold") == 999, "death defers the reset");
+    // 判"离起点很近"而不是"正好等于起点"：复活之后玩家立刻继续往前走，多走几步是正常的。
+    Step(g, 2.1);
+    Assert(g.Battle.Cell == 0 && g.Battle.PlayerX < 1000 && g.State.Amount("gold") == 999, "respawn at the level start");
 });
-Check("boss-cell respawn preserves wounds and freezes encounter during respawn", () => {
+Check("boss-cell death also returns to the level start; wounds survive the fall", () => {
     var g = New(); ToBoss(g); Boss(g).Hp = 123; g.Battle.PlayerHp = 0; g.Step(.05);
-    int waves = g.Battle.Spawns[24].Wave; Step(g, 1);
-    Assert(Boss(g).Hp == 123 && g.Battle.Cell == 24 && g.Battle.Spawns[24].Wave == waves, "boss persistence");
-    Step(g, 1.05); Assert(g.Battle.PlayerHp == g.MaxHp, "full hp respawn");
+    int waves = g.Battle.Spawns[g.Level.Cells - 1].Wave; Step(g, 1);
+    // 倒地这段路里**关卡还没重置**：位置、伤势、刷怪进度都还在——玩家看到的是"倒在杀死它的那堆怪中间"。
+    Assert(Boss(g).Hp == 123 && g.Battle.Cell == g.Level.Cells - 1 && g.Battle.Spawns[g.Level.Cells - 1].Wave == waves, "wounds survive the fall");
+    // 读条走完才重置，而且是**回关卡起点**：Boss 格不再本格重生（用户要求死亡行为各处一致）。
+    Step(g, 1.05);
+    Assert(g.Battle.Cell == 0 && g.Battle.PlayerX < 1000 && g.Battle.PlayerHp == g.MaxHp, "respawn at level start");
 });
 Check("rift immune until every non-rift enemy dies", () => {
     var g = New(); ToBoss(g); var rift = g.Battle.Enemies.Single(e => e.Kind == "rift"); double hp = rift.Hp;
@@ -527,9 +617,71 @@ Check("rift unlocked beyond attack range still advances and clears the stage", (
     Step(g, 30);
     Assert(g.Level.Id == "level_002", "stage cleared");
 });
-Check("boss death stops adds; death keeps boss dead and first reward", () => {
-    var g = New(); ToBoss(g); g.HurtEnemy(Boss(g), 1e9); g.Battle.PlayerHp = 0; g.Step(.05); Step(g, 2.1);
-    Assert(g.Battle.BossDefeated && !g.Battle.Enemies.Any(e => e.Kind == "boss") && g.Battle.Spawns[24].Wave == 1 && g.State.Amount("core") == 1, "boss death state");
+Check("前期 BOSS 血量是一条手抠的缓坡：5 / 10 / 20 SU", () => {
+    // 「BOSS = 75 只标准怪」是**旧刻度下**的设计（那时玩家有整套法术链），而前期只会点击——
+    // 照搬那条比例，第 2 关的 BOSS 就是 2800+ 血、要砍一百多刀（实测反馈）。
+    // 所以前三关退出曲线生成，手抠成一条缓坡，正好对上"拿到自动攻击 → 剑气 → 法术"三个节奏。
+    // 容差 1 是因为 `boss_hp` 只有四位小数。
+    double su = config.Monsters["slime"].Hp;
+    double[] want = [5, 10, 20];
+    for (int i = 0; i < want.Length; i++)
+    {
+        var lvl = config.Levels.Single(l => l.Id == $"level_{i + 1:000}");
+        double hp = config.Monsters[lvl.Boss].Hp * lvl.BossHp;
+        Assert(Math.Abs(hp - want[i] * su) < 1, $"第 {i + 1} 关的 BOSS 应当是 {want[i]} SU = {want[i] * su} 血，实际 {hp:F0}");
+    }
+});
+Check("远程 BOSS 近战也够得到：走上去就能打（第 2 关，不给任何法术）", () => {
+    // 推进上限原本写死在格内 1150，而 BOSS 落在 1580——**恒差 430**。远程靠停步判定会先停住，
+    // 近战（停步 120 / 射程 150）却会贴着上限原地踏步、永远够不着。上一轮只特判了裂隙，漏了 BOSS。
+    var g = Melee(basic: true);
+    g.State.Talents["t_auto"] = 1;      // 自动出手，但**不给剑气** → 保持近战
+    g.State.UnlockedLevels.Add("level_002"); g.SelectLevel("level_002");
+    ToBoss(g);
+    Assert(g.Level.Boss == "boss", "第 2 关用的正是普通（远程）BOSS，这条用例才有意义");
+    var boss = Boss(g);
+    double bossReach = config.Monsters[g.Level.Boss].Range;
+    Assert(bossReach > g.BasicAttackRange, $"它确实站在近战射程之外：{bossReach} > {g.BasicAttackRange}");
+    // 关掉补怪、清掉小怪：要验的是**几何**（走不走得到），不是"边打边走"的节奏。
+    for (int cell = 0; cell < g.Level.Cells; cell++) g.Battle.Spawns[cell] = new() { Passed = true };
+    foreach (var e in g.Battle.Enemies.Where(e => e.Kind is not ("boss" or "rift")).ToArray()) g.Battle.Enemies.Remove(e);
+    g.State.Skills.Clear();             // 一个伤害法术都没有 → AttackRange 回落到近战射程
+    g.Battle.Cooldowns.Clear();
+    // 只走到位、再打几下就收——这条验的是几何，不是"能不能把它磨死"（那只归 BOSS 血量管）。
+    Step(g, 10);
+    Assert(Math.Abs(boss.X - g.Battle.PlayerX) <= g.BasicAttackRange + 1e-6,
+        $"应当走到能打它的地方：相距 {boss.X - g.Battle.PlayerX:F0}，近战射程 {g.BasicAttackRange:F0}");
+    Assert(boss.Hp < boss.MaxHp, "近战真的打得到它");
+});
+Check("近战也能走到裂隙前击碎它：BOSS 打死了必须能进下一关", () => {
+    // 裂隙在格内 `1450+360`，而推进上限原本只有 `1450-300`——**两者差 660**，近战射程 150 够不着。
+    // 症状：BOSS 打死了，角色却贴着上限原地踏步、永远打不到门、进不了下一关（用户实测反馈）。
+    var g = Melee(basic: true);
+    g.State.Talents["t_auto"] = 1;      // 自动出手，但**不给剑气** → 保持近战
+    ToBoss(g);
+    foreach (var e in g.Battle.Enemies.Where(e => e.Kind != "rift").ToArray()) g.HurtEnemy(e, 1e9);
+    Assert(g.RiftUnlocked, "BOSS 死后裂隙解锁");
+    var rift = g.Battle.Enemies.Single(e => e.Kind == "rift");
+    // 先让它打不死：这一条要验的是"**走不走得到**"；门一碎关卡就推进了，那时再看位置已经晚了。
+    rift.Hp = rift.MaxHp = 1e6;
+    g.State.Skills.Clear();             // 一个伤害法术都没有 → AttackRange 回落到近战射程
+    g.Battle.Cooldowns.Clear();
+    Step(g, 30);
+    Assert(!g.Moving, "应当走到裂隙前面停下，而不是贴着推进上限原地踏步");
+    Assert(Math.Abs(rift.X - g.Battle.PlayerX) <= g.BasicAttackRange + 1e-6,
+        $"停下时裂隙要在近战射程内：相距 {rift.X - g.Battle.PlayerX:F0}，射程 {g.BasicAttackRange:F0}");
+    rift.Hp = 1;                        // 放开门：确认它真的能被打碎、并进下一关
+    Step(g, 5);
+    Assert(g.Level.Id == "level_002", "击碎裂隙之后进入下一关");
+});
+Check("boss death stops adds; its first reward survives the death that follows", () => {
+    var g = New(); ToBoss(g); g.HurtEnemy(Boss(g), 1e9);
+    int wave = g.Battle.Spawns[g.Level.Cells - 1].Wave; Step(g, 1);
+    Assert(g.Battle.BossDefeated && g.Battle.Spawns[g.Level.Cells - 1].Wave == wave && g.State.Amount("core") == 1, "boss death state");
+    // 打死 BOSS 之后再死：首杀灵核记在**玩家账本**上，不随复活回退；
+    // 但关卡重开了，所以 BOSS 会重新刷出来（`BossDefeated` 属于关卡状态）。
+    g.Battle.PlayerHp = 0; g.Step(.05); Step(g, 2.1);
+    Assert(g.State.Amount("core") == 1 && !g.Battle.BossDefeated && g.Battle.Cell == 0, "reward survives respawn");
 });
 Check("repeat kill grants zero core; same template in another stage grants one", () => {
     var g = New(); ToBoss(g); g.HurtEnemy(Boss(g), 1e9);
@@ -554,25 +706,33 @@ Check("no valid target consumes no skill cooldown", () => {
     var g = New(); g.Step(.05); Assert(g.Battle.Cooldowns.Count == 0, "empty range cooldown");
 });
 Check("intent auto-production, capacity and hover collection contract", () => {
-    var g = New(); g.State.Talents["t_auto"] = 1; Step(g, 3.05);
+    // 「生根」已改用 `auto_basic`（激活自动攻击），**在线自动参悟当前没有任何节点承载**——
+    // 用户拍板该功能暂不投放，做到那一步再定挂哪。所以这条用例用**内存改配置**临时给它挂一个节点，
+    // 保住这条路径的覆盖（与 summon / line_pierce 那几条退役配置用例同一套路），而不是删掉断言。
+    // 挂到 `t_auto` 上：它本来就是"开关类、1 级"的形状，改 `effect` 不会撞上"开关类必须 1 级"那条校验。
+    var cfg = GameConfig.Load(f => f == "Talent.csv"
+        ? Cell(source[f], "t_auto", "effect", "auto_intent") : source[f]);
+    var g = new GameSession(cfg, seed: 42) { BasicAttackEnabled = false };
+    g.State.Talents["t_auto"] = 1; Step(g, 3.05);
     Assert(g.State.PendingIntent["intent_0"] == 1 && g.State.Amount("intent_0") == 0, "pending");
     for (int i = 0; i < 250; i++) g.ClickOre("ore_0");
     Assert(g.State.PendingIntent["intent_0"] == 200, "capacity");
     g.CollectIntent("intent_0"); g.CollectIntent("intent_0"); Assert(g.State.Amount("intent_0") == 200, "collect once");
 });
 Check("talent visibility, atomic costs and finite core spending", () => {
-    var g = New();
-    // 生根挂着**两条**前置，所以一开始既不可见也买不了。
+    // **不能用 `New()`**：它给的是后期盘面（已经点过生根与剑气），而这条要验的是"从零开始点"。
+    var g = new GameSession(config, seed: 42);
+    // 开局只有根可见：三条支（生存 / 掉落 / 输出）全挂在它下面，前置没亮就只出现在星图外。
     Assert(!g.TalentVisible("t_auto") && !g.BuyTalent("t_auto"), "hidden node");
     g.State.Wallet["gold"] = 10000;
     Assert(g.BuyTalent("t_root"), "root buyable");
-    Assert(g.TalentVisible("t_hp") && g.TalentVisible("t_atk"), "adjacent revealed");
-    // 只点亮一条前置还不够——星图是收敛的，两条都得亮。
-    g.BuyTalent("t_hp");
-    Assert(!g.TalentVisible("t_auto"), "one prereq is not enough");
-    g.BuyTalent("t_atk");
-    Assert(g.TalentVisible("t_auto"), "both prereqs lit");
-    // 生根只花灵核。买不起时**绝不部分生效**：钱与等级都不动。
+    // **根一亮点出三支**：生存（t_hp）、掉落（t_drop）、输出（t_atk）。
+    Assert(g.TalentVisible("t_hp") && g.TalentVisible("t_drop") && g.TalentVisible("t_atk"), "the root reveals three branches");
+    // 中间那条是**单线**：掉落 → 自动攻击，所以没点亮掉落之前，自动攻击既不可见也买不了。
+    Assert(!g.TalentVisible("t_auto"), "the drop line gates the auto-attack node");
+    g.BuyTalent("t_drop");
+    Assert(g.TalentVisible("t_auto"), "lighting the drop node reveals auto-attack");
+    // 「开启自动攻击」只花灵核。买不起时**绝不部分生效**：钱与等级都不动。
     g.State.Wallet["core"] = 0;
     double gold = g.State.Amount("gold"), core = g.State.Amount("core");
     Assert(!g.BuyTalent("t_auto") && g.State.Amount("gold") == gold && g.State.Amount("core") == core, "atomic cost");
@@ -582,9 +742,150 @@ Check("talent visibility, atomic costs and finite core spending", () => {
     Assert(g.TalentCost("t_end", 1) == 1 && g.TalentCost("t_end", 2) == 2, "per-level cost list");
     // 花灵核**不能**回头改投放账本——改了就过不了「累计投放量 = 首杀关卡数 + 调试发放量」那条存档校验。
     Assert(g.State.FirstKills.Count == 0 && g.State.DebugGranted.GetValueOrDefault("core") == 0, "spending core must not write the ledger");
-    // 两条前置的关系也要能读出来（界面画连线与说明条都靠它）。
-    var prereqs = g.TalentPrereqs("t_auto");
-    Assert(prereqs.Count == 2 && prereqs.Any(p => p.Id == "t_hp") && prereqs.Any(p => p.Id == "t_atk") && prereqs.All(p => !p.NeedMax), "prereq list");
+    // 前置关系要能读出来（界面画连线与说明条都靠它）。单线那格只有一条前置；
+    // 全表唯一挂两条的是收口的 `t_end`（生存线与输出线汇到它身上）。
+    var line = g.TalentPrereqs("t_auto");
+    Assert(line.Count == 1 && line[0].Id == "t_drop" && !line[0].NeedMax, "the drop line has a single prereq");
+    var join = g.TalentPrereqs("t_end");
+    Assert(join.Count == 2 && join.Any(p => p.Id == "t_hp_22") && join.Any(p => p.Id == "t_atk_23") && join.All(p => !p.NeedMax), "prereq list");
+});
+Check("掉落 +1（drop_flat）：只加在怪物自身那一笔上", () => {
+    var g = new GameSession(config, seed: 42) { BasicAttackEnabled = false };
+    g.Step(.05);
+    // **摆两只**而不是借关卡的第一波：第 1 关现在是每波 1 只的单只教学波，杀完就没有下一只了，
+    // 而且 `HurtEnemy` 对"已经死了的"敌人会直接返回（尸体要到下一次 Step 才被清掉），
+    // 顺手取 `First()` 会取到尸体、拿到 0 掉落。
+    Dummies(g, 2, 100, 0);
+    double Gold(GameSession s, EnemyState e) { double before = s.State.Amount("gold"); s.HurtEnemy(e, 1e9); return s.State.Amount("gold") - before; }
+
+    // 没点天赋：就是 `monster.gold` 本身。
+    Assert(Math.Abs(Gold(g, g.Battle.Enemies[0]) - config.Monsters["slime"].Gold) < 1e-9, "没点天赋时掉落 = 怪物自身的 gold");
+
+    // 点了天赋：每一只被击杀的怪都多 1。
+    g.State.Talents["t_drop"] = 1;
+    Assert(Math.Abs(Gold(g, g.Battle.Enemies[1]) - config.Monsters["slime"].Gold - 1) < 1e-9, "小怪多掉 1");
+
+    // 裂隙**不算"怪"**：它 `gold = 0`，平白 +1 会读成"开一道门送一块灵石"，
+    // 而且同一个方法下面几行本来就把裂隙排除在"怪"之外（不触发修行解锁）。
+    ToBoss(g);
+    foreach (var e in g.Battle.Enemies.Where(e => e.Kind != "rift").ToArray()) g.HurtEnemy(e, 1e9);
+    Assert(Math.Abs(Gold(g, g.Battle.Enemies.Single(e => e.Kind == "rift"))) < 1e-9, "裂隙不给掉落");
+
+    // BOSS：`monster.gold` 那一笔吃天赋，`drop.csv` 的奖励组**不吃**——那是手工配的关卡节点奖励，
+    // BOSS 已经在自身那一笔里拿过一次，两处都加等于对 BOSS 重复计一遍天赋。
+    var bg = new GameSession(config, seed: 42) { BasicAttackEnabled = false };
+    bg.State.Talents["t_drop"] = 1;
+    ToBoss(bg);
+    double reward = config.Rows("drop").Where(r => r.Text("group_id") == bg.Level.FirstReward && r.Text("item_id") == "gold")
+        .Sum(r => r.Number("amount"));
+    double boss = Gold(bg, Boss(bg));
+    Assert(Math.Abs(boss - config.Monsters["boss"].Gold - 1 - reward) < 1e-9,
+        $"BOSS 掉落 = 自身 gold + 天赋 1 + 首杀奖励组（奖励组不吃天赋）：{boss}");
+});
+Check("首杀小怪解锁「修行」，且只写一次；裂隙不算", () => {
+    var g = new GameSession(config, seed: 42) { BasicAttackEnabled = false };
+    Assert(!g.Unlocked("cultivation"), "开局修行是锁着的");
+    g.Step(.05);   // 进格才刷怪：不推进一步场上一个人都没有
+    g.HurtEnemy(g.Battle.Enemies.First(e => e.Kind != "rift"), 1e9);
+    Assert(g.Unlocked("cultivation"), "击杀一只小怪之后修行解锁");
+    g.HurtEnemy(g.Battle.Enemies.First(e => e.Kind != "rift"), 1e9);
+    Assert(g.State.UnlockedSystems.Count == 1,
+        $"只该解锁这一个系统，不会顺手解开别的：{string.Join(",", g.State.UnlockedSystems)}");
+    // 裂隙（关卡出口）不算"怪"，不该触发。先清掉场上其余敌人把解锁标记撤回来单独验这一下。
+    ToBoss(g);
+    foreach (var e in g.Battle.Enemies.Where(e => e.Kind != "rift").ToArray()) g.HurtEnemy(e, 1e9);
+    g.State.UnlockedSystems.Clear();
+    g.HurtEnemy(g.Battle.Enemies.Single(e => e.Kind == "rift"), 1e9);
+    Assert(!g.Unlocked("cultivation"), "裂隙是一道门不是怪，不该解锁修行");
+});
+Check("修行节点真的能解锁系统：点亮之前是锁的，点亮之后才开", () => {
+    var g = new GameSession(config, seed: 42);
+    foreach (var s in new[] { Systems.Cultivation, Systems.Realm, Systems.Forge, Systems.Intent })
+        Assert(!g.Unlocked(s), $"开局 {s} 应当是锁的");
+    // 系统节点分散在两条支上做**章节门**：
+    //   输出支：根 → 输出 → 攻击力 → 法术 → （一个灵石节点）→ 参悟
+    //   生存支：生存 → 生存2 → 生存3 → **铸造** → 生存4 …
+    g.State.Wallet["gold"] = 100000; g.State.Wallet["core"] = 100;
+    g.BuyTalent("t_root"); g.BuyTalent("t_atk"); g.BuyTalent("t_atk_01");
+    Assert(!g.Unlocked(Systems.Realm), "还没点「法术」时它是锁的");
+    g.BuyTalent("t_realm");
+    Assert(g.Unlocked(Systems.Realm) && !g.Unlocked(Systems.Forge), "点亮「法术」只开法术");
+    // 铸造在**生存支**的第 4 格上（用户要求：把生存线第 4 格换成灵核节点、把铸造挪上去控住前期）。
+    g.BuyTalent("t_hp"); g.BuyTalent("t_hp_01"); g.BuyTalent("t_hp_02");
+    Assert(!g.Unlocked(Systems.Forge), "生存支没点到那一格时铸造还是锁的");
+    g.BuyTalent("t_forge");
+    Assert(g.Unlocked(Systems.Forge), "点出「铸造」那格才开铸造");
+    g.BuyTalent("t_hp_03"); g.BuyTalent("t_intent");
+    Assert(g.Unlocked(Systems.Intent), "参悟在输出支的更后面");
+    // 解锁是**推导**出来的、不落盘：买节点时另外写一份状态的话，读档与改配置都可能让两边对不上。
+    Assert(!g.State.UnlockedSystems.Contains(Systems.Realm), "修行节点解锁不写进 UnlockedSystems");
+});
+Check("未登记的 `*_system` 效果被加载期拒绝（漏登记 = 那个系统永远打不开）", () => {
+    Reject(() => GameConfig.Load(f => f == "Talent.csv"
+        ? Cell(source[f], "t_auto", "effect", "pet_system") : source[f]));
+});
+Check("「生根」没点之前不会自动出手，点了才自动；手动不受它影响", () => {
+    var g = Melee(basic: true);   // 教学期盘面：近战、未点生根
+    g.Step(.05);
+    var mob = g.Battle.Enemies[0];
+    foreach (var e in g.Battle.Enemies.Skip(1).ToArray()) g.Battle.Enemies.Remove(e);
+    mob.X = g.Battle.PlayerX + 100; mob.Hp = mob.MaxHp = 1e6;
+    mob.Atk = 0; mob.AttackTimer = 999; mob.StunUntil = 1e9;
+    g.Battle.Cooldowns.Clear();
+    Step(g, 3);
+    Assert(g.Effects.Count == 0 && g.Battle.Cooldowns.Count == 0, "没点生根就不该自动出手");
+
+    // **手动点击不受它影响**：那是玩家自己的动作，不是系统代打。
+    Assert(g.ManualBasicAttack(), "手动点得动");
+    g.Step(.05);
+    Assert(mob.Hp < mob.MaxHp, "手动那一下真的打出去了");
+
+    g.State.Talents["t_auto"] = 1;
+    g.Battle.Cooldowns.Clear();
+    double before = mob.Hp;
+    Step(g, 2.2);
+    Assert(mob.Hp < before, "点了生根之后自动出手接管");
+});
+Check("「+1攻击」是平攻：加在乘区之外，不被装备倍率放大", () => {
+    var g = new GameSession(config, seed: 42);
+    g.State.Wallet["gold"] = 100000;
+    g.Craft("sword_wood");                       // 装上武器，把乘区撑起来
+    double without = g.Attack;
+    g.State.Talents["t_root"] = 3;
+    double delta = g.Attack - without;
+    Assert(Math.Abs(delta - 3) < 1e-9, $"三点平攻就该是 +3，不该被武器倍率放大：{delta}");
+});
+Check("GM 一键解锁只动解锁标记，不碰钱包 / 首杀账本 / 调试发放", () => {
+    var g = new GameSession(config, seed: 42);
+    double gold = g.State.Amount("gold"), core = g.State.Amount("core");
+    g.UnlockAllSystems();
+    Assert(Systems.All.All(g.Unlocked), "全部系统解锁");
+    Assert(g.State.FirstKills.Count == 0 && g.State.DebugGranted.Count == 0, "不碰首杀账本与调试发放");
+    Assert(g.State.Amount("gold") == gold && g.State.Amount("core") == core, "也不发钱");
+});
+Check("系统解锁随存档往返；旧档缺字段补成解锁；未知 id 直接拒档", () => {
+    var dir = Path.GetFullPath("artifacts/checks/" + Guid.NewGuid().ToString("N"));
+    var path = Path.Combine(dir, "save.json"); var store = new SaveStore(path);
+    var g = new GameSession(config, seed: 42);
+    g.Step(.05);   // 进格才刷怪
+    g.HurtEnemy(g.Battle.Enemies[0], 1e9);
+    store.Save(g.State);
+    var loaded = store.Load(config)!;
+    Assert(loaded.UnlockedSystems.Contains("cultivation"), "解锁状态要能读回来");
+
+    // 旧档（这个字段整个缺失）反序列化成空集，但**有进度**的旧档由 SaveStore 补成全部解锁——
+    // 那些存档本来就走过教学了，让它们回头锁一遍是平白罚人。
+    var legacy = System.Text.Json.JsonSerializer.Deserialize<PlayerState>(
+        System.Text.Json.JsonSerializer.Serialize(g.State))!;
+    legacy.UnlockedSystems.Clear(); legacy.FirstKills.Add("level_001");
+    store.Save(legacy);
+    Assert(store.Load(config)!.UnlockedSystems.Count == Systems.All.Length, "有进度的旧档补成全部解锁");
+
+    // 已知 id 之外的取值一律拒档：写错一个字母会让那个系统**永久锁死且不报错**。
+    var bad = System.Text.Json.JsonSerializer.Deserialize<PlayerState>(
+        System.Text.Json.JsonSerializer.Serialize(g.State))!;
+    bad.UnlockedSystems.Add("culivation");
+    Reject(() => SaveStore.Validate(bad, config));
 });
 Check("每种天赋效果都有中文文案", () => {
     // 文案放在 Features/Talent/TalentText.cs 就是为了能在这里验：兜底分支会把 effect id 原样吐回来，
@@ -685,8 +986,8 @@ Check("arc_homing can bend downwards, keeping both sides of the lane in play", (
 Check("line_shot strikes the first enemy on its path and is destroyed", () => {
     // 御剑术：肩侧横射、命中即散、不穿透。清空技能保证伤害只可能来自这些剑。
     var g = New(); g.Step(.05); g.State.Skills.Clear(); g.Battle.Cooldowns.Clear();
+    Dummies(g, 3, 200, 400);                       // 相隔 400，远超剑的命中半径
     var line = g.Battle.Enemies.ToArray();
-    for (int i = 0; i < line.Length; i++) { line[i].Atk = 0; line[i].Hp = line[i].MaxHp = 1e8; line[i].X = g.Battle.PlayerX + 200 + i * 400; line[i].StunUntil = 1e9; }
     g.Effects.Clear();
     g.State.Skills["skill_01"] = 1; g.Battle.Cooldowns.Clear();
     g.Step(.05);
@@ -733,6 +1034,7 @@ Check("basic attack fires one flat shot per interval, and stays silent without a
     // 关掉暴击：普攻伤害要能被精确断言，暴击会把数字乘 1.5，抽签结果还随 seed 漂。
     var plain = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
     var g = new GameSession(plain, seed: 42) { BasicAttackEnabled = true };
+    GrantLateGame(g);   // 远程 + 自动出手：不点这两个节点，普攻根本不会自己出手
     g.State.Skills.Clear(); g.Battle.Cooldowns.Clear();
     g.Step(.05);
     // 初始波在普攻射程 950 之外：不空放，也不写下间隔。
@@ -759,6 +1061,66 @@ Check("basic attack fires one flat shot per interval, and stays silent without a
         previous = now;
     }
     Assert(fired == 3, $"one shot per configured interval: {fired} in 2.55s");
+});
+Check("melee basic attack: short reach, resolves on the swing, same damage path as ranged", () => {
+    // 关掉暴击：伤害要能被精确断言（与上面那条远程用例同一个理由）。
+    var plain = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
+    var g = Melee(plain, basic: true);
+    // 只点「生根」（要验的是自动普攻那条路），**不给剑气** → 保持近战。
+    g.State.Talents["t_auto"] = 1;
+    g.State.Skills.Clear(); g.Battle.Cooldowns.Clear();
+    g.Step(.05);
+    var target = g.Battle.Enemies[0];
+    foreach (var e in g.Battle.Enemies.Skip(1).ToArray()) g.Battle.Enemies.Remove(e);
+    // 400 在远程射程（950）内、近战射程（150）外：同一种摆法，远程会出手、近战必须沉默。
+    target.X = g.Battle.PlayerX + 400; target.Hp = target.MaxHp = 1e6;
+    target.Atk = 0; target.AttackTimer = 999; target.StunUntil = 1e9;
+    g.Effects.Clear(); g.Battle.Cooldowns.Clear();
+    g.Step(.05);
+    Assert(g.Effects.Count == 0 && !g.Battle.Cooldowns.ContainsKey(GameSession.BasicAttackKey),
+        $"近战不该打得到 {plain.Attr("melee_range")} 之外的目标：出了 {g.Effects.Count} 个效果");
+
+    // 挪进近战射程：出手，形态是 melee_slash，伤害仍是 攻击 × basic_power。
+    target.X = g.Battle.PlayerX + 100;
+    g.Step(.05);
+    var swing = g.Effects.Single(e => e.Skill == "");
+    Assert(swing.Trajectory == "melee_slash", $"近战普攻要走 melee_slash 形态：{swing.Trajectory}");
+    Assert(Math.Abs(swing.Damage - g.Attack * plain.Attr("basic_power")) < 1e-9,
+        $"挥砍伤害 = 攻击 × basic_power：{swing.Damage}");
+    // **出手当拍就结算**（不飞行）：同一步里血已经掉了。点击的反馈不能等到挥砍演完。
+    Assert(target.Hp < target.MaxHp, "近战命中在出手当拍结算，不等飞完");
+});
+Check("melee: stop distance shrinks, and the rift stop falls back to the melee reach", () => {
+    var g = Melee();          // 教学期盘面：还没点「剑气」→ 近战
+    g.State.Skills.Clear();   // 一个伤害法术都没有 → AttackRange 走回落分支
+    Assert(Math.Abs(g.StopRange - config.Attr("melee_stop_range")) < 1e-9,
+        $"教学期应当就是近战、停步缩到贴身：{g.StopRange}");
+    // 回落值必须跟着形态走：仍回落到远程的 950 的话，角色会停在离裂隙 950 处"以为够得着"，
+    // 而近战只有 150 —— **裂隙打不掉、整关卡死**，且不报任何错。
+    Assert(Math.Abs(g.AttackRange - config.Attr("melee_range")) < 1e-9,
+        $"近战时裂隙停步的回落必须是近战射程：{g.AttackRange}");
+    // 不变量：站定了必须够得着怪。破了它表现为"停在原地永远不出手"。
+    Assert(g.BasicAttackRange >= g.StopRange,
+        $"普攻射程必须不小于停步距离：射程 {g.BasicAttackRange} / 停步 {g.StopRange}");
+
+    // 点亮「剑气」→ 回到远程：停步与裂隙回落**一起**跟着切，不能只切一半。
+    g.State.Talents["t_ranged"] = 1;
+    Assert(!g.MeleeBasic, "点了「剑气」就不再是近战");
+    Assert(Math.Abs(g.StopRange - config.Attr("stop_range")) < 1e-9, $"远程停步：{g.StopRange}");
+    Assert(Math.Abs(g.AttackRange - config.Attr("basic_range")) < 1e-9, $"远程回落：{g.AttackRange}");
+});
+Check("melee: the character walks in past the old ranged stop distance", () => {
+    // 同一个 400 的距离：远程（停步 640）当场停下，近战（停步 120）要继续往前走。
+    var far = New(); far.Step(.05); far.Battle.Enemies[0].X = far.Battle.PlayerX + 400;
+    far.Battle.Enemies[0].StunUntil = 1e9;
+    far.Step(.05);
+    Assert(!far.Moving, "远程：400 已经进了停步距离，该停下");
+
+    var close = Melee();
+    close.Step(.05); close.Battle.Enemies[0].X = close.Battle.PlayerX + 400;
+    close.Battle.Enemies[0].StunUntil = 1e9;
+    close.Step(.05);
+    Assert(close.Moving, "近战：400 还没到贴身，该继续走");
 });
 Check("trigger skills never auto-cast, only fire on a basic attack, and stay gated by cooldown", () => {
     // 御雷真诀（触发概率 4%）：靶场关了普攻，冷却到点也绝不会自己放出来。
@@ -1245,6 +1607,7 @@ Check("神通的概率可以逐次累加，摇中后清零", () => {
         ? Cell(Cell(source[f], "skill_07", "trigger_chance", "0.01"), "skill_07", "trigger_chance_step", "0.99")
         : source[f]);
     var g = new GameSession(ramp, seed: 7) { BasicAttackEnabled = true };
+    GrantLateGame(g);   // 这条靠"每次普攻出手"驱动，不点「生根」就一次都不会出手
     g.State.Skills["skill_07"] = 1;
     g.Battle.Cooldowns.Clear();
     Assert(Math.Abs(g.TriggerChanceNow("skill_07") - 0.01) < 1e-9, "起步概率等于配置值");
@@ -1301,9 +1664,11 @@ Check("剑罡护体：护盾吸收伤害，敌人近身时环绕飞剑还手", (
         guardFired = g.Effects.Any(e => e.Skill == "skill_14" && e.Index == 1);
     }
     Assert(guardFired, "环绕飞剑自行出手，且不抢技能名的名额");
-    // 让一只怪贴身打一下：护盾量 = 攻击 × 2（25×2 = 50），足以把这一击整个吃掉。
+    // 让一只怪贴身打一下：护盾量 = 攻击 × 2，所以拿"刚好一倍攻击"的一击来验它被整个吃掉。
+    // **按 `g.Attack` 现取**而不是写死一个数：写死的数在刻度调整之后会比护盾还大，
+    // 用例会以"护盾没挡住"的面目失败（实际是夹具脱离了刻度）。
     var foe = g.Battle.Enemies[0];
-    foe.X = g.Battle.PlayerX + 60; foe.StunUntil = 0; foe.Atk = 40; foe.AttackTimer = 0;
+    foe.X = g.Battle.PlayerX + 60; foe.StunUntil = 0; foe.Atk = g.Attack; foe.AttackTimer = 0;
     double hp = g.Battle.PlayerHp;
     Step(g, .1);
     Assert(g.Battle.PlayerHp == hp, $"护盾挡下了这一击：{hp} → {g.Battle.PlayerHp}");
@@ -1427,15 +1792,15 @@ Check("retired pierce / multi paths stay covered by config-driven effects", () =
             "skill_02", "trigger_chance", "0")
         : source[f]);
     var g = new GameSession(multi, seed: 42) { BasicAttackEnabled = false }; g.Step(.05);
-    // 靶子放远并定身：贴脸摆的话多发弹丸会在同一个 Step 内命中并被移除，数不到编排。
-    foreach (var e in g.Battle.Enemies) { e.Atk = 0; e.Hp = e.MaxHp = 1e8; e.X = g.Battle.PlayerX + 160; e.StunUntil = 1e9; }
+    // 三只放远并定身：贴脸摆的话多发弹丸会在同一个 Step 内命中并被移除，数不到编排。
+    Dummies(g, 3, 160, 0);
     g.State.Skills.Clear(); g.State.Skills["skill_02"] = 1; g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     g.Step(.05);
     Assert(g.Effects.Count(e => e.Kind == "projectile" && !e.Hostile) >= 3, "multi still fires several projectiles");
     // pierce：直接构造一枚穿透弹，验证沿途每个敌人各挨一次；清空技能以保证伤害只可能来自它。
     var p = New(); p.Step(.05); p.State.Skills.Clear(); p.Battle.Cooldowns.Clear();
+    Dummies(p, 3, 200, 100);
     var targets = p.Battle.Enemies.ToArray();
-    for (int i = 0; i < targets.Length; i++) { targets[i].Atk = 0; targets[i].Hp = targets[i].MaxHp = 1e8; targets[i].X = p.Battle.PlayerX + 200 + i * 100; }
     p.Effects.Clear();
     p.Effects.Add(new() { Kind = "projectile", X = p.Battle.PlayerX, Damage = 1000, Life = 4, MaxLife = 4, Secondary = "pierce" });
     Step(p, .5);
@@ -1490,6 +1855,7 @@ Check("effects carry their source skill so the view can tell the 15 skills apart
         ? Cell(source[f], "skill_07", "trigger_chance", "1")
         : source[f]);
     var g = new GameSession(certain, seed: 42) { BasicAttackEnabled = true };
+    GrantLateGame(g);   // 同上：真诀由普攻出手带动，没有「生根」就没有普攻
     foreach (var realm in config.Rows("SwordLevel")) g.State.Realms.Add(realm.Text("id"));
     foreach (var id in certain.Skills.Keys) g.State.Skills[id] = 1;
     g.Step(.05); foreach (var e in g.Battle.Enemies) { e.Hp = e.MaxHp = 1e8; e.Atk = 0; }
@@ -1515,22 +1881,27 @@ Check("atomic save, reload without offline gains, and corrupt-primary backup rec
     var loaded = new GameSession(config, state); loaded.SelectLevel("level_001"); ToBoss(loaded); loaded.HurtEnemy(Boss(loaded), 1e9); Assert(loaded.State.Amount("core") == 1, "no duplicate reload");
     File.WriteAllText(path, "{broken"); Assert(store.Load(config)!.Amount("core") == 1 && store.Warning is not null, "backup recovery");
 });
-Check("base character can reach boss and obtain first core in a sustained run", () => {
+Check("base character can reach the boss in a sustained run", () => {
     // 开局不再白送法术，所以第一件事是习得御剑术（它属默认解锁的小妖档）。
-    // 这一趟验证的是完整的推进循环，而不是"什么都不买"的裸角色：BOSS 格的小怪在 BOSS 死前不会停刷，
-    // DPS 不涨就会越堆越多、陷入复活循环——边打边把灵钱投回武器与法术等级，才是设计上的正常打法。
-    // 预算 90000 步（4500 秒）：标准怪抬到 88、BOSS 抬到 75 SU 之后，这一趟比调数值前长得多。
+    //
+    // **这条用例的判据在取消"BOSS 格本格重生"之后变了**：以前 BOSS 格阵亡会保留敌人伤势，
+    // 所以弱练度可以**反复送死把 BOSS 磨掉**；现在死亡一律整关重来、BOSS 回满血，
+    // **BOSS 就是一道硬 DPS 墙**——打不过就永远打不过（用户明确接受这个取向）。
+    // 因此这里断言的是"边打边把灵钱投回武器与法术等级，练度能把角色送到 BOSS 格"，
+    // 而不是"能杀掉 BOSS"。首杀灵核的发放另有 `HurtEnemy` 那几条用例覆盖。
     var g = New(basic: true);
     g.UpgradeSkill("skill_01");
-    int steps = 0;
-    for (; steps < 90000 && g.State.FirstKills.Count == 0; steps++)
+    int steps = 0, maxCell = 0;
+    for (; steps < 90000 && maxCell < g.Level.Cells - 1; steps++)
     {
         if (g.State.Weapon == "") g.Craft("sword_wood");
         else if (g.SkillCost("skill_01") <= g.State.Amount("gold")) g.UpgradeSkill("skill_01");
         g.Step(.05);
+        maxCell = Math.Max(maxCell, g.Battle.Cell);
     }
-    Assert(g.State.FirstKills.Count > 0,
-        $"stalled at {g.Battle.Cell + 1} hp={g.Battle.PlayerHp} after {steps * .05:F0}s");
+    Assert(maxCell == g.Level.Cells - 1,
+        $"练度没能把角色送到 BOSS 格：只走到第 {maxCell + 1} / {g.Level.Cells} 格，"
+        + $"御剑术 Lv.{g.State.Skills.GetValueOrDefault("skill_01")}，灵钱 {g.State.Amount("gold")}");
 });
 Console.WriteLine($"ALL {passed} CHECKS PASSED");
 

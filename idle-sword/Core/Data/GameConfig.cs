@@ -205,12 +205,30 @@ public sealed class GameConfig
             var costs = r.NumberList("cost");
             if (costs.Count != r.Int("max_level")) throw r.Error("cost", $"必须写全 {r.Int("max_level")} 项（每级一项），实际 {costs.Count} 项");
             if (costs.Any(v => v < 0)) throw r.Error("cost", "不能小于 0");
-            // 消耗必须是 item 表里 kind=currency 的道具（灵钱 / 灵核），不能填成装备之类。
+            // 消耗必须是 item 表里 kind=currency 的道具（灵石 / 灵核），不能填成装备之类。
             var currency = c.Rows("item").SingleOrDefault(i => i.Text("id") == r.Text("cost_currency"))
                 ?? throw r.Error("cost_currency", $"引用的道具不存在: {r.Text("cost_currency")}");
             if (currency.Text("kind") != "currency") throw r.Error("cost_currency", "必须引用 item.csv 里 kind=currency 的道具");
             Choice(r, "icon", "attack", "defense", "utility", "special");
-            Choice(r, "effect", "none", "atk", "hp", "auto_intent");
+            // 取值分两类：**数值**（atk / hp / atk_flat / hp_flat）按 `effect_per_level × 等级` 求和；
+            // **开关**（auto_basic / ranged_basic / auto_intent，以及 Systems.ByEffect 里那几个解锁类）
+            // 只认">0 即已生效"，语义是开关而不是档位。
+            // `auto_intent`（在线自动参悟）**当前没有任何节点承载**——用户拍板：该功能暂不投放，
+            // 做到那一步再决定挂在哪。枚举与消费点都留着，只是配置里没有那一行。
+            string effect = r.Text("effect");
+            // 约定：解锁类效果一律以 `_system` 结尾，且**必须在 Systems.ByEffect 里登记**。
+            // 漏登记的后果是那个系统**永久锁死且不报任何错**，所以在这里当场拦住。
+            if (effect.EndsWith("_system") && !Systems.ByEffect.ContainsKey(effect))
+                throw r.Error("effect", $"解锁类效果 {effect} 没有在 Systems.ByEffect 里登记（那个系统将永远打不开）");
+            // 开关类的名单**从 Systems.ByEffect 现取**，不在两处各写一遍——那种重复迟早会分叉。
+            var switches = new List<string> { "auto_basic", "ranged_basic", "auto_intent" };
+            switches.AddRange(Systems.ByEffect.Keys);
+            var choices = new List<string> { "none", "atk", "hp", "atk_flat", "hp_flat", "drop_flat" };
+            choices.AddRange(switches);
+            Choice(r, "effect", [.. choices]);
+            // 开关类节点满级只有 1 级：写成多级的话"点第二级"什么都不会发生，是典型的静默失效。
+            if (switches.Contains(effect) && r.Int("max_level") != 1)
+                throw r.Error("max_level", "解锁 / 开关类效果只能是 1 级");
             // `none` 是编辑器给新节点补的占位行：可购买却没有效果 = 让玩家白花钱，所以必须免费。
             if (r.Text("effect") == "none" && costs.Any(v => v != 0)) throw r.Error("cost", "占位节点（effect=none）的每级消耗必须为 0");
         }
@@ -280,13 +298,20 @@ public sealed class GameConfig
         {
             Positive(r, "offset"); if (r.Number("offset") >= c.Setting("cell_width")) throw r.Error("offset", "必须在格内");
         }
-        // 普攻三个参数参与每次出手，取 0 会让普攻永不出手或零伤害，故按「必须为正」校验（其余属性可以为 0）。
+        // 普攻参数参与每次出手，取 0 会让普攻永不出手或零伤害，故按「必须为正」校验（其余属性可以为 0）。
+        // 近战那两个同理：`melee_range = 0` 是"近战永远够不着"、`melee_stop_range = 0` 是"只能站到贴脸"，
+        // 两者都不会报错，只会让近战形态整个不能用——正是要靠加载期拦下来的那种静默失败。
         foreach (var r in c.Rows("fightattr"))
         {
             Nonnegative(r, "base_value");
-            if (r.Text("id") is "basic_interval" or "basic_power" or "basic_range") Positive(r, "base_value");
+            if (r.Text("id") is "basic_interval" or "basic_power" or "basic_range" or "melee_range" or "melee_stop_range")
+                Positive(r, "base_value");
         }
-        foreach (var r in c.Rows("game_settings")) Positive(r, "value");
+        // 全局设置一律必须为正……**除了 `starting_gold`**：开局不给钱是合法的设计选择
+        // （第一点修为必须靠杀怪换来），而"必须大于 0"会把它拦在加载期。
+        foreach (var r in c.Rows("game_settings"))
+            if (r.Text("id") == "starting_gold") Nonnegative(r, "value");
+            else Positive(r, "value");
         // 灵核奖励组只能被关卡首杀入口引用；不能通过通用奖励调用入账。
         var firstGroups = c.Levels.Select(l => l.FirstReward).ToHashSet();
         foreach (var r in c.Rows("drop").Where(r => r.Text("item_id") == "core"))

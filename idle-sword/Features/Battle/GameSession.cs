@@ -37,8 +37,14 @@ public sealed partial class GameSession
     // 摇中后清零。跨关卡 / 死亡 / 切预览一并清掉（挂在 ClearBuffs 上），与其它短时状态同生命周期。
     private readonly Dictionary<string, double> _triggerRamp = [];
     public bool RiftUnlocked => Battle.BossDefeated && !Battle.Enemies.Any(e => e.Hp > 0 && e.Kind != "rift");
-    public double MaxHp => Config.Attr("hp") * (1 + Config.Attr("hp_percent") + TalentBonus("hp"));
-    public double Attack => (Config.Attr("atk") + WeaponAttack) * (1 + Config.Attr("atk_percent") + TalentBonus("atk"));
+    /// <summary>最终气血。平血（`hp_flat`）与平攻同理**加在乘区之外**，见 <see cref="Attack"/>：
+    /// 并进乘区的话，后期会被 `hp_percent` 放大成完全不同的量级。</summary>
+    public double MaxHp => Config.Attr("hp") * (1 + Config.Attr("hp_percent") + TalentBonus("hp"))
+        + TalentBonus("hp_flat");
+    /// <summary>最终攻击。平攻（`atk_flat`）**加在乘区之外**：它是"开局先从 +1 起步"那种固定值，
+    /// 若并进乘区，后期会被装备与百分比放大成完全不同的量级——那不是这个节点想表达的东西。</summary>
+    public double Attack => (Config.Attr("atk") + WeaponAttack) * (1 + Config.Attr("atk_percent") + TalentBonus("atk"))
+        + TalentBonus("atk_flat");
     public double WeaponAttack => State.Weapon == "" ? 0 : Config.Row("Equip", State.Weapon).Number("base_atk") * (1 + .15 * State.WeaponLevel) * State.WeaponRoll;
     /// <summary>角色能打到的最大距离：取已习得法术的最大射程（不含 buff 类，它们不造成伤害）。
     /// **只算法术，不并入普攻射程**：接近裂隙的停步判定靠它，若改由普攻射程决定，
@@ -46,25 +52,66 @@ public sealed partial class GameSession
     /// 它不小于停步距离 640，因此角色站定时普攻必定够得着。
     /// **一个法术都没学时回落到普攻射程**：开局不再白送御剑术（见构造器），若不回落这里会是 0，
     /// 角色在 BOSS 格会一路走到底也不停——普攻虽然仍够得着裂隙，但"停下来打"的读法就没有了。
-    /// 回落只在**完全没有**伤害型法术时生效，不是把普攻射程并进最大值。</summary>
+    /// 回落只在**完全没有**伤害型法术时生效，不是把普攻射程并进最大值。
+    /// **回落值必须跟着普攻形态走**（`BasicAttackRange`）：近战只有 150，若这里仍回落到远程的 950，
+    /// 角色会停在离裂隙 950 处"以为够得着"，而近战根本打不到——**裂隙打不掉、整关卡死**。
+    /// 这条与"不能并入普攻射程"是同一条护栏的两面：射程要取自**真的能打到那么远**的那个值。</summary>
     public double AttackRange
     {
         get
         {
             var ranges = State.Skills.Where(kv => kv.Value > 0 && Config.Skills.TryGetValue(kv.Key, out var s) && s.Kind != "buff")
                 .Select(kv => Config.Skills[kv.Key].Range).ToList();
-            return ranges.Count > 0 ? ranges.Max() : Config.Attr("basic_range");
+            return ranges.Count > 0 ? ranges.Max() : BasicAttackRange;
         }
     }
+
+    /// <summary>
+    /// 普攻当前是不是**近战**（挥剑斩击）。**开局就是近战**——玩家一开始只会挥剑，
+    /// 要到修行树上点亮「剑气」（`ranged_basic`）才恢复远程平射。这是教学闭环的起点。
+    ///
+    /// 与其它解锁节点一样是**开关**不是档位：只看有没有，不看几级。
+    /// </summary>
+    public bool MeleeBasic => TalentBonus("ranged_basic") <= 0;
+
+    /// <summary>
+    /// 自动攻击有没有被「生根」（`auto_basic`）激活。**没激活之前只能手动点**——
+    /// 这正是那个节点的价值：省的是手，不是伤害（手动与自动共用同一条判定与同一个冷却键，
+    /// 所以点得再快也不会比自动多打一下）。
+    /// </summary>
+    public bool AutoBasicUnlocked => TalentBonus("auto_basic") > 0;
+
+    /// <summary>
+    /// 普攻能打到的距离。**近战不是"换个画法"，射程真的短**——`Target()` 与命中的可达性都用它。
+    /// 与 `StopRange` 一起必须满足 `BasicAttackRange ≥ StopRange`：否则角色站定了却够不着怪，
+    /// 表现为"停在原地永远不出手"（挂机彻底中断，且不报任何错）。
+    /// </summary>
+    public double BasicAttackRange => MeleeBasic ? Config.Attr("melee_range") : Config.Attr("basic_range");
+
+    /// <summary>
+    /// 走到离怪多近就停下。近战时缩到贴身——这是"真近战"的落脚点：不只是把飞剑换成挥剑，
+    /// 而是角色真的要走进去。副作用是玩家会站进远程怪（460~620）的射程里挨打，这正是
+    /// "血少、不点修为就容易死"那一段压力的来源，是有意的。
+    /// </summary>
+    public double StopRange => MeleeBasic ? Config.Attr("melee_stop_range") : Config.Attr("stop_range");
+
+    /// <summary>
+    /// 近战挥砍的**动作时长**：这一式在结算完成后还要在场上留这么久，纯粹给表现层画挥剑的余韵。
+    /// 定成常量而不是配置项，是因为它只是动画长度，不参与任何判定——
+    /// 伤害在出手当拍就已经进了 `HurtEnemy`（见 TickEffects 的 `melee_slash` 分支）。
+    /// </summary>
+    private const double MeleeSwingLife = .22;
 
     /// <summary>普攻占用的冷却键。放进 Battle.Cooldowns 是为了复用 Step 里那唯一的冷却衰减点：
     /// 攻速增益因此自动作用于普攻，键本身也随存档往返（SaveStore 不校验冷却键，旧存档缺该键即视为就绪）。
     /// **绝不能放进 State.Skills**：存档校验会用 SwordSkill 表核对技能键，且 CastSkills 对键是无保护索引。</summary>
     public const string BasicAttackKey = "basic_attack";
 
-    /// <summary>普攻开关。开启时角色每 `fightattr.basic_interval` 秒向最近的合法目标平射一柄飞剑，
+    /// <summary>**自动**普攻开关。开启时角色每 `fightattr.basic_interval` 秒向最近的合法目标出手，
     /// 并在出手的那一刻摇各神通的触发概率（见 TickBasicAttack）。
-    /// 自检里关掉它是为了给受控靶场保留确定的伤害预算——普攻每秒都在加伤害，也会消耗随机数。</summary>
+    /// 自检里关掉它是为了给受控靶场保留确定的伤害预算——普攻每秒都在加伤害，也会消耗随机数。
+    /// **它只管自动那一条路**：手动点击（<see cref="ManualBasicAttack"/>）是玩家自己的动作，
+    /// 不受它影响，否则"关掉自动"会连"点也点不动"——那是两件事。</summary>
     public bool BasicAttackEnabled { get; set; } = true;
 
     public GameSession(GameConfig config, PlayerState? state = null, int? seed = null)
@@ -76,10 +123,13 @@ public sealed partial class GameSession
             State.UnlockedLevels.Add(config.Levels[0].Id);
             foreach (var r in config.Rows("SwordLevel").Where(r => r.Flag("default_unlocked"))) State.Realms.Add(r.Text("id"));
             // 开局不附带任何法术：第 1 关先靠普攻（裸开局 88 ÷ 25 ≈ 3.5 下杀一只标准怪），
-            // 让玩家自己点「习得」花 30 灵钱学御剑术——第一次花灵钱换来"一支剑秒一只"的对比，
+            // 让玩家自己点「习得」花 30 灵石学御剑术——第一次花灵石换来"一支剑秒一只"的对比，
             // 比开局白送一个技能更能说明这个系统在干什么。数值锚点见 docs/design/balance_ttk.md。
             EnterLevel(config.Levels[0].Id);
         }
+        // 教学期的第一句提示。开局**不会自动出手**（要点了「生根」才会），不写清楚的话
+        // 玩家会盯着一动不动的角色，不知道这游戏要自己点。读过档的老玩家本来就没这句话。
+        if (!AutoBasicUnlocked) Message = "点击画面挥剑。";
     }
 
     public void Step(double dt)
@@ -90,7 +140,10 @@ public sealed partial class GameSession
         if (Battle.RespawnTimer > 0)
         {
             Battle.RespawnTimer = Math.Max(0, Battle.RespawnTimer - dt);
-            if (Battle.RespawnTimer == 0) { Battle.PlayerHp = MaxHp; _persist = true; }
+            // **整关重置放在这一刻，而不是死亡瞬间**：倒地那段路里怪、尸体、伤势都还在，
+            // 玩家看到的是"倒在杀死它的那堆怪中间"，而不是一片空场景（见 Die 的说明）。
+            // EnterLevel 自己会建新的 BattleState（回起点、满血、清刷怪与冷却）并清效果与增益。
+            if (Battle.RespawnTimer == 0) { EnterLevel(Level.Id); _persist = true; }
             FinishStep(); return;
         }
         // 冷却流逝（唯一的衰减点）：攻速按倍数加速，但**不加速增益类法术**。
@@ -104,7 +157,7 @@ public sealed partial class GameSession
         _buffTime = Math.Max(0, _buffTime - dt);
         TickPlayerBuffs(dt);
         ActivateCell();
-        Moving = !Battle.Enemies.Any(e => e.Hp > 0 && e.Kind != "rift" && Math.Abs(e.X - Battle.PlayerX) <= Config.Attr("stop_range"));
+        Moving = !Battle.Enemies.Any(e => e.Hp > 0 && e.Kind != "rift" && Math.Abs(e.X - Battle.PlayerX) <= StopRange);
         // 裂隙解锁后停步，但前提是已经打得到它。裂隙位于格内 1450+360 处，而 BOSS 格
         // 阵亡重生点在格首 80：两者相距 1730，远超任一法术射程（950）。若解锁瞬间直接冻结，
         // 玩家会停在射程外空转，挂机永久中断（取决于最后一个非裂隙敌人倒下时玩家站在哪，
@@ -113,8 +166,21 @@ public sealed partial class GameSession
             Moving = !InRange(Battle.Enemies.FirstOrDefault(e => e.Hp > 0 && e.Kind == "rift"), AttackRange);
         if (Moving)
         {
-            Battle.PlayerX = Math.Min((Level.Cells - 1) * Config.Setting("cell_width") + SpawnOffset - 300,
-                Battle.PlayerX + Config.Attr("move_speed") * dt);
+            // 推进上限：**够得着的边界**，不是一堵写死的墙。
+            //
+            // 原来是"格内 1450 再往回 300"，而 BOSS（格内 1580）与裂隙（1810）都在它之外——**恒差 430 / 660**。
+            // 远程（停步 640、射程 950）靠上面的停步判定本来就会先停住，所以一直没露馅；
+            // 但**近战停步只有 120、射程 150**：角色一路走到上限、贴着它原地踏步，永远够不着——
+            // BOSS 打不死、门也打不碎，整关卡死（两次实测反馈，第一版只特判了裂隙、没看见 BOSS 是同一个病）。
+            //
+            // 所以放宽到"场上每个该打的目标减去自己的停步距离"：**接近这件事由射程决定，不由边界决定**。
+            // 用停步距离而不是射程，是因为那正是玩家**本来就会停下**的位置；配置里有不变量
+            // `StopRange ≤ BasicAttackRange`，所以停在停步距离处必定已经在射程内。
+            double limit = (Level.Cells - 1) * Config.Setting("cell_width") + SpawnOffset - 300;
+            foreach (var e in Battle.Enemies)
+                if (e.Hp > 0 && (e.Kind != "rift" || RiftUnlocked))
+                    limit = Math.Max(limit, e.X - StopRange);
+            Battle.PlayerX = Math.Min(limit, Battle.PlayerX + Config.Attr("move_speed") * dt);
             ActivateCell();
         }
         TickSpawns(dt);
@@ -404,7 +470,7 @@ public sealed partial class GameSession
     /// <summary>
     /// 增益类法术的**实际冷却**：每升一级缩短 `buff_cooldown_per_level`，但**下限是持续时长 × `buff_cooldown_floor_ratio`**。
     /// 增益的峰值强度不随等级变（它的效果走 `secondary_value`，那是个定值），所以若升级什么都不给，
-    /// 玩家花灵钱点「强化」就什么都没发生——仙风云体术与醉仙望月步原本就是这种零收益。
+    /// 玩家花灵石点「强化」就什么都没发生——仙风云体术与醉仙望月步原本就是这种零收益。
     /// 改成缩冷却之后，成长体现在**覆盖率**上，而峰值不变（「小妖档不该给满」那条口径因此保住）。
     /// 下限把覆盖率封在 80%，避免它变成常驻——与「攻速不加速增益类法术」是同一条护栏。
     /// 非增益类返回配置冷却，行为不变。
@@ -473,19 +539,38 @@ public sealed partial class GameSession
     }
 
     /// <summary>
-    /// 普通攻击：每 `basic_interval` 秒向最近的合法目标平射一柄飞剑，并在出手的这一刻摇各神通的触发概率。
-    /// 形态用默认 bolt（Trajectory 为空）——表现层已把它画成肩部高度横飞的剑，正是「平射」；
-    /// Skill 传空串，于是技能名标签、形态参数回退、以及「效果来源必须是已知法术」的自检都不受影响。
+    /// 自动普攻：每 `basic_interval` 秒向最近的合法目标出手，并在出手的这一刻摇各神通的触发概率。
     /// 没有合法目标时不空放、也不消耗间隔，与法术同口径。
     /// </summary>
-    private void TickBasicAttack()
+    private void TickBasicAttack() { if (BasicAttackEnabled && AutoBasicUnlocked) TryBasicAttack(); }
+
+    /// <summary>
+    /// 手动普攻（点击画面触发）。**与自动普攻共用同一条判定、同一个冷却键**——
+    /// 点击只是"自己扣扳机"，不会凭空多出输出：点快了就是白点。这个口径是刻意的，
+    /// 「激活自动攻击」的价值在"不用再点"，不在"打得更快"。返回是否真的挥出去了，供表现层给反馈。
+    /// </summary>
+    public bool ManualBasicAttack() => TryBasicAttack();
+
+    /// <summary>
+    /// 普攻的**唯一结算点**：冷却就绪 + 射程内有合法目标才出手。手动与自动都走这里，
+    /// 于是暴击、增益倍率、吸血与伤害统计**不可能只覆盖其中一条路径**（分两条写一定会漏掉一条）。
+    ///
+    /// 形态按 <see cref="MeleeBasic"/> 分两种，但**都走 `Launch("projectile", …)`**：
+    /// 近战只是射程短、并带一个 `melee_slash` 形态标记（表现层据此画挥砍而不是飞剑），
+    /// 不另开"瞬时命中"的捷径——`Launch` 里带着全游戏唯一的暴击判定与增益乘区，绕开它就会静默丢暴击。
+    /// Skill 传空串，于是技能名标签、形态参数回退、以及「效果来源必须是已知法术」的自检都不受影响。
+    /// </summary>
+    private bool TryBasicAttack()
     {
-        if (!BasicAttackEnabled || Battle.PlayerHp <= 0 || !Ready(BasicAttackKey)) return;
-        var target = Target(Config.Attr("basic_range"));
-        if (target is null) return;
+        if (Battle.PlayerHp <= 0 || !Ready(BasicAttackKey)) return false;
+        var target = Target(BasicAttackRange);
+        if (target is null) return false;
         Battle.Cooldowns[BasicAttackKey] = Config.Attr("basic_interval");
-        Launch("projectile", target, Attack * Config.Attr("basic_power"), 4, skill: "");
+        Launch("projectile", target, Attack * Config.Attr("basic_power"),
+            MeleeBasic ? MeleeSwingLife : 4, skill: "",
+            trajectory: MeleeBasic ? "melee_slash" : "");
         RollTriggerSkills();
+        return true;
     }
 
     /// <summary>
@@ -705,7 +790,9 @@ public sealed partial class GameSession
         // 生命期分两种：普通弹道沿用硬编码 4 秒——召唤弹传 2、剑灵弹只传 0.5，
         // 若把 duration 当通用寿命会缩短剑灵弹丸、使其飞不到目标；自定义飞行形态才用 duration（本列对该形态即飞行/下坠时长）。
         // 自定义形态还要加上起飞前停留（hold）：停留与飞行各自计时，落地/命中的时刻才会随错时而变化。
-        bool customFlight = trajectory is "hover_homing" or "sky_drop" or "arc_homing" or "line_pierce" or "line_shot";
+        // `melee_slash` 是**普攻专用**的内部形态（近战挥砍）：不走配置表，所以不在 SwordSkill 的 trajectory 枚举里。
+        // 它借这套自定义形态的账，只为拿到"寿命 = duration"这一条——挥砍要的是"结算完还留一小段余韵可以画"。
+        bool customFlight = trajectory is "hover_homing" or "sky_drop" or "arc_homing" or "line_pierce" or "line_shot" or "melee_slash";
         double life = kind != "projectile" ? duration
             : customFlight ? duration + hold
             : 4;
@@ -761,6 +848,19 @@ public sealed partial class GameSession
                         // 与本体那一支完全重叠（御剑术前摇 0.12 秒、剑气流云壁 0.5 秒，都够把偏移抹掉）。
                         if (effect.Trajectory is "line_shot" or "line_pierce")
                             effect.X = Battle.PlayerX + (effect.Mirrored ? MirrorOffset : 0);
+                        break;
+                    }
+                    // 近战挥砍（普攻专用形态）：**不飞，出手当拍就结算**——点击的反馈必须立刻到位，
+                    // 若等挥砍演完再落伤害，读起来就是"点了没反应"。
+                    // 用 `Hit` 标记"这一下已经打过了"，于是整段余韵里只结算一次；
+                    // 目标中途死了就是落空——与远程弹道同口径（不做落点补救，普攻不该有那份待遇）。
+                    if (effect.Trajectory == "melee_slash")
+                    {
+                        if (target is not null && !effect.Hit.Contains(target.Id))
+                        {
+                            effect.Hit.Add(target.Id);
+                            Hit(target, effect.Damage, effect);
+                        }
                         break;
                     }
                     // 自定义飞行形态。bolt（Trajectory 为空）不走这里，下面两条旧路径原样保留。
@@ -982,7 +1082,22 @@ public sealed partial class GameSession
         // `Math.Max(0, …)` 已经把过量击杀吃掉了，所以有效 = before − after、溢出 = damage − 有效。
         DamageStats.Add(source, before - e.Hp, damage - (before - e.Hp));
         if (e.Hp > 0) return;
-        AddCurrency("gold", Config.Monsters[e.MonsterId].Gold);
+        // 掉落 +1（`drop_flat`）：只加在**怪物自身**那一笔上，普通怪 / 精英 / BOSS 都走这一行、自动覆盖。
+        // **裂隙除外**：它 `gold = 0`，平白 +1 读成"开一道门送一块灵石"；而且下面几行已经明确
+        // 把裂隙排除在"怪"之外（不触发修行解锁），这里跟着同一个口径。
+        // 也**不碰** `drop.csv` 的奖励组：那是手工配的关卡节点奖励，BOSS 已经在上面这行白拿过一次，
+        // 两处都加等于对 BOSS 重复计一遍天赋。
+        AddCurrency("gold", Config.Monsters[e.MonsterId].Gold + (e.Kind == "rift" ? 0 : TalentBonus("drop_flat")));
+        // **首次击杀解锁「修行」**——整条教学闭环的起点：先自己点着砍死一只，修行才出现。
+        // `HashSet.Add` 的返回值天然"只写一次"，不必另立账本。
+        // **不能蹭 `FirstKills`**：那是 BOSS 首杀账本，存档里还绑着"灵核余额 ≤ 首杀数 + 调试发放量"
+        // 的一致性校验，把普通击杀混进去会直接把校验算错、拒档。
+        // 裂隙不算"怪"（它是一道门，不移动不攻击），不该触发。
+        if (e.Kind is not "rift" && State.UnlockedSystems.Add(Systems.Cultivation))
+        {
+            Message = "初战告捷 · 修行已开启";
+            _persist = true;
+        }
         if (e.Kind == "boss")
         {
             Battle.BossDefeated = true;
@@ -998,16 +1113,21 @@ public sealed partial class GameSession
         }
         if (e.Kind == "rift") { Battle.PortalDestroyed = true; _persist = true; }
     }
+    /// <summary>
+    /// 阵亡。**不管死在哪一格都回关卡起点**——Boss 格原先的"本格重生、敌人伤势保留"已取消
+    /// （用户要求：死亡行为各处一致）。
+    ///
+    /// **这里刻意不重置关卡**：重置挪到复活读条归零那一刻（见 <see cref="Step"/> 的倒计时块）。
+    /// 这样倒地演出是"倒在杀死它的那堆怪中间"，而不是一张空场景；`PlayerX` 在倒地期间保持为
+    /// 死亡点，表现层正好拿它当倒地用的镜头位置。
+    /// </summary>
     private void Die()
     {
-        bool bossCell = Battle.Cell == Level.Cells - 1;
         Effects.Clear(); ClearBuffs();
-        if (!bossCell) EnterLevel(Level.Id);
-        else Battle.PlayerX = (Level.Cells - 1) * Config.Setting("cell_width") + 80;
         Battle.PlayerHp = 0;
         Battle.RespawnTimer = Config.Setting("respawn_seconds");
         Moving = false; _persist = true;
-        Message = bossCell ? "气血耗尽 · 本格重生，敌人伤势保留。" : "气血耗尽 · 返回本关起点，资源全部保留。";
+        Message = "气血耗尽 · 返回本关起点，资源全部保留。";
     }
     private void CompleteLevel()
     {
@@ -1016,9 +1136,11 @@ public sealed partial class GameSession
         var next = !State.LoopLevel && index + 1 < Config.Levels.Count ? Config.Levels[index + 1] : Level;
         EnterLevel(next.Id); Message = "裂隙已破 · 抵达 " + next.Name; _persist = true;
     }
+    /// <summary>关卡起点（每关都从这儿开始；也是阵亡复活后的落点）。</summary>
+    public const double LevelStartX = 80;
     private void EnterLevel(string id)
     {
-        State.Battle = new() { LevelId = id, PlayerHp = MaxHp, PlayerX = 80 };
+        State.Battle = new() { LevelId = id, PlayerHp = MaxHp, PlayerX = LevelStartX };
         Effects.Clear(); ClearBuffs();
     }
     public bool SelectLevel(string id)
@@ -1053,5 +1175,27 @@ public sealed partial class GameSession
             State.DebugGranted[id] = State.DebugGranted.GetValueOrDefault(id) + amount;
         }
         return Changed($"GM 调试 · {currencies.Count} 种货币各 +{amount:0}");
+    }
+
+    /// <summary>
+    /// 某个系统解锁了没。UI 拿它决定页签可用不可用。
+    ///
+    /// 两个来源，取并：**里程碑**（首杀小怪 → 修行，记在 `State.UnlockedSystems` 里）与
+    /// **修行节点**（`realm_system` / `forge_system` / `intent_system`，见 `Systems.ByEffect`）。
+    /// 后者是**推导**出来的、不落盘——买节点时另外写一份状态的话，读档与改配置都可能让两边对不上。
+    /// </summary>
+    public bool Unlocked(string system) =>
+        State.UnlockedSystems.Contains(system)
+        || Systems.ByEffect.Any(pair => pair.Value == system && TalentBonus(pair.Key) > 0);
+
+    /// <summary>
+    /// GM 调试入口：把**全部系统**一次解锁。开发时不必为了看一页而先打一遍教学。
+    /// 与 <see cref="GrantAllCurrencies"/> 同一条护栏——**只动解锁标记**，
+    /// 不碰 `Wallet` / `FirstKills` / `DebugGranted`（那三者之间有存档校验绑着）。
+    /// </summary>
+    public bool UnlockAllSystems()
+    {
+        State.UnlockedSystems.UnionWith(Systems.All);
+        return Changed("GM 调试 · 全部系统已解锁");
     }
 }
