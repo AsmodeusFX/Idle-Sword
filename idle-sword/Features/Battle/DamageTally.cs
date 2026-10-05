@@ -8,7 +8,7 @@ namespace IdleSword.Features;
 /// - **溢出** = 名义伤害里超出剩余血量的那部分（上面那例就是 380）。单列一栏是为了看出"哪个技能经常砸在尸体上"。
 /// - **命中** = 落血次数。`damage &lt;= 0` 的调用不进账（见 `Add`）。
 ///
-/// 键是剑诀 / 宠物技能 id，**空串表示普通攻击**（`GameSession.TickBasicAttack` 就是这么发的）。
+/// 键是法术 / 宠物技能 id，**空串表示普通攻击**（`GameSession.TickBasicAttack` 就是这么发的）。
 /// 影分身那一份的 id 与本体相同，所以两份自然合并到同一个技能名下。
 /// </summary>
 public sealed class DamageTally
@@ -32,7 +32,7 @@ public sealed class DamageTally
     public double Seconds(double elapsed) => Math.Max(0, elapsed - _since);
 
     /// <summary>
-    /// 记一次落血。**两个数都为 0 就直接返回**：苍穹剑陨落地派生的那个 `Damage = 0` 的"爆炸余韵"
+    /// 记一次落血。**两个数都为 0 就直接返回**：天陨落地派生的那个 `Damage = 0` 的"爆炸余韵"
     /// 照样会走到这里，不拦的话它会凭空给技能加一次命中。
     /// </summary>
     public void Add(string source, double effective, double overkill)

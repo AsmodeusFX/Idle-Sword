@@ -36,6 +36,6 @@ public sealed partial class GameSession
         var r = Config.Row("SwordUpgrade", id); int rank = State.Upgrades.GetValueOrDefault(id);
         if (rank >= r.Int("max_level")) return Say("已达到强化上限。");
         if (!Pay(r.Text("currency_id"), r.Number("cost") * (rank + 1))) return Say("对应剑意不足，请参悟并收取。");
-        State.Upgrades[id] = rank + 1; return Changed("剑意强化 · " + r.Text("name"));
+        State.Upgrades[id] = rank + 1; return Changed("参悟强化 · " + r.Text("name"));
     }
 }

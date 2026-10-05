@@ -4,6 +4,8 @@
 >
 > 本轮改了三件**地基**（见第十节）：`SkillBonus` 按 `effect` 分类、存档不再拒绝超过等级上限的等级。
 > 关联：[sword_skills.md](sword_skills.md)（15 剑诀设计）、[balance_ttk.md](balance_ttk.md)（刻度与成长口径）、[skill_values.md](skill_values.md)（数值水位）、[../data/fields.md](../data/fields.md)（字段字典）。
+>
+> **分层说明**：本文讲的是"**每个技能能长什么**"（机制层，15×4 条行为）。"**这套东西怎么包装、怎么投放**"（包装层：四个方向、15 选 N、资源来源）记在 [intent_packaging.md](intent_packaging.md)；而那一层要等 [worldview.md](worldview.md) 的世界观定稿后再对齐词汇。
 
 ## 一、现状盘点
 
@@ -146,7 +148,7 @@
 | 参悟（`contemplation.csv`） | 剑意的唯一产出源；产能是平衡剑意强度的总闸门 |
 | 剑途（天赋） | 解锁自动参悟，是剑意从"手动点击"转为"挂机产出"的开关 |
 | 境界 | 4 页剑意恒可见；是否随境界解锁某几系是可选设计 |
-| 妖核 | 无直接关系；剑意不消耗妖核，不触碰有限投放口径 |
+| 灵核 | 无直接关系；剑意不消耗灵核，不触碰有限投放口径 |
 | GM 伤害统计 | 剑意上线的**验收工具**：每条剑意改完都该能在面板上看出来（[balance_ttk.md](balance_ttk.md) 第 8.3 节） |
 
 ## 九、待决问题清单

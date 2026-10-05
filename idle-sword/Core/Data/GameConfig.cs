@@ -11,11 +11,11 @@ public sealed record LevelDef(string Id, string Name, int Order, int Cells, doub
 public sealed record WaveDef(string Id, double Interval, int EliteEvery, string Elite, double HpScale, double AtkScale, int Count, int CountMax);
 // Weight 是该模板在这条波次里的**比例**（不是绝对只数）：整波只数由 wave.count / count_growth / count_max 决定。
 public sealed record WaveUnitDef(string Monster, int Weight);
-// TriggerChance：0 = 冷却到点自动释放（全部在役剑诀的默认）；> 0 = 不再自动释放，改为普攻出手时按此概率触发（真诀）。
+// TriggerChance：0 = 冷却到点自动释放（全部在役法术的默认）；> 0 = 不再自动释放，改为普攻出手时按此概率触发（神通）。
 // CastRoot / Knockback：施放瞬间的全屏定身秒数、每次命中把目标推离玩家的逻辑距离，0 均表示无。
 // Band：`sky_drop` 的"天上那排黑洞的铺开宽度"（0 = 各支在阵心两侧按 `spread` 对称铺开）。
 // > 0 时**每支各锁一个（尽量不同的）目标、落在它当时的位置爆炸**，而黑洞以**目标群的中轴**为心铺开 band 宽。
-// 锚在目标上而不是角色上：角色每秒走 340，一发 1.3 秒的轰炸若从角色量起，落点会甩到身后（18 苍穹剑陨）。
+// 锚在目标上而不是角色上：角色每秒走 340，一发 1.3 秒的轰炸若从角色量起，落点会甩到身后（18 天陨）。
 // 详见 docs/data/fields.md 的「各锁一敌」。
 // Targeting：空 / nearest = 最近的合法目标（受射程限制）；highest_hp = 全场血量最高者，无视射程。
 // AoeAll：落点/范围结算命中全体合法敌人（aoe_radius 退为表现用）。
@@ -105,8 +105,8 @@ public sealed class GameConfig
             var first = c.Rows("drop").Where(d => d.Text("group_id") == r.Text("first_reward")).ToList();
             var repeat = c.Rows("drop").Where(d => d.Text("group_id") == r.Text("repeat_reward")).ToList();
             if (first.Count == 0 || repeat.Count == 0) throw r.Error("first_reward", "奖励组不存在");
-            if (first.Where(d => d.Text("item_id") == "core").Sum(d => d.Number("amount")) != 1) throw r.Error("first_reward", "每关首杀必须恰好给 1 个妖核");
-            if (repeat.Any(d => d.Text("item_id") == "core")) throw r.Error("repeat_reward", "重复奖励不得包含妖核");
+            if (first.Where(d => d.Text("item_id") == "core").Sum(d => d.Number("amount")) != 1) throw r.Error("first_reward", "每关首杀必须恰好给 1 个灵核");
+            if (repeat.Any(d => d.Text("item_id") == "core")) throw r.Error("repeat_reward", "重复奖励不得包含灵核");
             c.Levels.Add(new(r.Text("id"), r.Text("name"), r.Int("order"), r.Int("cells"), r.Number("normal_hp"), r.Number("normal_atk"), r.Number("elite_hp"), r.Number("elite_atk"), r.Number("boss_hp"), r.Number("boss_atk"), r.Number("rift_hp"), r.Text("wave_id"), r.Text("boss_id"), r.Text("rift_id"), r.Text("first_reward"), r.Text("repeat_reward")));
         }
         c.Levels.Sort((a, b) => a.Order.CompareTo(b.Order));
@@ -123,7 +123,7 @@ public sealed class GameConfig
             // 所以值必须为正——配成 0 就是一行什么都不做的死配置。
             if (secondary == "bonus_vs_state" && r.Number("secondary_value") <= 0)
                 throw r.Error("secondary_value", "利用状态（bonus_vs_state）需要正的增伤比例");
-            // 影分身（mirror，剑二十三）：它是**自身的短时状态**，不分敌、也不生成单位，所以必须是 buff。
+            // 影分身（mirror，身外身）：它是**自身的短时状态**，不分敌、也不生成单位，所以必须是 buff。
             // secondary_value 是继承比例的小数（0.7 = 七成），误填成 70 不会报任何错、只会静默变成 7000%，故在这里拦下。
             if (secondary == "mirror")
             {
@@ -132,11 +132,11 @@ public sealed class GameConfig
                 if (r.Number("secondary_value") > 1) throw r.Error("secondary_value", "影分身的继承比例是 0～1 的小数（0.7 = 七成）");
             }
             if (r.Number("pierce_chance") > 1) throw r.Error("pierce_chance", "是概率，取值 0～1");
-            // 触发概率：0 表示沿用「冷却到点自动释放」，> 0 表示改为普攻出手时按概率触发（真诀）。
+            // 触发概率：0 表示沿用「冷却到点自动释放」，> 0 表示改为普攻出手时按概率触发（神通）。
             // 两者互斥，不需要额外的触发方式列：0 就是自动释放那一档。
             if (r.Number("trigger_chance") > 1) throw r.Error("trigger_chance", "是概率，取值 0～1");
             // gather 是 knockback（推开）的反向孪生：每次命中把目标**朝效果中心**拉近，0 = 不吸。
-            // 两者都是正交旋钮，不占 secondary，所以"吸 + 减速"能同时挂在同一个技能上（寒冰龙卷）。
+            // 两者都是正交旋钮，不占 secondary，所以"吸 + 减速"能同时挂在同一个技能上（扎根）。
             Nonnegative(r, "cast_root", "knockback", "gather", "band");
             // 黑洞铺开宽度：只有 sky_drop 会读它——别的形态配了就是一行什么都不做的死配置，拦下来别让它静默失效。
             if (r.Number("band") > 0 && r.Text("trajectory") != "sky_drop")
@@ -207,12 +207,12 @@ public sealed class GameConfig
             c.Ref(r, "skill_id", "SwordSkill"); c.Ref(r, "currency_id", "item");
             Positive(r, "max_level"); Positive(r, "cost"); Positive(r, "value");
             // effect 决定"这一行加的是哪种东西"，界面按它渲染文案——填错会显示成别的东西，必须校验。
-            // damage_percent = 技能威力；inherit_percent = 影分身的继承比例（剑二十三）。
+            // damage_percent = 技能威力；inherit_percent = 影分身的继承比例（身外身）。
             Choice(r, "effect", "damage_percent", "inherit_percent");
         }
         foreach (var r in c.Rows("contemplation"))
         {
-            c.Ref(r, "item_id", "item"); if (r.Text("item_id") == "core") throw r.Error("item_id", "参悟不能产出妖核");
+            c.Ref(r, "item_id", "item"); if (r.Text("item_id") == "core") throw r.Error("item_id", "参悟不能产出灵核");
             Positive(r, "capacity"); Positive(r, "click_amount"); Positive(r, "auto_interval");
         }
         foreach (var r in c.Rows("PetSkill")) { Positive(r, "cooldown"); Positive(r, "power"); Positive(r, "range"); }
@@ -230,10 +230,10 @@ public sealed class GameConfig
             if (r.Text("id") is "basic_interval" or "basic_power" or "basic_range") Positive(r, "base_value");
         }
         foreach (var r in c.Rows("game_settings")) Positive(r, "value");
-        // 妖核奖励组只能被关卡首杀入口引用；不能通过通用奖励调用入账。
+        // 灵核奖励组只能被关卡首杀入口引用；不能通过通用奖励调用入账。
         var firstGroups = c.Levels.Select(l => l.FirstReward).ToHashSet();
         foreach (var r in c.Rows("drop").Where(r => r.Text("item_id") == "core"))
-            if (!firstGroups.Contains(r.Text("group_id"))) throw r.Error("group_id", "妖核只允许出现在首杀奖励组");
+            if (!firstGroups.Contains(r.Text("group_id"))) throw r.Error("group_id", "灵核只允许出现在首杀奖励组");
         return c;
     }
     private void Ref(CsvRow r, string field, string table)

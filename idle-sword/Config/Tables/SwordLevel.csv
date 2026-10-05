@@ -1,6 +1,6 @@
 id,name,default_unlocked,cost_gold,order
-realm_0,炼气,1,0,0
-realm_1,筑基,0,400,1
-realm_2,金丹,0,1800,2
-realm_3,元婴,0,7500,3
-realm_4,化神,0,25000,4
+realm_0,小妖,1,0,0
+realm_1,妖将,0,400,1
+realm_2,妖王,0,1800,2
+realm_3,妖尊,0,7500,3
+realm_4,妖圣,0,25000,4

@@ -1,5 +1,6 @@
 {
   "player": "res://Assets/Sprites/player.svg",
+  "player_flash": "res://Assets/Sprites/player_flash.svg",
   "slime": "res://Assets/Sprites/slime.svg",
   "archer": "res://Assets/Sprites/archer.svg",
   "tank": "res://Assets/Sprites/tank.svg",

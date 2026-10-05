@@ -5,7 +5,7 @@ using IdleSword.Features;
 namespace IdleSword.UI;
 
 /// <summary>
-/// 技能预览模式：用独立会话逐个播放 15 个剑诀，供设计审核对照。
+/// 技能预览模式：用独立会话逐个播放 15 个法术，供设计审核对照。
 /// 预览会话不写存档、不参与玩家进度，退出后不留痕迹；预览期间主线挂机暂停，
 /// 避免"看技能"时后台还在推进关卡。
 /// </summary>
@@ -14,10 +14,10 @@ public partial class Main
     private GameSession? _preview;
     private int _previewSkill;
     private double _previewClock;
-    // 靶子距离取 520：落在停步距离 640 之内（角色站定不乱跑），又在全部剑诀射程 950 之内。
+    // 靶子距离取 520：落在停步距离 640 之内（角色站定不乱跑），又在全部法术射程 950 之内。
     private const double PreviewTargetDistance = 520;
     private const double PreviewTargetHp = 2000;
-    // 每 1.8 秒重置所选剑诀冷却，让 12 秒冷却的大招也能快速反复观察。
+    // 每 1.8 秒重置所选法术冷却，让 12 秒冷却的大招也能快速反复观察。
     private const double PreviewRecast = 1.8;
 
     private GameSession Active => _preview ?? _game;
@@ -32,8 +32,8 @@ public partial class Main
     {
         if (_preview is null)
         {
-            // 固定种子：同一剑诀每次预览的表现一致，便于对照。
-            // 关掉普攻：预览是逐个剑诀的对照台，每秒一发的飞剑只会往画面里混入不属于所选剑诀的东西。
+            // 固定种子：同一法术每次预览的表现一致，便于对照。
+            // 关掉普攻：预览是逐个法术的对照台，每秒一发的飞剑只会往画面里混入不属于所选法术的东西。
             _preview = new GameSession(_game.Config, seed: 1) { BasicAttackEnabled = false };
             SelectPreviewSkill(0);
         }
@@ -48,10 +48,10 @@ public partial class Main
         var ids = PreviewSkillIds;
         _previewSkill = Math.Clamp(index, 0, ids.Count - 1);
         string current = ids[_previewSkill];
-        // 只保留当前剑诀，避免其他技能的特效混进来，失去对照意义。
+        // 只保留当前法术，避免其他技能的特效混进来，失去对照意义。
         foreach (string id in ids) _preview.State.Skills[id] = id == current ? 1 : 0;
-        // 剑二十三是个例外：它本身不产生任何效果，只是"让本体放出的剑诀多一份"。
-        // 不给它配一个搭档剑诀，预览里就只剩一个站着不动的分身，什么也演示不出来。
+        // 身外身是个例外：它本身不产生任何效果，只是"让本体放出的法术多一份"。
+        // 不给它配一个搭档法术，预览里就只剩一个站着不动的分身，什么也演示不出来。
         if (_preview.Config.Skills[current].Secondary == "mirror" && _preview.State.Skills.ContainsKey("skill_01"))
             _preview.State.Skills["skill_01"] = 1;
         _preview.Battle.Cooldowns.Clear();
@@ -95,13 +95,13 @@ public partial class Main
             // 而本步的 Step 紧接着就会把技能放出去并写回冷却——不在这里补一次观测，那个跳变永远发生在同一步之内，
             // 预览模式下就一声释放音都不会响（真机上表现为"看技能时没有音效"）。
             TrackSkillCasts(Active);
-            // 真诀不在冷却到点自动释放（要等普攻按概率摇中），而预览里普攻是关掉的。
+            // 神通不在冷却到点自动释放（要等普攻按概率摇中），而预览里普攻是关掉的。
             // 不显式放一次，它们在对照模式下永远不出手，等于看不到。
             if (_preview.Config.Skills[PreviewSkillId].TriggerChance > 0) _preview.ForceRelease(PreviewSkillId);
         }
         var target = _preview.Battle.Enemies.FirstOrDefault(e => e.Hp > 0);
         if (target is null) { PreparePreviewField(); return; }
-        // 每步重新钉住靶子：位置、免伤、不反击，保证 15 个剑诀面对完全相同的对照条件。
+        // 每步重新钉住靶子：位置、免伤、不反击，保证 15 个法术面对完全相同的对照条件。
         target.X = _preview.Battle.PlayerX + PreviewTargetDistance;
         target.Atk = 0; target.AttackTimer = 999;
         if (target.Hp < target.MaxHp * .25) target.Hp = target.MaxHp;
@@ -138,7 +138,7 @@ public partial class Main
             "haste" => $"攻速 +{skill.SecondaryValue:P0} / {skill.SecondaryDuration:0.#}s",
             "crit_reduce" => $"暴击 +{skill.SecondaryValue:P0} / {skill.SecondaryDuration:0.#}s · 暴击缩冷却 {skill.SecondaryExtra:0.##}s",
             // 影分身：摘要里要写清"同步复制、继承多少"，这两个数是这个技能的全部内容。
-            "mirror" => $"影分身 同步复制剑诀 / 本体伤害 {skill.SecondaryValue:P0} 起 · {skill.SecondaryDuration:0.#}s",
+            "mirror" => $"影分身 同步复制法术 / 本体伤害 {skill.SecondaryValue:P0} 起 · {skill.SecondaryDuration:0.#}s",
             _ => skill.Secondary,
         };
         // 飞行形态摘要：审核弹道时最需要核对的就是"几支、怎么飞、范围多大、出剑节奏"。
@@ -158,9 +158,9 @@ public partial class Main
         };
         string realm = _game.Config.Row("SwordLevel", skill.Realm).Text("name");
         string tail = shape == "" ? secondary : skill.Secondary == "" ? shape : $"{secondary} · {shape}";
-        // 真诀的出手时机由普攻概率决定，配置里的 cooldown 只是最短触发间隔；不点明的话"冷却 5s"会被读错。
+        // 神通的出手时机由普攻概率决定，配置里的 cooldown 只是最短触发间隔；不点明的话"冷却 5s"会被读错。
         string trigger = skill.TriggerChance > 0
-            ? $"普攻触发 {skill.TriggerChance:P0}{(skill.TriggerChanceStep > 0 ? $" 起 · 每次普攻 +{skill.TriggerChanceStep:P0}" : "")} · 最短间隔 {skill.Cooldown:0.#}s"
+            ? $"神通 · 普攻引动 {skill.TriggerChance:P0}{(skill.TriggerChanceStep > 0 ? $" 起 · 每次普攻 +{skill.TriggerChanceStep:P0}" : "")} · 最短间隔 {skill.Cooldown:0.#}s"
             : $"冷却 {skill.Cooldown:0.#}s";
         return $"{realm} · {skill.Kind} · {trigger} · 射程 {skill.Range:0} · 威力 ×{skill.Power:0.##} · {tail}";
     }

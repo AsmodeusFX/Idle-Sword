@@ -15,7 +15,7 @@ namespace IdleSword.UI;
 /// </summary>
 public partial class Main
 {
-    // 表最多列这么多行（15 剑诀 + 普攻 + 宠物技能 + 余量，够用）。数据超过了就截断——这是调试工具，不做分页。
+    // 表最多列这么多行（15 法术 + 普攻 + 宠物技能 + 余量，够用）。数据超过了就截断——这是调试工具，不做分页。
     private const int DamageRowCount = 24;
     private const double DamageRefreshSeconds = .2;
     // 行高 26：24 行正好把面板撑到 880 高，塞得进 1080 的设计空间。
@@ -105,7 +105,7 @@ public partial class Main
         if (_damageRoot is null) return;
         var session = _battle.Session;
         double seconds = session.DamageStatsSeconds;
-        // **所有已习得的剑诀都在列**（含 0 伤害的 buff——用户要求"列出来但效率为 0"，好一眼看出哪些还没接进统计），
+        // **所有已习得的法术都在列**（含 0 伤害的 buff——用户要求"列出来但效率为 0"，好一眼看出哪些还没接进统计），
         // 再并上实际产生过伤害的来源（普通攻击永远在列，它是最重要的对照项；宠物技能也走这里进来）。
         var ids = new List<string> { "" };
         ids.AddRange(session.State.Skills.Where(kv => kv.Value > 0).Select(kv => kv.Key));
@@ -142,7 +142,7 @@ public partial class Main
         _damageTotalCells[5].Text = hits.ToString("0");
         _damageHint.Text = rows.Length > DamageRowCount
             ? $"只列出前 {DamageRowCount} 项（共 {rows.Length} 项）"
-            : "已习得的剑诀全部在列；0 的是还没接进统计的功能类（如攻速、暴击）。溢出 = 打在已死目标上的那部分。";
+            : "已习得的法术全部在列；0 的是还没接进统计的功能类（如攻速、暴击）。溢出 = 打在已死目标上的那部分。";
     }
 
     private static string Dps(double damage, double seconds) => seconds > 0 ? UiKit.Number(damage / seconds) : "—";

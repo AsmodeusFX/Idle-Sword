@@ -7,8 +7,8 @@ public partial class Main
 {
     private void TalentPage()
     {
-        UiKit.Label(_page, "剑途 · 一念启程", 20, 0, 480, 45, 29, UiKit.Gold);
-        UiKit.Label(_page, "沿已点亮的连线探索。灵钱修行，妖核破境。", 20, 44, 720, 32, 19, UiKit.Muted);
+        UiKit.Label(_page, "修行 · 一念启程", 20, 0, 480, 45, 29, UiKit.Gold);
+        UiKit.Label(_page, "沿已点亮的连线探索。灵钱修行，灵核破境。", 20, 44, 720, 32, 19, UiKit.Muted);
         var visible = _game.Config.Rows("Talent").Where(r => _game.TalentVisible(r.Text("id"))).ToList();
         var scroll = new ScrollContainer { VerticalScrollMode = ScrollContainer.ScrollMode.Disabled };
         UiKit.Place(scroll, 0, 80, 1872, 220); _page.AddChild(scroll);
@@ -33,9 +33,9 @@ public partial class Main
             string description = r.Text("effect") switch { "atk" => $"攻击加成 +{r.Number("value"):P0}", "hp" => $"气血加成 +{r.Number("value"):P0}", _ => "解锁在线自动参悟" };
             button.TooltipText = $"点击精进。{description}；当前 {rank}/{r.Int("max_level")}。";
         }
-        UiKit.Label(_page, "沿连线点击节点精进   ·   静心自悟解锁自动参悟   ·   横向可滚动", 22, 296, 1500, 24, 16, UiKit.Muted);
+        UiKit.Label(_page, "沿连线点击节点精进   ·   生根解锁自动参悟   ·   横向可滚动", 22, 296, 1500, 24, 16, UiKit.Muted);
     }
-    /// <summary>技能预览页：15 个剑诀各一个按钮，逐个对照表现与数值。</summary>
+    /// <summary>技能预览页：15 个法术各一个按钮，逐个对照表现与数值。</summary>
     private void PreviewPage()
     {
         var ids = PreviewSkillIds;
@@ -49,14 +49,14 @@ public partial class Main
         foreach (string id in ids)
         {
             var row = _game.Config.Skills[id]; int index = i++;
-            // **竖着排**：一列一个境界（第 1 列炼气、第 2 列筑基……），列内按技能书顺序自上而下。
+            // **竖着排**：一列一个境界（第 1 列小妖、第 2 列妖将……），列内按技能书顺序自上而下。
             // `ids` 已按境界排好且每境恰好 3 个（见 core_rules.md 的「5 个境界，每境 3 个技能」），
             // 所以列 = index / 3、行 = index % 3。**若以后放宽每境技能数，这两处要改成按境界分组排行号。**
             var button = UiKit.Button(_page, row.Name, index / 3 * 376, 42 + index % 3 * 78, 356, 70,
                 () => { SelectPreviewSkill(index); ShowPage(_selectedTab); Refresh(); }, id == PreviewSkillId);
             // 悬停提示里放完整口径：书页那一行只能写「15%→100%」，涨多少得在这里说清。
             button.TooltipText = skill.TriggerChanceStep > 0
-                ? $"{row.Description}\n每经过一次普攻触发概率 +{skill.TriggerChanceStep:P0}，摇中后回到 {skill.TriggerChance:P0}。"
+                ? $"{row.Description}\n神通：每经过一次普攻，触发概率 +{skill.TriggerChanceStep:P0}，摇中后回到 {skill.TriggerChance:P0}。"
                 : row.Description;
         }
         UiKit.Label(_page, skill.Description, 20, 276, 1840, 36, 19, UiKit.Muted);
@@ -67,7 +67,7 @@ public partial class Main
     /// - **输出类**：每级威力 +`skill_level_bonus`（就是 `SkillPower` 用的那个系数，两边同源）。
     /// - **增益类**：峰值强度**不随等级变**（它走 `secondary_value`，是定值），成长全在**覆盖率**上——
     ///   每级冷却 −`buff_cooldown_per_level`，下限 `持续 × buff_cooldown_floor_ratio`（覆盖率封顶 80%）。
-    ///   剑二十三另有一条"继承比例 +1%/级"（它的强度确实随等级涨）。
+    ///   身外身另有一条"继承比例 +1%/级"（它的强度确实随等级涨）。
     /// 所有数字都从 `game_settings` 读；硬编码会让提示与实现悄悄对不上。
     /// </summary>
     private string UpgradeTip(SkillDef skill, int rank)
@@ -99,11 +99,12 @@ public partial class Main
             {
                 float y = 64 + j++ * 78; string sid = skill.Id;
                 var label = UiKit.Label(_page, "", x + 18, y, 356, 27, 20);
-                // 真诀不靠冷却出手，显示 "CD 5.0s" 会让人以为它每 5 秒放一次——那 5 秒只是最短触发间隔。
+                // 神通不靠冷却出手，显示 "CD 5.0s" 会让人以为它每 5 秒放一次——那 5 秒只是最短触发间隔。
                 _bindings.Add(() => label.Text = skill.TriggerChance > 0
                     // 概率叠加形态（trigger_chance_step > 0）只写「15%→100%」：把"起步值"和"会长"两件事一起说清，
                     // 又塞得进这一行的宽度（"每次普攻 +5%" 的完整口径在预览页与悬停提示里）。
-                    ? $"{skill.Name}  Lv.{_game.State.Skills.GetValueOrDefault(sid)}   普攻触发 {skill.TriggerChance:P0}"
+                    // 行内只写「神通 15%」：完整口径（它由普攻引动）在悬停提示与预览页里，见下。
+                    ? $"{skill.Name}  Lv.{_game.State.Skills.GetValueOrDefault(sid)}   神通 {skill.TriggerChance:P0}"
                         + (skill.TriggerChanceStep > 0 ? "→100%" : "")
                     : $"{skill.Name}  Lv.{_game.State.Skills.GetValueOrDefault(sid)}   CD {_game.Battle.Cooldowns.GetValueOrDefault(sid):0.0}s");
                 var button = UiKit.Button(_page, "", x + 18, y + 31, 320, 36, () => Act(() => _game.UpgradeSkill(sid)));
@@ -140,8 +141,8 @@ public partial class Main
         }
     }
     /// <summary>
-    /// 剑意行的效果文案——按配置的 `effect` 渲染，而不是一律写「效果 +X%」。
-    /// 剑二十三那 4 行的语义是**继承比例**（它的 `power` 根本不参与伤害），写成"伤害"会误导；
+    /// 参悟行的效果文案——按配置的 `effect` 渲染，而不是一律写「效果 +X%」。
+    /// 身外身那 4 行的语义是**继承比例**（它的 `power` 根本不参与伤害），写成"伤害"会误导；
     /// 未知取值由加载期校验拦住（见 `GameConfig` 对 `SwordUpgrade.effect` 的检查），这里给个兜底。
     /// </summary>
     private static string IntentEffectText(CsvRow r) => r.Text("effect") switch
@@ -170,7 +171,7 @@ public partial class Main
                 pile.MouseEntered += () => { _game.CollectIntent(item); Refresh(); };
                 _bindings.Add(() => pile.Text = $"移入收取 ×{_game.State.PendingIntent.GetValueOrDefault(item):0}");
                 var status = UiKit.Label(_page, "", x + 22, 206, 405, 42, 18, UiKit.Muted);
-                _bindings.Add(() => status.Text = $"积存上限 {r.Number("capacity"):0}  /  " + (_game.TalentBonus("auto_intent") > 0 ? $"每 {r.Number("auto_interval"):0} 秒自悟" : "剑途可解锁自动参悟"));
+                _bindings.Add(() => status.Text = $"积存上限 {r.Number("capacity"):0}  /  " + (_game.TalentBonus("auto_intent") > 0 ? $"每 {r.Number("auto_interval"):0} 秒自悟" : "修行可解锁自动参悟"));
             }
             UiKit.Label(_page, "参悟时战斗继续；离开页面仍在线自悟，产物积存至上限。", 10, 282, 1780, 30, 18, UiKit.Muted);
         }

@@ -17,12 +17,12 @@ const double EliteSu = 10;         // 精英 = 10 SU（monster.csv 的 elite.hp 
 const double BossSu = 75;          // BOSS = 75 SU（boss.hp 同理）
 const double RiftRatio = 0.9;      // 裂隙 = 0.9 × 标准怪（它是一道门，不是一场战斗）
 const double EliteAtkRatio = 0.95; // 精英攻击仍比同关普通怪略低，沿用原有关系
-const double BladesStart = 1, BladesEnd = 5;      // 御剑术剑支数的成长轴（剑意，尚未接线）
+const double BladesStart = 1, BladesEnd = 5;      // 御剑剑支数的成长轴（参悟，尚未接线）
 const double RankStart = 1, RankEnd = 32;         // 期望技能等级（该关应有的练度）
 const double NStart = 3, NEnd = 15;               // 波次怪物数
 const double TEnd = 14;                           // 第 100 关的清波目标秒数（起点由第 1 关反推，见下）
 const double AtkEnd = 2.5;                        // normal_atk 第 100 关的硬上界（见 balance_ttk.md §4.5）
-// **每 20 关解锁一个境界**（关 1/20/40/60/80）：模型里不能一开局就有 15 个剑诀。
+// **每 20 关解锁一个境界**（关 1/20/40/60/80）：模型里不能一开局就有 15 个法术。
 // 这是一条新增假设，也是调优旋钮——玩家实际多快能攒够境界解锁灵钱，要等灵钱收入模型出来才能校准。
 const int UnlockEvery = 20;
 const double CritDamage = 1.5;                    // fightattr.crit_damage，用于估暴击增益的收益
@@ -48,13 +48,13 @@ double Lerp(double a, double b, int order) => a + (b - a) * (order - 1) / 99.0;
 double Attack(int order) => BaseAttack * (1 + Talent(order));
 double WaveSize(int order) => Lerp(NStart, NEnd, order);
 
-// ---- 技能链：全套 15 剑诀求和（口径见 docs/design/skill_values.md）----
-// 旧版只建模御剑术，于是①漏算了其余 14 个剑诀、②体现不出"新境界解锁新剑诀"。
+// ---- 技能链：全套 15 法术求和（口径见 docs/design/skill_values.md）----
+// 旧版只建模御剑，于是①漏算了其余 14 个法术、②体现不出"新境界解锁新法术"。
 var skills = CsvTable.Parse("SwordSkill.csv", File.ReadAllText(Path.Combine(dir, "SwordSkill.csv")));
 int RealmOf(CsvRow s) => int.Parse(s.Text("realm_id").Replace("realm_", ""));
 bool Unlocked(CsvRow s, int order) => order >= 1 + RealmOf(s) * UnlockEvery;
 
-// 期望出手周期：冷却制 = 冷却；真诀 = 冷却 + 期望等待（冷却未就绪时 RollTriggerSkills 直接跳过）。
+// 期望出手周期：冷却制 = 冷却；神通 = 冷却 + 期望等待（冷却未就绪时 RollTriggerSkills 直接跳过）。
 // 叠加形态（trigger_chance_step > 0）用生存积求期望普攻次数。
 double Cycle(CsvRow s)
 {
@@ -82,8 +82,8 @@ double Cycle(CsvRow s)
 //   贯穿（line_pierce）    wave         （一条线扫过整个战场，在场的都在内）
 //   全体（aoe_all ×k）     k × wave     （每柄都打全场）
 // 两个密度系数——参考波次约 10 只时，实测反推出来的值（见 docs/design/skill_values.md 第三节）：
-// PerBlade 是一个「小落点」平均罩住几只（万剑决实测每个落点 0.88、苍穹剑陨 1.1~1.7，取 1.2）；
-// PerTick 是一片「持续力场」每跳罩住几只（寒冰龙卷实测每跳 2.3，取 2）。
+// PerBlade 是一个「小落点」平均罩住几只（万剑实测每个落点 0.88、天陨 1.1~1.7，取 1.2）；
+// PerTick 是一片「持续力场」每跳罩住几只（扎根实测每跳 2.3，取 2）。
 const double PerBlade = 1.2, PerTick = 2;
 double Hits(CsvRow s, double wave)
 {
@@ -108,14 +108,14 @@ double Chain(int order)
     foreach (var s in skills)
     {
         if (s.Text("kind") is "buff" or "summon" || !Unlocked(s, order)) continue;
-        // 御剑术的成长轴是剑支数（1 → 5），其余剑诀只吃技能等级。
+        // 御剑的成长轴是剑支数（1 → 5），其余法术只吃技能等级。
         double hits = s.Text("id") == "skill_01" ? Lerp(BladesStart, BladesEnd, order) : Hits(s, WaveSize(order));
         chain += s.Number("power") * hits * (1 + 0.15 * (Lerp(RankStart, RankEnd, order) - 1)) / Cycle(s);
     }
     return chain;
 }
 
-// 四个增益都是乘区：攻速与暴击作用于全链（普攻也吃），影分身只复制剑诀、不复制普攻。
+// 四个增益都是乘区：攻速与暴击作用于全链（普攻也吃），影分身只复制法术、不复制普攻。
 CsvRow? Buff(string sec) => skills.FirstOrDefault(s => s.Text("kind") == "buff" && s.Text("secondary") == sec);
 var settings = CsvTable.Parse("game_settings.csv", File.ReadAllText(Path.Combine(dir, "game_settings.csv")))
     .ToDictionary(r => r.Text("id"));

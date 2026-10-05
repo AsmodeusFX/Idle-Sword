@@ -1,6 +1,6 @@
 id,name,kind,description
 gold,灵钱,currency,战斗与重复挑战产出
-core,妖核,currency,每关BOSS首杀固定1个
+core,灵核,currency,每关BOSS首杀固定1个
 intent_0,风之剑意,currency,在线参悟并手动收取
 intent_1,雷之剑意,currency,在线参悟并手动收取
 intent_2,霜之剑意,currency,在线参悟并手动收取

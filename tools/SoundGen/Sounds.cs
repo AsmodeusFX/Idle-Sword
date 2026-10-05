@@ -77,7 +77,7 @@ internal static class Sounds
         return buf;
     }
 
-    // ── 技能释放（按剑诀 kind，由 SwordSkill.csv 驱动，不额外维护映射表）────
+    // ── 技能释放（按法术 kind，由 SwordSkill.csv 驱动，不额外维护映射表）────
     /// <summary>弹丸类：上扬的"嗖"。</summary>
     public static double[] CastProjectile()
     {
@@ -173,7 +173,7 @@ internal static class Sounds
         return buf;
     }
 
-    /// <summary>首杀妖核：四音上行的短号角。</summary>
+    /// <summary>首杀灵核：四音上行的短号角。</summary>
     public static double[] Reward()
     {
         var buf = Synth.Buffer(.60);

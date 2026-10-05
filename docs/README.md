@@ -6,11 +6,11 @@
 
 - [已确认规则与待确认边界](design/core_rules.md)
 - [数值刻度与 TTK 规划（草案，待确认）](design/balance_ttk.md) —— **做数值计算前必读**
-- [十五剑诀设计](design/sword_skills.md)
-- [剑诀境界编排](design/skill_realms.md)
-- [十五剑诀设计评审（诊断 + 方向性建议）](design/skill_review.md) —— **进入剑意等扩展前先看这份**
-- [十五剑诀数值存档](design/skill_values.md) —— **调技能数值前必读**（口径、当前值、目标值、调优旋钮）
-- [剑意系统设计（草案，待讨论）](design/sword_intent.md)
+- [十五法术设计](design/sword_skills.md)
+- [法术境界编排](design/skill_realms.md)
+- [十五法术设计评审（诊断 + 方向性建议）](design/skill_review.md) —— **进入参悟等扩展前先看这份**
+- [十五法术数值存档](design/skill_values.md) —— **调技能数值前必读**（口径、当前值、目标值、调优旋钮）
+- [参悟系统设计（草案，待讨论）](design/sword_intent.md)
 - [工程框架方案](technical/architecture.md)
 - [配置表规划](data/config_plan.md)
 - [CSV 字段字典](data/fields.md)

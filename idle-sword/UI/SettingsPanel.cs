@@ -126,7 +126,7 @@ public partial class Main
         _soundSlider = VolumeSlider(516); _soundValue = UiKit.Label(_settingsRoot, "", 1145, 516, 90, 30, 18, UiKit.Muted);
 
         UiKit.Label(_settingsRoot, "重置", 660, 576, 200, 34, 24, UiKit.Jade);
-        UiKit.Wrapped(_settingsRoot, "重置会清空全部进度：境界、剑诀、剑途、铸剑、剑意、剑灵、首杀账本与关卡解锁。画面与音量设置不受影响。", 660, 614, 560, 56, 18, UiKit.Muted);
+        UiKit.Wrapped(_settingsRoot, "重置会清空全部进度：境界、法术、修行、铸造、参悟、剑灵、首杀账本与关卡解锁。画面与音量设置不受影响。", 660, 614, 560, 56, 18, UiKit.Muted);
         _resetButton = UiKit.Button(_settingsRoot, "重置游戏进度", 660, 678, 300, 48, PressReset);
         _resetButton.AddThemeStyleboxOverride("normal", UiKit.Box(DangerBg, 6, DangerEdge));
         _resetButton.AddThemeStyleboxOverride("hover", UiKit.Box(new Color("#5d2f3d"), 6, DangerText));
@@ -270,5 +270,7 @@ public partial class Main
         CloseSettings();
         Save();
         ShowPage(0); Refresh();
+        // 重置就是"从零开始"，所以序章重播一次。测试模式下不播——那会打乱紧跟着的重置断言。
+        if (!_testMode) StartPrologue();
     }
 }

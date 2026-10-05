@@ -46,9 +46,9 @@ public sealed class SaveStore(string path)
         else File.Move(tmp, path);
     }
     /// <summary>
-    /// 迁移：DebugGranted 是后加的字段，更早的存档里没有记录。若这类存档已被 GM 发过妖核，
+    /// 迁移：DebugGranted 是后加的字段，更早的存档里没有记录。若这类存档已被 GM 发过灵核，
     /// 校验会把超出首杀账本的部分判为篡改并拒绝整份存档（旧版即因此无法登录）。
-    /// 这里只在「完全没有调试记录」时，把超出的妖核一次性补登记为调试发放，保留进度；
+    /// 这里只在「完全没有调试记录」时，把超出的灵核一次性补登记为调试发放，保留进度；
     /// 一旦存在记录便不再放行，避免持续掩盖真实的不一致。
     /// </summary>
     private static void AdoptUntrackedCores(PlayerState s)
@@ -84,8 +84,8 @@ public sealed class SaveStore(string path)
         if (s.Wallet.Any(p => !double.IsFinite(p.Value) || p.Value < 0)) throw new InvalidDataException("货币数值非法");
         References(s.DebugGranted.Keys, "item");
         if (s.DebugGranted.Values.Any(v => !double.IsFinite(v) || v < 0)) throw new InvalidDataException("调试发放记录非法");
-        // 妖核累计投放量 = 首杀关卡数 + 调试发放量；两项之外的余额即为不一致。
-        if (s.Amount("core") > s.FirstKills.Count + s.DebugGranted.GetValueOrDefault("core") || s.Amount("core") % 1 != 0) throw new InvalidDataException("妖核数量与首杀账本不符");
+        // 灵核累计投放量 = 首杀关卡数 + 调试发放量；两项之外的余额即为不一致。
+        if (s.Amount("core") > s.FirstKills.Count + s.DebugGranted.GetValueOrDefault("core") || s.Amount("core") % 1 != 0) throw new InvalidDataException("灵核数量与首杀账本不符");
         if (s.FirstKills.Any(id => !c.Levels.Any(l => l.Id == id))) throw new InvalidDataException("首杀关卡不存在");
         if (!double.IsFinite(s.Battle.PlayerX) || !double.IsFinite(s.Battle.PlayerHp) || s.Battle.PlayerHp < 0) throw new InvalidDataException("战斗状态非法");
         if (s.Battle.Cell < 0 || s.Battle.Cell >= level.Cells || s.Battle.PlayerX < 0 || s.Battle.PlayerX >= level.Cells * c.Setting("cell_width")) throw new InvalidDataException("关卡位置非法");

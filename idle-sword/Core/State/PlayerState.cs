@@ -6,7 +6,7 @@ public sealed class PlayerState
     public int Version { get; set; } = 1;
     public Dictionary<string, double> Wallet { get; set; } = new() { ["gold"] = 0, ["core"] = 0 };
     // GM 调试发放记录：按货币 id 累计由调试入口发出的数量。存档校验据此区分
-    // 「玩法产出」与「调试产出」，否则调试发出的妖核会被当成篡改而拒绝整份存档。
+    // 「玩法产出」与「调试产出」，否则调试发出的灵核会被当成篡改而拒绝整份存档。
     public Dictionary<string, double> DebugGranted { get; set; } = [];
     public HashSet<string> FirstKills { get; set; } = [];
     public HashSet<string> UnlockedLevels { get; set; } = [];
@@ -66,7 +66,7 @@ public sealed class EnemyState
     public double StunUntil { get; set; }
     public double DotUntil { get; set; }
     public double DotDps { get; set; }
-    // 施加这份灼烧的剑诀 id——伤害统计要按来源归因，而跳伤那条路上没有 `CombatEffect` 可查。
+    // 施加这份灼烧的法术 id——伤害统计要按来源归因，而跳伤那条路上没有 `CombatEffect` 可查。
     // **多个来源的灼烧只留最后一次的施加者**（`ApplySecondary` 是赋值而非叠加，与 DotDps 同一条口径）；
     // 想要严格区分得给灼烧建模成"可叠加的多个实例"，那是另一件事，这里不额外建模。
     public string DotSkill { get; set; } = "";
@@ -97,14 +97,14 @@ public sealed class CombatEffect
     // 影分身那一式靠它晚一拍出现（与本体同帧落地会糊成一团），见 GameSession.TickEffects。
     public double Delay { get; set; }
     public bool Hostile { get; init; }
-    // 影分身（剑二十三）放出的那一份：伤害按继承比例打折、弹道起点在分身身上。
+    // 影分身（身外身）放出的那一份：伤害按继承比例打折、弹道起点在分身身上。
     // 表现层据此不重复挂技能名标签，Core 据此不让它替本体缩冷却。Effects 不落盘，故不需要动存档格式。
     public bool Mirrored { get; init; }
-    // 分身那一份**由哪个剑诀复制出来**（= 剑二十三的 id）。只给伤害统计归因用，见 `DamageSource`。
+    // 分身那一份**由哪个法术复制出来**（= 身外身的 id）。只给伤害统计归因用，见 `DamageSource`。
     public string MirrorSkill { get; init; } = "";
     /// <summary>
-    /// 伤害统计归因用的来源 id。影分身那一份算在**复制它的那个剑诀**（剑二十三）名下，而不是被复制的这一式——
-    /// 分身的价值要能单独看见，否则它永远藏在别人身上、永远查不出"剑二十三到底值多少"。
+    /// 伤害统计归因用的来源 id。影分身那一份算在**复制它的那个法术**（身外身）名下，而不是被复制的这一式——
+    /// 分身的价值要能单独看见，否则它永远藏在别人身上、永远查不出"身外身到底值多少"。
     /// 其余情况就是 `Skill` 本身。
     /// </summary>
     public string DamageSource => Mirrored && MirrorSkill != "" ? MirrorSkill : Skill;
@@ -114,7 +114,7 @@ public sealed class CombatEffect
     // 为 0 表示与 `X` 相同（默认的"原地垂直落下"）。
     public double SpawnX { get; init; }
 
-    // 表现用来源标记：Skill 为产出该效果的剑诀/剑灵技能 ID，空表示敌方效果。
+    // 表现用来源标记：Skill 为产出该效果的法术/剑灵技能 ID，空表示敌方效果。
     // 仅次级效果无法区分来源（不同的持续伤害可能挂着同一种次级效果），故显式带上来源。
     public string Skill { get; init; } = "";
     // 初始时长，供界面计算渐隐与施法进度；不参与战斗判定。
@@ -130,7 +130,7 @@ public sealed class CombatEffect
     public double Knockback { get; init; }
     // 命中时把目标**朝本效果的中心**拉近的逻辑距离；0 表示不吸。
     // 是 Knockback 的反向孪生（一个推离玩家、一个吸向效果中心），同样不占 secondary——
-    // 所以"吸 + 减速"能同时挂在一个技能上（寒冰龙卷）。收敛到中心即停，不会来回弹。
+    // 所以"吸 + 减速"能同时挂在一个技能上（扎根）。收敛到中心即停，不会来回弹。
     public double Gather { get; init; }
     // 「各锁一敌」的剑陨（`SwordSkill.band > 0`）那一式。落地时 Core 要据此留一小段**剑气爆炸的余韵**
     // （一个 `Damage = 0` 的 ground 效果），表现层再按技能 ID 画扩散动画——所以这个旋钮得跟着效果走。
@@ -148,7 +148,7 @@ public sealed class CombatEffect
     public double Arc { get; set; }
     // 仅表现：0..1 的通用抖动，同样由 Core 摇定一次；天降形态拿它做出生高度的高低差。
     public double Jitter { get; init; }
-    // 飞行速度（逻辑单位/秒）。只有剑诀会写入配置值；普攻、宠物弹与召唤弹一律用默认 1500，
+    // 飞行速度（逻辑单位/秒）。只有法术会写入配置值；普攻、宠物弹与召唤弹一律用默认 1500，
     // 所以新增 speed 配置列不会连带改动它们。
     public double Speed { get; init; } = 1500;
     // 穿透：既可以是次级效果（退役配置用），也可以由形态自带（line_pierce 平射贯穿），

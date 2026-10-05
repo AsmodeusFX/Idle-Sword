@@ -18,8 +18,8 @@ public sealed partial class GameSession
     {
         var r = Config.Skills[id]; var rank = State.Skills.GetValueOrDefault(id);
         if (!State.Realms.Contains(r.Realm)) return Say("请先解锁所属境界。");
-        if (rank >= r.MaxLevel) return Say("剑诀已满级。");
+        if (rank >= r.MaxLevel) return Say("法术已满级。");
         if (!Pay("gold", SkillCost(id))) return Say("灵钱不足。");
-        State.Skills[id] = rank + 1; return Changed("剑诀精进 · " + r.Name);
+        State.Skills[id] = rank + 1; return Changed("法术精进 · " + r.Name);
     }
 }

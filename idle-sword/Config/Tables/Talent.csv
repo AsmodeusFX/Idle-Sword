@@ -1,6 +1,6 @@
 id,name,column,row,max_level,cost_gold,cost_core,effect,value
-t_root,剑心初明,1,3,5,30,0,atk,0.1
-t_hp,固本培元,2,2,5,50,0,hp,0.15
-t_atk,锋芒渐露,2,4,5,60,0,atk,0.12
-t_auto,静心自悟,3,3,1,120,1,auto_intent,1
-t_end,一剑开山,4,3,3,200,1,atk,0.25
+t_root,开智,1,3,5,30,0,atk,0.1
+t_hp,培土,2,2,5,50,0,hp,0.15
+t_atk,拔节,2,4,5,60,0,atk,0.12
+t_auto,生根,3,3,1,120,1,auto_intent,1
+t_end,破土,4,3,3,200,1,atk,0.25
