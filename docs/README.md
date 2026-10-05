@@ -4,7 +4,11 @@
 
 ## 文档索引
 
+- [文档一致性排查（待改清单，带行号）](design/doc_audit.md) —— **动文档前先看这份**
 - [已确认规则与待确认边界](design/core_rules.md)
+- [世界观与包装](design/worldview.md)
+- [怪物设计与「层 / 定位」轴](design/monsters.md)
+- [剑意（参悟）的包装与分页](design/intent_packaging.md)
 - [数值刻度与 TTK 规划（草案，待确认）](design/balance_ttk.md) —— **做数值计算前必读**
 - [十五法术设计](design/sword_skills.md)
 - [法术境界编排](design/skill_realms.md)

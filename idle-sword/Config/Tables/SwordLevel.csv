@@ -1,6 +1,6 @@
 id,name,default_unlocked,cost_gold,order
 realm_0,小妖,1,0,0
-realm_1,妖将,0,400,1
-realm_2,妖王,0,1800,2
-realm_3,妖尊,0,7500,3
-realm_4,妖圣,0,25000,4
+realm_1,妖将,0,1500,1
+realm_2,妖王,0,6000,2
+realm_3,妖尊,0,20000,3
+realm_4,妖圣,0,45000,4

@@ -547,9 +547,11 @@ Check("stages 1-50 keep the base waves; later stages switch to the new set", () 
     var early = config.Levels.Where(l => l.Order <= 50).Select(l => l.Wave).Distinct().OrderBy(x => x).ToArray();
     var late = config.Levels.Where(l => l.Order > 50).Select(l => l.Wave).Distinct().OrderBy(x => x).ToArray();
     // 前 50 关**六循环**：第 1~6 关各一套不同的阵容偏向，之后再重复。后 50 关仍是原来的"更硬一档"三循环。
-    // 例外是**第 1 关**：它单独走 `wave_10`（每波 1 只、不刷精英的单只教学波），所以早期是六个循环 + 它这一条。
-    Assert(early.SequenceEqual(["wave_1", "wave_10", "wave_2", "wave_3", "wave_7", "wave_8", "wave_9"]),
-        "early stages cycle six line-ups plus the tutorial wave: " + string.Join(",", early));
+    // 例外是**开荒那两关**：第 1 关走 `wave_10`（每波 1 只）、第 2 关走 `wave_11`（每波 2 只）——
+    // 都是**只服务一关**的教学波，让"1 → 2 → 3" 这条感知清晰的缓坡成立，而 `wave_2` 的基线（3 只）
+    // 留给第 8/14/… 关不动。
+    Assert(early.SequenceEqual(["wave_1", "wave_10", "wave_11", "wave_2", "wave_3", "wave_7", "wave_8", "wave_9"]),
+        "early stages cycle six line-ups plus the two tutorial waves: " + string.Join(",", early));
     Assert(late.SequenceEqual(["wave_4", "wave_5", "wave_6"]), "late stages use the new trio: " + string.Join(",", late));
     Assert(config.WaveUnits.Keys.OrderBy(x => x).SequenceEqual(config.Waves.Keys.OrderBy(x => x)), "every wave has units");
 });
@@ -617,18 +619,19 @@ Check("rift unlocked beyond attack range still advances and clears the stage", (
     Step(g, 30);
     Assert(g.Level.Id == "level_002", "stage cleared");
 });
-Check("前期 BOSS 血量是一条手抠的缓坡：5 / 10 / 20 SU", () => {
-    // 「BOSS = 75 只标准怪」是**旧刻度下**的设计（那时玩家有整套法术链），而前期只会点击——
-    // 照搬那条比例，第 2 关的 BOSS 就是 2800+ 血、要砍一百多刀（实测反馈）。
-    // 所以前三关退出曲线生成，手抠成一条缓坡，正好对上"拿到自动攻击 → 剑气 → 法术"三个节奏。
-    // 容差 1 是因为 `boss_hp` 只有四位小数。
-    double su = config.Monsters["slime"].Hp;
-    double[] want = [5, 10, 20];
-    for (int i = 0; i < want.Length; i++)
+Check("前期 BOSS ≈ 该关标准怪的 5~7 倍（约十秒打完）", () => {
+    // 「BOSS = 75 只标准怪」是**旧设计**（那时玩家有整套法术链、BOSS 要打 50~95 秒），
+    // 而教学段只会点击，得压到"十几秒"。所以前 3 关的 `boss_hp` 不参与生成、手抠。
+    //
+    // ⚠️ **倍率的基准是"该关的标准怪"，不是基础刻度里的 30**：第 3 关 `normal_hp` 已经 12.5，
+    // 一只标准怪 375 血——拿 30 去量会把 BOSS 写成 600 血（2 秒就死，实测过）。
+    // 按"几个标准怪的量"衡量，三关才落在同一条线上（5.0 / 7.0 / 7.1）。
+    foreach (var id in new[] { "level_001", "level_002", "level_003" })
     {
-        var lvl = config.Levels.Single(l => l.Id == $"level_{i + 1:000}");
-        double hp = config.Monsters[lvl.Boss].Hp * lvl.BossHp;
-        Assert(Math.Abs(hp - want[i] * su) < 1, $"第 {i + 1} 关的 BOSS 应当是 {want[i]} SU = {want[i] * su} 血，实际 {hp:F0}");
+        var lvl = config.Levels.Single(l => l.Id == id);
+        double su = config.Monsters["slime"].Hp * lvl.HpScale;
+        double ratio = config.Monsters[lvl.Boss].Hp * lvl.BossHp / su;
+        Assert(ratio is >= 4.5 and <= 7.5, $"{id} 的 BOSS 应当是该关标准怪的 5~7 倍，实际 {ratio:F1}");
     }
 });
 Check("远程 BOSS 近战也够得到：走上去就能打（第 2 关，不给任何法术）", () => {
@@ -738,8 +741,9 @@ Check("talent visibility, atomic costs and finite core spending", () => {
     Assert(!g.BuyTalent("t_auto") && g.State.Amount("gold") == gold && g.State.Amount("core") == core, "atomic cost");
     g.State.Wallet["core"] = 5;
     Assert(g.BuyTalent("t_auto") && g.State.Talents["t_auto"] == 1, "core purchase");
-    // 每级消耗取的是列表的第 N 项：破土 1 级要 1 颗、2 级要 2 颗。
-    Assert(g.TalentCost("t_end", 1) == 1 && g.TalentCost("t_end", 2) == 2, "per-level cost list");
+    // 每级消耗取的是列表的第 N 项：拔节 1 级要 6、2 级要 12。
+    // （**别再用 `t_end` 当夹具**：它已改成 1 级的灵核节点，`cost` 只有一项，取下标的第二条会越界。）
+    Assert(g.TalentCost("t_atk", 1) == 6 && g.TalentCost("t_atk", 2) == 12, "per-level cost list");
     // 花灵核**不能**回头改投放账本——改了就过不了「累计投放量 = 首杀关卡数 + 调试发放量」那条存档校验。
     Assert(g.State.FirstKills.Count == 0 && g.State.DebugGranted.GetValueOrDefault("core") == 0, "spending core must not write the ledger");
     // 前置关系要能读出来（界面画连线与说明条都靠它）。单线那格只有一条前置；
