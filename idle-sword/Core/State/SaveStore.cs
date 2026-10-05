@@ -66,10 +66,15 @@ public sealed class SaveStore(string path)
         {
             if (ids.Any(id => !c.Rows(table).Any(r => r.Text("id") == id))) throw new InvalidDataException("存档引用缺失: " + table);
         }
+        // **等级上限归"购买闸门"，不归存档校验**：`SwordRealmSystem` / `SwordIntentSystem` 已经用
+        // `rank >= max_level` 拦住了正常途径，而**后期手段可以把等级顶过 `max_level`**（用户定的成长口径：
+        // 那条公式线性不封顶）。所以这里只校验"是个合理的非负整数"——以前写 `rank > max_level` 直接拒档，
+        // 会让那类存档**读回来就崩**。9999 是防呆（挡住手改存档的荒谬值），不是设计天花板。
+        const int MaxReasonableRank = 9999;
         void Ranks(Dictionary<string, int> ranks, string table)
         {
             References(ranks.Keys, table);
-            if (ranks.Any(p => p.Value < 0 || p.Value > c.Row(table, p.Key).Int("max_level"))) throw new InvalidDataException("存档等级非法: " + table);
+            if (ranks.Any(p => p.Value < 0 || p.Value > MaxReasonableRank)) throw new InvalidDataException("存档等级非法: " + table);
         }
         Ranks(s.Skills, "SwordSkill"); Ranks(s.Talents, "Talent"); Ranks(s.Upgrades, "SwordUpgrade");
         References(s.Realms, "SwordLevel"); References(s.Pets, "Pet"); References(s.UnlockedLevels, "level"); References(s.Wallet.Keys, "item");

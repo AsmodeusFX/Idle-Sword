@@ -238,7 +238,7 @@
 | max_level | integer | 最大等级 |
 | cost_gold | number | 灵钱消耗；天赋按当前等级+1乘此值 |
 | cost_core | integer | 每次天赋升级消耗妖核 |
-| effect | enum | 天赋 atk/hp/auto_intent；剑意 `damage_percent`（技能威力）/ `inherit_percent`（影分身的继承比例，只有剑二十三用）。加载期校验取值，未知值直接拒绝——界面按它渲染文案，填错会显示成别的东西 |
+| effect | enum | 天赋 `atk` / `hp` / `auto_intent`。加载期校验取值，未知值直接拒绝——`TalentBonus` 按它分类查询，填错会让这个节点静默失效 |
 | value | number | 效果数值，或全局设置的值 |
 
 ## TalentLink.csv
@@ -272,7 +272,7 @@
 | max_level | integer | 最大等级 |
 | cost | number | 基础升级成本；具体成长规则见下方 |
 | value | number | 效果数值，或全局设置的值 |
-| effect | enum | 天赋atk/hp/auto_intent；剑意damage_percent |
+| effect | enum | 剑意取 `damage_percent`（技能威力）/ `inherit_percent`（影分身的继承比例，只有剑二十三那 4 行用）。**加载期校验取值**，未知值直接拒绝——`SkillBonus` 按它分类查询，填错会让这行静默失效。扩展词汇表见 [sword_intent.md](../design/sword_intent.md)（**白名单只放已经有消费点的取值**，不做"先放开、实现留到以后"） |
 
 ## Pet.csv
 

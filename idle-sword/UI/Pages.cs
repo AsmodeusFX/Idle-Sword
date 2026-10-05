@@ -81,7 +81,7 @@ public partial class Main
             return $"增益类：峰值强度不随等级变，成长在覆盖率上。\n每级冷却 −{per:P0}（下限 持续×{ratio:0.##} = 覆盖率上限 80%）"
                 + $"　当前 Lv.{rank} → 冷却 {cd:0.#}s，覆盖率 {skill.Duration / cd:P0}{extra}";
         }
-        double mul = 1 + cfg.Setting("skill_level_bonus") * (rank - 1) + _game.SkillBonus(skill.Id);
+        double mul = 1 + cfg.Setting("skill_level_bonus") * (rank - 1) + _game.SkillBonus(skill.Id, "damage_percent");
         return $"每级威力 +{cfg.Setting("skill_level_bonus"):P0}　当前 Lv.{rank} → 威力 ×{mul:0.00}（不含暴击与增益）";
     }
     private void SkillPage()

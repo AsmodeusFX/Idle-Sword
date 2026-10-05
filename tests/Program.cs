@@ -294,6 +294,34 @@ Check("伤害分级：同境界里功能越杂的水位越低、后一档高过�
     Assert(cloudLevel < fallLevel, $"元婴控场 {cloudLevel:0.##} 应低于同档范围 {fallLevel:0.##}");
     Assert(fallLevel < godLevel, $"后一档要更强：元婴范围 {fallLevel:0.##} vs 化神单体 {godLevel:0.##}");
 });
+Check("剑意按 effect 分类：剑二十三的继承比例不再串味到伤害里", () => {
+    // 那 4 行配的是 `inherit_percent`。以前 `SkillBonus` **完全不看 effect**、凡 skill_id 命中就把
+    // 四行全求和，于是"影分身的剑意"同时被算进了 `SkillPower`（对 buff 无害，但机制上就是错的），
+    // 而且以后每加一种 effect 都会被卷进伤害——所以拆开。这条用例锁住拆分。
+    var g = New();
+    foreach (var r in config.Rows("SwordUpgrade").Where(r => r.Text("skill_id") == "skill_19"))
+        g.State.Upgrades[r.Text("id")] = r.Int("max_level");
+    Assert(g.SkillBonus("skill_19", "inherit_percent") > 0, "继承比例吃到了剑意");
+    Assert(g.SkillBonus("skill_19", "damage_percent") == 0, "伤害那一侧一点都不吃");
+    foreach (var r in config.Rows("SwordUpgrade").Where(r => r.Text("skill_id") == "skill_01"))
+        g.State.Upgrades[r.Text("id")] = 1;
+    Assert(g.SkillBonus("skill_01", "damage_percent") > 0 && g.SkillBonus("skill_01", "inherit_percent") == 0,
+        "御剑术的剑意只进伤害");
+});
+Check("等级上限归购买闸门、不归存档：超过 max_level 的等级读得回来", () => {
+    // 用户定的成长口径是"技能升级给的那个数值线性不封顶"，后期手段会把等级顶过 `max_level`。
+    // 以前 `SaveStore.Validate` 写的是 `rank > max_level` 直接拒档——那类存档会**读回来就崩**。
+    var dir = Path.GetFullPath("artifacts/checks/" + Guid.NewGuid().ToString("N"));
+    var path = Path.Combine(dir, "save.json"); var store = new SaveStore(path); var g = New();
+    int over = config.Skills["skill_01"].MaxLevel + 7;
+    g.State.Skills["skill_01"] = over;
+    store.Save(g.State);
+    var loaded = store.Load(config)!;
+    Assert(loaded.Skills["skill_01"] == over, $"超上限的等级原样读回：{loaded.Skills["skill_01"]}");
+    var again = new GameSession(config, loaded); again.Step(.05);   // 而且要能照常跑战斗
+    // 但荒谬值仍然被拦（防呆不是设计天花板）。
+    g.State.Skills["skill_01"] = 100000; Reject(() => SaveStore.Validate(g.State, config));
+});
 Check("波次只数随关卡放大，并止步于 count_max（硬约束）", () => {
     int Spawned(int order)
     {

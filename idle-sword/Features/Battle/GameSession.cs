@@ -399,7 +399,7 @@ public sealed partial class GameSession
     /// 每级的加成走 `game_settings.skill_level_bonus` 而不是硬编码——技能页的「每级 +X%」提示读的是同一个值，
     /// 两边必须同源，否则提示会撒谎。</summary>
     private double SkillPower(SkillDef skill, int rank) =>
-        skill.Power * (1 + Config.Setting("skill_level_bonus") * (rank - 1) + SkillBonus(skill.Id));
+        skill.Power * (1 + Config.Setting("skill_level_bonus") * (rank - 1) + SkillBonus(skill.Id, "damage_percent"));
 
     /// <summary>
     /// 增益类剑诀的**实际冷却**：每升一级缩短 `buff_cooldown_per_level`，但**下限是持续时长 × `buff_cooldown_floor_ratio`**。
@@ -645,7 +645,7 @@ public sealed partial class GameSession
             // 算的是施放这一刻的 rank —— 与 SkillPower 同一条口径：正在生效的这一次不随后续升级追溯变动。
             case "mirror":
                 _mirrorUntil = skill.SecondaryDuration;
-                _mirrorRatio = skill.SecondaryValue + .01 * (rank - 1) + SkillBonus(skill.Id);
+                _mirrorRatio = skill.SecondaryValue + .01 * (rank - 1) + SkillBonus(skill.Id, "inherit_percent");
                 _mirrorSkill = skill.Id;
                 break;
         }
