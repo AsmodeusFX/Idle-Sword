@@ -97,14 +97,14 @@ public sealed class CombatEffect
     // 影分身那一式靠它晚一拍出现（与本体同帧落地会糊成一团），见 GameSession.TickEffects。
     public double Delay { get; set; }
     public bool Hostile { get; init; }
-    // 影分身（身外身）放出的那一份：伤害按继承比例打折、弹道起点在分身身上。
+    // 影分身（剑二十三）放出的那一份：伤害按继承比例打折、弹道起点在分身身上。
     // 表现层据此不重复挂技能名标签，Core 据此不让它替本体缩冷却。Effects 不落盘，故不需要动存档格式。
     public bool Mirrored { get; init; }
-    // 分身那一份**由哪个法术复制出来**（= 身外身的 id）。只给伤害统计归因用，见 `DamageSource`。
+    // 分身那一份**由哪个法术复制出来**（= 剑二十三的 id）。只给伤害统计归因用，见 `DamageSource`。
     public string MirrorSkill { get; init; } = "";
     /// <summary>
-    /// 伤害统计归因用的来源 id。影分身那一份算在**复制它的那个法术**（身外身）名下，而不是被复制的这一式——
-    /// 分身的价值要能单独看见，否则它永远藏在别人身上、永远查不出"身外身到底值多少"。
+    /// 伤害统计归因用的来源 id。影分身那一份算在**复制它的那个法术**（剑二十三）名下，而不是被复制的这一式——
+    /// 分身的价值要能单独看见，否则它永远藏在别人身上、永远查不出"剑二十三到底值多少"。
     /// 其余情况就是 `Skill` 本身。
     /// </summary>
     public string DamageSource => Mirrored && MirrorSkill != "" ? MirrorSkill : Skill;
@@ -130,7 +130,7 @@ public sealed class CombatEffect
     public double Knockback { get; init; }
     // 命中时把目标**朝本效果的中心**拉近的逻辑距离；0 表示不吸。
     // 是 Knockback 的反向孪生（一个推离玩家、一个吸向效果中心），同样不占 secondary——
-    // 所以"吸 + 减速"能同时挂在一个技能上（扎根）。收敛到中心即停，不会来回弹。
+    // 所以"吸 + 减速"能同时挂在一个技能上（寒冰龙卷）。收敛到中心即停，不会来回弹。
     public double Gather { get; init; }
     // 「各锁一敌」的剑陨（`SwordSkill.band > 0`）那一式。落地时 Core 要据此留一小段**剑气爆炸的余韵**
     // （一个 `Damage = 0` 的 ground 效果），表现层再按技能 ID 画扩散动画——所以这个旋钮得跟着效果走。

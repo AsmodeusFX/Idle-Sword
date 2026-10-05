@@ -47,5 +47,15 @@ public static class UiKit
         var panel = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
         panel.AddThemeStyleboxOverride("panel", Box(Panel)); Place(panel, x, y, w, h); parent.AddChild(panel); return panel;
     }
+    /// <summary>
+    /// 把一整棵子树的鼠标事件放行。悬停说明条**必须**调它——说明条浮在节点上方，
+    /// 不穿透的话它会把 `MouseExited` 从节点手里抢走，节点就会一直闪"悬停 / 离开"。
+    /// </summary>
+    public static void PassThrough(Control root)
+    {
+        root.MouseFilter = Control.MouseFilterEnum.Ignore;
+        foreach (var child in root.GetChildren())
+            if (child is Control control) PassThrough(control);
+    }
     public static string Number(double n) => n >= 1e9 ? (n / 1e9).ToString("0.##") + "B" : n >= 1e6 ? (n / 1e6).ToString("0.##") + "M" : n >= 1e4 ? (n / 1e3).ToString("0.#") + "K" : Math.Floor(n).ToString("0");
 }

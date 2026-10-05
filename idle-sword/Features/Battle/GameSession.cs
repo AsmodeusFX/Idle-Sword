@@ -23,13 +23,13 @@ public sealed partial class GameSession
     // 攻速与暴击增益：各自持有计时器与参数，互不覆盖（_buffTime/_buffPower 是共享的伤害倍率，与之无关）。
     private double _hasteUntil, _hasteFactor = 1;
     private double _critBonusUntil, _critBonus, _critReduceUntil, _critReduce;
-    // 影分身（身外身）：_mirrorUntil > 0 期间，本体每放一个法术，分身同步再放一份（伤害 × _mirrorRatio）。
+    // 影分身（剑二十三）：_mirrorUntil > 0 期间，本体每放一个法术，分身同步再放一份（伤害 × _mirrorRatio）。
     // 与其它增益同生命周期（跨关卡 / 死亡 / 切预览清除，不写存档）。_mirrorRatio 在施放那一刻按等级与参悟算定，
     // 此后升级不会追溯改动正在生效的这一次——与"冷却写的是施放时的值"是同一条口径。
     private double _mirrorUntil, _mirrorRatio;
-    // 复制出分身那一式的法术 id（= 身外身）。伤害统计要把分身那部分归到它名下，见 `CombatEffect.DamageSource`。
+    // 复制出分身那一式的法术 id（= 剑二十三）。伤害统计要把分身那部分归到它名下，见 `CombatEffect.DamageSource`。
     private string _mirrorSkill = "";
-    // 薯皮的"环绕飞剑"：护盾还在时按固定间隔自动还手。`_shieldSkill` 记住护盾是哪个法术给的
+    // 剑罡护体的"环绕飞剑"：护盾还在时按固定间隔自动还手。`_shieldSkill` 记住护盾是哪个法术给的
     // （出手范围要用它自己的 range），护盾不在时两者都无意义。
     private string _shieldSkill = "";
     private double _guardCooldown;
@@ -44,7 +44,7 @@ public sealed partial class GameSession
     /// **只算法术，不并入普攻射程**：接近裂隙的停步判定靠它，若改由普攻射程决定，
     /// 角色会停在裂隙射程外空转（见 Step 里裂隙解锁那段的说明）。普攻射程单列在 `fightattr.basic_range`，
     /// 它不小于停步距离 640，因此角色站定时普攻必定够得着。
-    /// **一个法术都没学时回落到普攻射程**：开局不再白送御剑（见构造器），若不回落这里会是 0，
+    /// **一个法术都没学时回落到普攻射程**：开局不再白送御剑术（见构造器），若不回落这里会是 0，
     /// 角色在 BOSS 格会一路走到底也不停——普攻虽然仍够得着裂隙，但"停下来打"的读法就没有了。
     /// 回落只在**完全没有**伤害型法术时生效，不是把普攻射程并进最大值。</summary>
     public double AttackRange
@@ -76,7 +76,7 @@ public sealed partial class GameSession
             State.UnlockedLevels.Add(config.Levels[0].Id);
             foreach (var r in config.Rows("SwordLevel").Where(r => r.Flag("default_unlocked"))) State.Realms.Add(r.Text("id"));
             // 开局不附带任何法术：第 1 关先靠普攻（裸开局 88 ÷ 25 ≈ 3.5 下杀一只标准怪），
-            // 让玩家自己点「习得」花 30 灵钱学御剑——第一次花灵钱换来"一支剑秒一只"的对比，
+            // 让玩家自己点「习得」花 30 灵钱学御剑术——第一次花灵钱换来"一支剑秒一只"的对比，
             // 比开局白送一个技能更能说明这个系统在干什么。数值锚点见 docs/design/balance_ttk.md。
             EnterLevel(config.Levels[0].Id);
         }
@@ -94,7 +94,7 @@ public sealed partial class GameSession
             FinishStep(); return;
         }
         // 冷却流逝（唯一的衰减点）：攻速按倍数加速，但**不加速增益类法术**。
-        // 若连增益一起加速，疾风（15s 冷却 / 6s 持续）会在持续期内就转好，等于自己给自己减冷却，
+        // 若连增益一起加速，仙风云体术（15s 冷却 / 6s 持续）会在持续期内就转好，等于自己给自己减冷却，
         // 变成 100% 常驻；两个 15s 增益还会互相锁死。剑灵的键不在 Config.Skills 里，照样加速。
         foreach (var key in Battle.Cooldowns.Keys.ToArray())
         {
@@ -151,7 +151,7 @@ public sealed partial class GameSession
     public double LifestealRemaining => _lifestealUntil;
     public double HasteRemaining => _hasteUntil;
     public double CritBonusRemaining => _critBonusUntil;
-    /// <summary>影分身剩余时间（身外身）。只读，供表现层决定要不要画那个半透明分身。</summary>
+    /// <summary>影分身剩余时间（剑二十三）。只读，供表现层决定要不要画那个半透明分身。</summary>
     public double MirrorRemaining => _mirrorUntil;
     /// <summary>该法术**当前**的触发概率（含每次普攻累加的那部分）。自检用它断言累加与清零，不必靠概率碰运气。</summary>
     internal double TriggerChanceNow(string id) => Config.Skills.TryGetValue(id, out var s)
@@ -160,7 +160,7 @@ public sealed partial class GameSession
     internal double BuffCooldownNow(string id, int rank) => Config.Skills.TryGetValue(id, out var s) ? BuffCooldown(s, rank) : 0;
     /// <summary>冷却流逝倍数：攻速增益生效时为 1 + secondary_value，否则 1。只有输出类法术与剑灵吃这个倍数（见 Step）。</summary>
     public double HasteFactor => _hasteUntil > 0 ? _hasteFactor : 1;
-    /// <summary>暴击率加成（绝对值）：望月生效期间提高，直接叠在配置的基础暴击率上。</summary>
+    /// <summary>暴击率加成（绝对值）：醉仙望月步生效期间提高，直接叠在配置的基础暴击率上。</summary>
     public double CritBonus => _critBonusUntil > 0 ? _critBonus : 0;
     /// <summary>清除玩家短时增益（伤害倍率/护盾/回血/吸血/攻速/暴击）。关卡切换、死亡重生与技能预览切换时调用。</summary>
     public void ClearBuffs()
@@ -376,12 +376,12 @@ public sealed partial class GameSession
         }
     }
     /// <summary>
-    /// 薯皮的**环绕飞剑**：护盾还在时，按固定间隔自动向 `guard_range` 内最近的合法敌人射出一柄小剑。
+    /// 剑罡护体的**环绕飞剑**：护盾还在时，按固定间隔自动向 `guard_range` 内最近的合法敌人射出一柄小剑。
     /// 它与护盾是同一件事的两面——护盾负责挡、飞剑负责还手，所以"护盾只在挨打时才有用"这条缺点被补上了。
     /// 三个参数全走 `game_settings`（`guard_blade_power` / `guard_interval` / `guard_range`）。
     /// **出手范围必须与法术自己的 `range` 分开**：`range` 是"能不能施放这个增益"（要够得着敌人才放），
     /// 若把它压短到近身距离，远程怪在场时就永远放不出来——预览页的靶子摆在 520，射程压到 400 之后
-    /// 薯皮在预览里**连护盾都上不了**，画面上什么都没有。护盾不在时什么都不做。
+    /// 剑罡护体在预览里**连护盾都上不了**，画面上什么都没有。护盾不在时什么都不做。
     /// `index` 传 1：技能名标签与"暴击缩冷却"都只认第 0 支，环绕飞剑是持续输出、不该抢那个名额。
     /// </summary>
     private void TickSwordGuard(double dt)
@@ -404,7 +404,7 @@ public sealed partial class GameSession
     /// <summary>
     /// 增益类法术的**实际冷却**：每升一级缩短 `buff_cooldown_per_level`，但**下限是持续时长 × `buff_cooldown_floor_ratio`**。
     /// 增益的峰值强度不随等级变（它的效果走 `secondary_value`，那是个定值），所以若升级什么都不给，
-    /// 玩家花灵钱点「强化」就什么都没发生——疾风与望月原本就是这种零收益。
+    /// 玩家花灵钱点「强化」就什么都没发生——仙风云体术与醉仙望月步原本就是这种零收益。
     /// 改成缩冷却之后，成长体现在**覆盖率**上，而峰值不变（「小妖档不该给满」那条口径因此保住）。
     /// 下限把覆盖率封在 80%，避免它变成常驻——与「攻速不加速增益类法术」是同一条护栏。
     /// 非增益类返回配置冷却，行为不变。
@@ -420,7 +420,7 @@ public sealed partial class GameSession
     private bool Release(SkillDef skill, double power, int rank)
     {
         if (!LaunchShape(skill, power, rank)) return false;
-        // 影分身（身外身）：本体这一手放出去之后，分身同步再放一份，伤害按继承比例。
+        // 影分身（剑二十三）：本体这一手放出去之后，分身同步再放一份，伤害按继承比例。
         // 镜像走 LaunchShape 而不是 Release —— 冷却由 Release 的**调用方**写，镜像这一份因此不写冷却，
         // 于是不会多发一次释放音（TrackSkillCasts 只认"冷却 0 → 正"的边沿），也不会把 CastRoot 的定身又结算一遍。
         // 跳过增益类（对分身没有意义）与召唤类（召唤物会活过分身寿命），并跳过影分身自身，避免无限递归。
@@ -523,7 +523,7 @@ public sealed partial class GameSession
         {
             // 固定剑阵：阵心取选中的合法敌人，各支按 spread 在阵心两侧铺开，**与敌人数无关**——
             // 只有一个敌人时不会缩成一束。落点由 Core 算进 X，因为它直接参与落地判定。
-            // 各锁一敌（`band > 0`，18 天陨）：每支**各锁一个（尽量不同的）目标、落在它当时的位置爆炸**，
+            // 各锁一敌（`band > 0`，18 苍穹剑陨）：每支**各锁一个（尽量不同的）目标、落在它当时的位置爆炸**，
             // 目标中途死了也照炸那个位置（"击中谁是谁"，与火海同一条契约）。天上的黑洞则以**目标群的中轴**为心
             // 铺开 `band` 宽、再夹进画面——**锚在目标上而不是角色上**：角色每秒走 340，一发 1.3 秒的轰炸若从
             // 角色量起，落点会甩到身后，一整排剑全落在空地上。敌人不足时 `Picks` 会循环重复，所以打 BOSS
@@ -556,8 +556,8 @@ public sealed partial class GameSession
 
     /// <summary>
     /// 选敌。默认最近的合法目标（受射程限制），即法术一直以来的行为；
-    /// `highest_hp` = 全场血量最高者、**无视射程**（斩鬼）；
-    /// `lowest_hp` = **射程内**血量最低者（须芒的收割，与前者不同：它仍受射程约束）。
+    /// `highest_hp` = 全场血量最高者、**无视射程**（斩鬼神）；
+    /// `lowest_hp` = **射程内**血量最低者（青元剑芒的收割，与前者不同：它仍受射程约束）。
     /// 同血量 / 同距离按 Id 升序，自检才有确定结果。
     /// </summary>
     private EnemyState? Pick(SkillDef skill) => skill.Targeting switch
@@ -566,16 +566,16 @@ public sealed partial class GameSession
         "lowest_hp" => Targets(skill.Range, 1, skill.Hits, "lowest_hp").FirstOrDefault(),
         // 取射程内**最靠前**的那只（X 最大）。给"在地上留一片持久灼烧"的技能用：怪从右边来，
         // 那条路是必经之路——落在最靠前的位置等于铺在"迎宾位"，后面进来的都要穿过去；
-        // 落在最近敌人身上等于落在脚边，怪几乎立刻就走过它了，收益最低（妖火的火海尤其吃亏）。
+        // 落在最近敌人身上等于落在脚边，怪几乎立刻就走过它了，收益最低（焚天剑诀的火海尤其吃亏）。
         "farthest" => Battle.Enemies.Where(e => Legal(e, skill.Hits) && Math.Abs(e.X - Battle.PlayerX) <= skill.Range)
             .OrderByDescending(e => e.X).ThenBy(e => e.Id).FirstOrDefault(),
         _ => Target(skill.Range, skill.Hits),
     };
 
     /// <summary>
-    /// 多发取目标。`highest_hp` 取全场血量最高的前 n 个（不重复，斩鬼用）；
+    /// 多发取目标。`highest_hp` 取全场血量最高的前 n 个（不重复，斩鬼神用）；
     /// `lowest_hp` 取**射程内**血量最低的前 n 个，**敌人不足时循环重复打同一个**——
-    /// 须芒因此"场上只有一只时三段全打在它身上"，打 BOSS 不吃亏。
+    /// 青元剑芒因此"场上只有一只时三段全打在它身上"，打 BOSS 不吃亏。
     /// 将来要"依次出现多个剑光"时这里天然支持，只需放宽"非 projectile 只能单发"那条校验。
     /// </summary>
     private List<EnemyState> Picks(SkillDef skill, int n) => skill.Targeting switch
@@ -615,7 +615,7 @@ public sealed partial class GameSession
     public const double MirrorDelay = .18;
     // 目标中途死亡时，"落点重判定"的搜索半径（逻辑单位，约一个身位）。
     // 追踪弹与定点弹在**发射时**锁定目标，而目标很可能在弹丸飞到之前就被别的技能打死——
-    // 这时若什么都不做，这一发就白飞了（须芒专挑残血，于是它系统性白飞）。
+    // 这时若什么都不做，这一发就白飞了（青元剑芒专挑残血，于是它系统性白飞）。
     // 补救只在**落点附近**挑一个合法敌人结算，**不改追远处**：改追会让多发齐射收敛到同一只
     // （Picks 刻意"尽量不重复"就是为了铺开），剑气也会明显拐弯打远处的怪。
     private const double FallbackRadius = 80;
@@ -629,7 +629,7 @@ public sealed partial class GameSession
 
     private void CastBuff(SkillDef skill, double power, int rank)
     {
-        // 伤害倍率只在配置里 power != 1 时占用：纯功能向的增益（疾风/望月）不该把正在
+        // 伤害倍率只在配置里 power != 1 时占用：纯功能向的增益（仙风云体术/醉仙望月步）不该把正在
         // 生效的伤害倍率重置掉。判断用配置的基础 power 而不是算上等级与参悟之后的 power——
         // 否则技能一升级，倍率就会被激活，等于偷偷取消了这条规则。
         if (skill.Power != 1) { _buffPower = power; _buffTime = skill.Duration; }
@@ -641,7 +641,7 @@ public sealed partial class GameSession
             case "lifesteal": _lifestealUntil = skill.SecondaryDuration; _lifestealFactor = skill.SecondaryValue; break;
             case "haste": _hasteFactor = 1 + skill.SecondaryValue; _hasteUntil = skill.SecondaryDuration; break;
             case "crit_reduce": _critBonus = skill.SecondaryValue; _critBonusUntil = skill.SecondaryDuration; _critReduce = skill.SecondaryExtra; _critReduceUntil = skill.SecondaryDuration; break;
-            // 影分身（身外身）：继承比例 = 配置基础值 + 每级 +1% + 参悟那 4 行的加成，**不封顶**（用户定）。
+            // 影分身（剑二十三）：继承比例 = 配置基础值 + 每级 +1% + 参悟那 4 行的加成，**不封顶**（用户定）。
             // 算的是施放这一刻的 rank —— 与 SkillPower 同一条口径：正在生效的这一次不随后续升级追溯变动。
             case "mirror":
                 _mirrorUntil = skill.SecondaryDuration;
@@ -657,7 +657,7 @@ public sealed partial class GameSession
     private void CritShortenCooldown()
     {
         if (_critReduceUntil <= 0 || _critReduce <= 0) return;
-        // 候选里排除增益类法术：否则暴击会不断给疾风减冷却，它的覆盖率从标称的 6/15=40%
+        // 候选里排除增益类法术：否则暴击会不断给仙风云体术减冷却，它的覆盖率从标称的 6/15=40%
         // 实测涨到 50%+，形成"暴击 → 增益来得更勤 → 出手更快 → 更多暴击"的正反馈。
         // 与"攻速不加速增益类法术的冷却"是同一条口径：增益之间的冷却不该互相喂。
         // 神通（trigger_chance > 0）同样排除：它们的冷却只是"最短触发间隔"，实际由概率主导，
@@ -697,7 +697,7 @@ public sealed partial class GameSession
             // "暴击缩短一个随机技能的冷却"按**每次施法**最多触发一次：多发齐射是 3～5 支各摇一次暴击的，
             // 若每支都触发，实际触发密度会放大数倍（实测能把增益冷却吃到覆盖率自涨）。
             // 由该次施法的第一支负责，单发/剑灵弹丸的 index 本就是 0。
-            // 普攻（skill 为空）不参与缩冷却：它每秒一次，若也算，望月的覆盖率会自涨——
+            // 普攻（skill 为空）不参与缩冷却：它每秒一次，若也算，醉仙望月步的覆盖率会自涨——
             // 与"攻速不加速增益类法术"是同一条护栏口径：缩冷却只挂在法术出手上。
             // 影分身那一份不替本体缩冷却：它不是玩家亲手放的那一手，否则分身窗口内缩冷却会凭空翻倍。
             if (index == 0 && skill != "" && !mirrored) CritShortenCooldown();
@@ -755,10 +755,10 @@ public sealed partial class GameSession
                     if (effect.Timer > 0)
                     {
                         // 肩侧/身前发射的形态（平射与平推）在停留期要**跟着施法者走**：这一秒里角色可能还在前进，
-                        // 发射点若冻结在施放那一刻，等它起飞时已经被甩到角色身后——寒潮的前摇有整整 1 秒，
+                        // 发射点若冻结在施放那一刻，等它起飞时已经被甩到角色身后——剑气流云壁的前摇有整整 1 秒，
                         // 表现为"冲击波从画面左边冒出来"。落点类形态（sky_drop）不在此列：它的 X 是阵心，不能跟人走。
                         // 影分身那一式跟着**分身**走，不是跟着玩家：少了这个偏移，镜像会被这一行拽回本体身上、
-                        // 与本体那一支完全重叠（御剑前摇 0.12 秒、寒潮 0.5 秒，都够把偏移抹掉）。
+                        // 与本体那一支完全重叠（御剑术前摇 0.12 秒、剑气流云壁 0.5 秒，都够把偏移抹掉）。
                         if (effect.Trajectory is "line_shot" or "line_pierce")
                             effect.X = Battle.PlayerX + (effect.Mirrored ? MirrorOffset : 0);
                         break;
@@ -855,7 +855,7 @@ public sealed partial class GameSession
                     if (effect.Pierce)
                     {
                         // 穿透：沿前进方向飞行，命中沿途每个敌人一次（用扫过区间避免单帧跳过）。
-                        // line_pierce（御剑平射）与退役配置的 secondary == "pierce" 共用这一段。
+                        // line_pierce（御剑术平射）与退役配置的 secondary == "pierce" 共用这一段。
                         double from = effect.X;
                         effect.X += effect.Speed * dt;
                         if (effect.X > Level.Cells * Config.Setting("cell_width")) { effect.Life = 0; break; }
@@ -869,7 +869,7 @@ public sealed partial class GameSession
                     break;
                 case "target":
                     if (effect.Life > 0) break;
-                    // 目标已死就落点重判定——不然 15~30 秒冷却的大招（落雷 / 斩鬼）会白白打空。
+                    // 目标已死就落点重判定——不然 15~30 秒冷却的大招（御雷真诀 / 斩鬼神）会白白打空。
                     if (target is not null) Hit(target, effect.Damage, effect);
                     else FallbackHit(effect);
                     break;
@@ -900,7 +900,7 @@ public sealed partial class GameSession
         // 必须在 ApplySecondary 之前读——那一句在函数末尾，会把本次施加的状态覆盖上去，晚读就会把"刚挂上的"也算成"已有的"。
         if (fx.Secondary == "bonus_vs_state" && fx.SecondaryValue > 0 && CarriesAnyState(e)) damage *= 1 + fx.SecondaryValue;
         // 来源在这里是现成的：宠物弹 / 召唤弹 / 剑罡飞剑都带着自己的 id；影分身那一份走 `DamageSource`，
-        // 归到**复制它的法术**（身外身）名下，而不是被复制的这一式。
+        // 归到**复制它的法术**（剑二十三）名下，而不是被复制的这一式。
         HurtEnemy(e, damage, fx.DamageSource);
         if (damage > 0 && _lifestealUntil > 0) Battle.PlayerHp = Math.Min(MaxHp, Battle.PlayerHp + damage * _lifestealFactor); // 吸血
         // 击退：沿背离玩家的方向推开。死在本次伤害上的敌人不再后退，免得"尸体会滑动"。
@@ -929,7 +929,7 @@ public sealed partial class GameSession
     /// <summary>
     /// 定点弹（`target` 类）目标中途死亡时的补救：在落点附近挑一个合法敌人**当场结算一次**。
     /// 它没有飞行过程、没有表现可保，所以直接打，不像追踪弹那样"飞过去再追"。
-    /// 不这么做的话，落雷 / 斩鬼 这类 15~30 秒冷却的大招会白白打空。
+    /// 不这么做的话，御雷真诀 / 斩鬼神 这类 15~30 秒冷却的大招会白白打空。
     /// </summary>
     private void FallbackHit(CombatEffect effect)
     {
@@ -941,7 +941,7 @@ public sealed partial class GameSession
 
     /// <summary>
     /// 目标身上是否带着任一状态。判定集合与 <see cref="ApplySecondary"/> 的 switch 对齐（slow / chill / stun / dot / vulnerable）。
-    /// 注意 `StunUntil` 也被 `cast_root`（寒潮的全屏定身）写入，所以被定身的目标也算"有状态"——这是有意的。
+    /// 注意 `StunUntil` 也被 `cast_root`（剑气流云壁的全屏定身）写入，所以被定身的目标也算"有状态"——这是有意的。
     /// </summary>
     private static bool CarriesAnyState(EnemyState e) =>
         e.SlowUntil > 0 || e.ChillUntil > 0 || e.StunUntil > 0 || e.DotUntil > 0 || e.VulnerableUntil > 0;

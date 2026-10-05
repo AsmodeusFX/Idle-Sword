@@ -15,7 +15,7 @@ public sealed record WaveUnitDef(string Monster, int Weight);
 // CastRoot / Knockback：施放瞬间的全屏定身秒数、每次命中把目标推离玩家的逻辑距离，0 均表示无。
 // Band：`sky_drop` 的"天上那排黑洞的铺开宽度"（0 = 各支在阵心两侧按 `spread` 对称铺开）。
 // > 0 时**每支各锁一个（尽量不同的）目标、落在它当时的位置爆炸**，而黑洞以**目标群的中轴**为心铺开 band 宽。
-// 锚在目标上而不是角色上：角色每秒走 340，一发 1.3 秒的轰炸若从角色量起，落点会甩到身后（18 天陨）。
+// 锚在目标上而不是角色上：角色每秒走 340，一发 1.3 秒的轰炸若从角色量起，落点会甩到身后（18 苍穹剑陨）。
 // 详见 docs/data/fields.md 的「各锁一敌」。
 // Targeting：空 / nearest = 最近的合法目标（受射程限制）；highest_hp = 全场血量最高者，无视射程。
 // AoeAll：落点/范围结算命中全体合法敌人（aoe_radius 退为表现用）。
@@ -25,7 +25,15 @@ public sealed record SkillDef(string Id, string Name, string Realm, string Kind,
 /// <summary>唯一配置入口。读取源 CSV 后校验并建立索引，运行时不修改配置对象。</summary>
 public sealed class GameConfig
 {
-    public static readonly string[] Files = ["monster.csv", "level.csv", "item.csv", "fightattr.csv", "SwordLevel.csv", "SwordSkill.csv", "Talent.csv", "Equip.csv", "SwordUpgrade.csv", "Pet.csv", "PetSkill.csv", "PetEquip.csv", "wave.csv", "wave_unit.csv", "drop.csv", "spawn_point.csv", "TalentLink.csv", "contemplation.csv", "game_settings.csv"];
+    public static readonly string[] Files = ["monster.csv", "level.csv", "item.csv", "fightattr.csv", "SwordLevel.csv", "SwordSkill.csv", "Talent.csv", "Equip.csv", "SwordUpgrade.csv", "Pet.csv", "PetSkill.csv", "PetEquip.csv", "wave.csv", "wave_unit.csv", "drop.csv", "spawn_point.csv", "TalentLayout.csv", "contemplation.csv", "game_settings.csv"];
+    /// <summary>
+    /// 一个天赋节点最多几条前置。定成 2 是刻意的：再多星图上的连线就成一团乱麻，玩家也读不出
+    /// 「到底还差哪个」。
+    /// **下一轮的节点编辑器必须镜像这条**，以及"根在 (0, rows/2)"与"只许向右延伸"两条约束——
+    /// 否则它能写出一份加载期会拒绝的布局。
+    /// </summary>
+    public const int MaxTalentPrereqs = 2;
+
     public Dictionary<string, List<CsvRow>> Tables { get; } = [];
     public Dictionary<string, MonsterDef> Monsters { get; } = [];
     public List<LevelDef> Levels { get; } = [];
@@ -123,7 +131,7 @@ public sealed class GameConfig
             // 所以值必须为正——配成 0 就是一行什么都不做的死配置。
             if (secondary == "bonus_vs_state" && r.Number("secondary_value") <= 0)
                 throw r.Error("secondary_value", "利用状态（bonus_vs_state）需要正的增伤比例");
-            // 影分身（mirror，身外身）：它是**自身的短时状态**，不分敌、也不生成单位，所以必须是 buff。
+            // 影分身（mirror，剑二十三）：它是**自身的短时状态**，不分敌、也不生成单位，所以必须是 buff。
             // secondary_value 是继承比例的小数（0.7 = 七成），误填成 70 不会报任何错、只会静默变成 7000%，故在这里拦下。
             if (secondary == "mirror")
             {
@@ -136,7 +144,7 @@ public sealed class GameConfig
             // 两者互斥，不需要额外的触发方式列：0 就是自动释放那一档。
             if (r.Number("trigger_chance") > 1) throw r.Error("trigger_chance", "是概率，取值 0～1");
             // gather 是 knockback（推开）的反向孪生：每次命中把目标**朝效果中心**拉近，0 = 不吸。
-            // 两者都是正交旋钮，不占 secondary，所以"吸 + 减速"能同时挂在同一个技能上（扎根）。
+            // 两者都是正交旋钮，不占 secondary，所以"吸 + 减速"能同时挂在同一个技能上（寒冰龙卷）。
             Nonnegative(r, "cast_root", "knockback", "gather", "band");
             // 黑洞铺开宽度：只有 sky_drop 会读它——别的形态配了就是一行什么都不做的死配置，拦下来别让它静默失效。
             if (r.Number("band") > 0 && r.Text("trajectory") != "sky_drop")
@@ -184,30 +192,79 @@ public sealed class GameConfig
             c.Skills.Add(r.Text("id"), new(r.Text("id"), r.Text("name"), r.Text("realm_id"), r.Text("kind"), r.Number("cooldown"), r.Number("range"), r.Number("power"), r.Number("duration"), r.Int("max_level"), r.Number("cost"), r.Number("cost_growth"), r.Text("description"), secondary, r.Number("secondary_value"), r.Number("secondary_duration"), r.Number("aoe_radius"), trajectory, count, r.Number("hover_time"), r.Number("arc_min"), r.Number("arc_max"), speed, r.Number("spread"), r.Number("volley_interval"), r.Number("volley_jitter"), r.Number("spawn_jitter"), r.Number("pierce_chance"), r.Number("secondary_extra"), r.Number("trigger_chance"), r.Number("trigger_chance_step"),
                 r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits"), r.Number("gather"), r.Number("band")));
         }
+        // ── 修行星图：内容表 + 布局表 ──────────────────────────────────────
+        // 刻意拆成两张表：**几何与拓扑由工具整份拥有**（下一轮的节点编辑器），数值与文案人工维护。
+        // 位置是画出来的、数值不是，让工具去猜数值只会帮倒忙。两表 id 必须一一对应，缺哪一边都拒绝加载。
+        int gridRows = (int)c.Setting("talent_grid_rows");
         foreach (var r in c.Rows("Talent"))
         {
-            if (r.Int("row") is < 1 or > 5) throw r.Error("row", "必须为 1～5");
-            Positive(r, "column"); Positive(r, "max_level"); Nonnegative(r, "cost_gold", "cost_core", "value");
-            Choice(r, "effect", "atk", "hp", "auto_intent");
+            if (r.Text("name").Length == 0) throw r.Error("name", "不能为空");
+            Positive(r, "max_level"); Nonnegative(r, "effect_per_level");
+            // `cost` 是每级消耗列表，第 i 项 = 从 i-1 级点到 i 级的价。**项数必须等于 max_level**——
+            // 补出来的价格没人认得出是错的。
+            var costs = r.NumberList("cost");
+            if (costs.Count != r.Int("max_level")) throw r.Error("cost", $"必须写全 {r.Int("max_level")} 项（每级一项），实际 {costs.Count} 项");
+            if (costs.Any(v => v < 0)) throw r.Error("cost", "不能小于 0");
+            // 消耗必须是 item 表里 kind=currency 的道具（灵钱 / 灵核），不能填成装备之类。
+            var currency = c.Rows("item").SingleOrDefault(i => i.Text("id") == r.Text("cost_currency"))
+                ?? throw r.Error("cost_currency", $"引用的道具不存在: {r.Text("cost_currency")}");
+            if (currency.Text("kind") != "currency") throw r.Error("cost_currency", "必须引用 item.csv 里 kind=currency 的道具");
+            Choice(r, "icon", "attack", "defense", "utility", "special");
+            Choice(r, "effect", "none", "atk", "hp", "auto_intent");
+            // `none` 是编辑器给新节点补的占位行：可购买却没有效果 = 让玩家白花钱，所以必须免费。
+            if (r.Text("effect") == "none" && costs.Any(v => v != 0)) throw r.Error("cost", "占位节点（effect=none）的每级消耗必须为 0");
         }
-        foreach (var r in c.Rows("TalentLink")) { c.Ref(r, "from_id", "Talent"); c.Ref(r, "to_id", "Talent"); }
-        if (c.Rows("Talent").Select(r => (r.Int("column"), r.Int("row"))).Distinct().Count() != c.Rows("Talent").Count)
-            throw new InvalidDataException("Talent.csv: 节点坐标重复");
+        foreach (var r in c.Rows("TalentLayout"))
+        {
+            int row = r.Int("row"), col = r.Int("col");
+            if (row < 0 || row >= gridRows) throw r.Error("row", $"必须为 0～{gridRows - 1}");
+            if (col < 0) throw r.Error("col", "不能为负");
+            var prereqs = r.TextList("prereq");
+            if (prereqs.Count > MaxTalentPrereqs)
+                throw r.Error("prereq", $"最多 {MaxTalentPrereqs} 条前置——再多星图上的连线就成一团乱麻，玩家也读不出到底还差哪个");
+            if (prereqs.Distinct().Count() != prereqs.Count) throw r.Error("prereq", "同一个节点被写了两遍");
+            if (prereqs.Contains(r.Text("id"))) throw r.Error("prereq", "不能把自己设为前置");
+            // prereq_state 要么整列留空（= 全部按 active，绝大多数节点都是这样），要么与 prereq 一一对应。
+            var states = r.TextList("prereq_state");
+            if (states.Count != 0 && states.Count != prereqs.Count) throw r.Error("prereq_state", "要么整列留空，要么与 prereq 一一对应写 N 项");
+            foreach (var s in states) if (s is not ("active" or "max")) throw r.Error("prereq_state", $"未知枚举值: {s}");
+        }
+        var layout = c.Rows("TalentLayout").ToDictionary(r => r.Text("id"));
+        var content = c.Rows("Talent").Select(r => r.Text("id")).ToHashSet();
+        var missingContent = layout.Keys.Where(id => !content.Contains(id)).ToList();
+        if (missingContent.Count > 0) throw new InvalidDataException("Talent.csv 缺少 TalentLayout.csv 里这些节点的内容行: " + string.Join(", ", missingContent));
+        var missingLayout = content.Where(id => !layout.ContainsKey(id)).ToList();
+        if (missingLayout.Count > 0) throw new InvalidDataException("TalentLayout.csv 缺少 Talent.csv 里这些节点的位置: " + string.Join(", ", missingLayout));
+        if (layout.Values.Select(r => (r.Int("col"), r.Int("row"))).Distinct().Count() != layout.Count)
+            throw new InvalidDataException("TalentLayout.csv: 节点坐标重复");
+        // 恰好一个根，且它固定在最左一列、纵向居中——星图的口径就是「起点在最左（中心），一点点向右加点」。
+        int rootRow = gridRows / 2;
+        var roots = layout.Values.Where(r => r.TextList("prereq").Count == 0).ToList();
+        if (roots.Count != 1) throw new InvalidDataException($"TalentLayout.csv: 必须恰好有一个根节点，实际 {roots.Count} 个");
+        if (roots[0].Int("col") != 0 || roots[0].Int("row") != rootRow)
+            throw roots[0].Error("col", $"根节点必须落在最左一列的正中（col=0, row={rootRow}）");
+        foreach (var r in layout.Values)
+            foreach (var p in r.TextList("prereq"))
+            {
+                if (!layout.TryGetValue(p, out var up)) throw r.Error("prereq", $"引用了不存在的节点: {p}");
+                // 右向约束：只能往右长。允许同列（纵向小链），但不允许倒退到左边。
+                if (up.Int("col") > r.Int("col")) throw r.Error("prereq", $"前置 {p} 在更右边——星图只能向右延伸");
+            }
         var visiting = new HashSet<string>(); var visited = new HashSet<string>();
         void Visit(string id)
         {
             if (visited.Contains(id)) return;
-            if (!visiting.Add(id)) throw new InvalidDataException($"TalentLink.csv: 存在环路 {id}");
-            foreach (var link in c.Rows("TalentLink").Where(x => x.Text("from_id") == id)) Visit(link.Text("to_id"));
+            if (!visiting.Add(id)) throw new InvalidDataException($"TalentLayout.csv: 前置连成了一个环 {id}");
+            foreach (var p in layout[id].TextList("prereq")) Visit(p);
             visiting.Remove(id); visited.Add(id);
         }
-        foreach (var r in c.Rows("Talent")) Visit(r.Text("id"));
+        foreach (var id in layout.Keys) Visit(id);
         foreach (var r in c.Rows("SwordUpgrade"))
         {
             c.Ref(r, "skill_id", "SwordSkill"); c.Ref(r, "currency_id", "item");
             Positive(r, "max_level"); Positive(r, "cost"); Positive(r, "value");
             // effect 决定"这一行加的是哪种东西"，界面按它渲染文案——填错会显示成别的东西，必须校验。
-            // damage_percent = 技能威力；inherit_percent = 影分身的继承比例（身外身）。
+            // damage_percent = 技能威力；inherit_percent = 影分身的继承比例（剑二十三）。
             Choice(r, "effect", "damage_percent", "inherit_percent");
         }
         foreach (var r in c.Rows("contemplation"))

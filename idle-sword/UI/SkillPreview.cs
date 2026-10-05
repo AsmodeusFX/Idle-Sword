@@ -50,7 +50,7 @@ public partial class Main
         string current = ids[_previewSkill];
         // 只保留当前法术，避免其他技能的特效混进来，失去对照意义。
         foreach (string id in ids) _preview.State.Skills[id] = id == current ? 1 : 0;
-        // 身外身是个例外：它本身不产生任何效果，只是"让本体放出的法术多一份"。
+        // 剑二十三是个例外：它本身不产生任何效果，只是"让本体放出的法术多一份"。
         // 不给它配一个搭档法术，预览里就只剩一个站着不动的分身，什么也演示不出来。
         if (_preview.Config.Skills[current].Secondary == "mirror" && _preview.State.Skills.ContainsKey("skill_01"))
             _preview.State.Skills["skill_01"] = 1;

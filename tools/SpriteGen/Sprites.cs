@@ -74,6 +74,102 @@ internal static class Sprites
         "",                                 // 31
     ], PlayerPalette);
 
+    // ── 天赋星图的节点图标 ───────────────────────────────────────────────
+    // 这四个是 **UI 图标**，不是贴地的实体：它们是居中图形，所以 SpriteGen 的"必须贴底边"
+    // 那条检查对 `node_` 前缀做了豁免（见 Program.cs）。显示尺寸只有 46px，所以画得很粗：
+    // 细过 4 格的东西缩到 46px 就糊了。
+    private static readonly Dictionary<char, string> IconPalette = new(PlayerPalette);
+
+    private static SpriteDef Icon(string id, string[] grid) => new(id, grid, IconPalette);
+
+    /// <summary>攻击：一柄竖立的剑——钢色剑身、金色护手与剑首、深色握柄。</summary>
+    public static readonly SpriteDef NodeAttack = Icon("node_attack",
+    [
+        "", "", "", "", "", "",                       // 0-5
+        "..............KTTK",                         // 6  剑尖
+        ".............KTTTTK",                        // 7
+        ".............KTTTTK",                        // 8
+        ".............KTTTTK",                        // 9
+        ".............KTTTTK",                        // 10
+        ".............KTTTTK",                        // 11
+        ".............KTTTTK",                        // 12
+        ".............KTTTTK",                        // 13
+        ".............KTTTTK",                        // 14
+        ".............KTTTTK",                        // 15
+        ".........KGGGGGGGGGGGGK",                    // 16 护手
+        "..............KOOK",                         // 17
+        "..............KOOK",                         // 18
+        "..............KOOK",                         // 19
+        ".............KGGGGK",                        // 20 剑首
+        ".............KGGGGK",                        // 21
+        "..............KKKK",                         // 22
+        "", "", "", "", "", "", "", "", "",           // 23-31
+    ]);
+
+    /// <summary>防御：一面盾——玉色盾面、金色盾心。</summary>
+    public static readonly SpriteDef NodeDefense = Icon("node_defense",
+    [
+        "", "", "", "", "", "", "", "",               // 0-7
+        "...........KKKKKKKKKK",                      // 8  盾顶
+        "..........KLLLLLLLLLLK",                     // 9
+        ".........KLLLLLLLLLLLLK",                    // 10
+        "........KLLLLLLLLLLLLLLK",                   // 11
+        "........KLLLLGGGGGGLLLLK",                   // 12 盾心
+        "........KLLLLGGGGGGLLLLK",                   // 13
+        "........KLLLLGGGGGGLLLLK",                   // 14
+        "........KLLLLLLLLLLLLLLK",                   // 15
+        ".........KLLLLLLLLLLLLK",                    // 16
+        ".........KLLLLLLLLLLLLK",                    // 17
+        "..........KLLLLLLLLLLK",                     // 18
+        "...........KLLLLLLLLK",                      // 19
+        "............KLLLLLLK",                       // 20
+        ".............KLLLLK",                        // 21
+        "..............KLLK",                         // 22
+        "...............KK",                          // 23
+        "", "", "", "", "", "", "", "",               // 24-31
+    ]);
+
+    /// <summary>通用：一颗四角星芒（参悟）。</summary>
+    public static readonly SpriteDef NodeUtility = Icon("node_utility",
+    [
+        "", "", "", "", "", "", "", "",               // 0-7
+        "...............KK",                          // 8
+        "..............KGGK",                         // 9
+        "..............KGGK",                         // 10
+        "..............KGGK",                         // 11
+        ".............KGGGGK",                        // 12
+        "............KGGWWGGK",                       // 13
+        "...........KGGWWWWGGK",                      // 14
+        ".........KGGGWWWWWWGGGK",                    // 15 横臂
+        ".........KGGGWWWWWWGGGK",                    // 16
+        "...........KGGWWWWGGK",                      // 17
+        "............KGGWWGGK",                       // 18
+        ".............KGGGGK",                        // 19
+        "..............KGGK",                         // 20
+        "..............KGGK",                         // 21
+        "..............KGGK",                         // 22
+        "...............KK",                          // 23
+        "", "", "", "", "", "", "", "",               // 24-31
+    ]);
+
+    /// <summary>特殊：一颗灵核（六边宝石）——花灵核的节点用这个。</summary>
+    public static readonly SpriteDef NodeSpecial = Icon("node_special",
+    [
+        "", "", "", "", "", "", "", "", "", "",       // 0-9
+        "............KKKKKKKK",                       // 10
+        "..........KGGGGGGGGGGK",                     // 11
+        ".........KGGGGGGGGGGGGK",                    // 12
+        ".........KGGLLLLLLLLGGK",                    // 13
+        ".........KGGWLLLLLLLGGK",                    // 14 高光
+        ".........KGGWLLLLLLLGGK",                    // 15
+        ".........KGGLLLLLLLLGGK",                    // 16
+        ".........KGGLLLLLLLLGGK",                    // 17
+        ".........KGGGGGGGGGGGGK",                    // 18
+        "..........KGGGGGGGGGGK",                     // 19
+        "............KKKKKKKK",                       // 20
+        "", "", "", "", "", "", "", "", "", "", "",    // 21-31
+    ]);
+
     /// <summary>
     /// 受击白闪用的伴生图：与本体**逐格同轮廓**，只把所有不透明格换成纯白。
     /// 之所以要一张真图而不是靠 <c>modulate</c>：项目跑在 gl_compatibility（LDR）下，

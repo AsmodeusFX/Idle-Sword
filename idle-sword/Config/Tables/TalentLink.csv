@@ -1,6 +1,0 @@
-id,from_id,to_id
-link_1,t_root,t_hp
-link_2,t_root,t_atk
-link_3,t_hp,t_auto
-link_4,t_atk,t_auto
-link_5,t_auto,t_end

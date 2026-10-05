@@ -49,71 +49,71 @@ GameSession Salvo(string skillId, double offset = 90) => SalvoOn(config, skillId
 
 Check("all tables / 100 stages / 15 skills / 60 intent upgrades", () => Assert(config.Levels.Count == 100 && config.Skills.Count == 15 && config.Rows("SwordUpgrade").Count == 60, "table counts"));
 Check("skill roster: three per realm, rearranged as designed", () => {
-    // 每境恰 3 个。本轮把须芒下到小妖、万剑与天剑下到妖将、寒潮下到妖尊，
-    // 妖圣档腾出的位置给新技能身外身；剑侍归档，一进一出，在役数不变。
+    // 每境恰 3 个。本轮把青元剑芒下到小妖、万剑决与天剑下到妖将、剑气流云壁下到妖尊，
+    // 妖圣档腾出的位置给新技能剑二十三；剑侍归档，一进一出，在役数不变。
     var byRealm = config.Skills.Values.GroupBy(s => s.Realm).ToDictionary(g => g.Key, g => g.Select(s => s.Id).OrderBy(x => x).ToArray());
     Assert(byRealm.Count == 5 && byRealm.Values.All(v => v.Length == 3), "every realm holds exactly three skills");
-    Assert(byRealm["realm_0"].SequenceEqual(new[] { "skill_01", "skill_04", "skill_11" }), "realm_0 = 御剑 / 疾风 / 须芒");
+    Assert(byRealm["realm_0"].SequenceEqual(new[] { "skill_01", "skill_04", "skill_11" }), "realm_0 = 御剑术 / 仙风云体术 / 青元剑芒");
     Assert(byRealm["realm_1"].SequenceEqual(new[] { "skill_06", "skill_14", "skill_17" }), "realm_1 = 万剑 / 万剑归心 / 天剑");
-    Assert(byRealm["realm_2"].SequenceEqual(new[] { "skill_02", "skill_07", "skill_12" }), "realm_2 = 妖火 / 落雷 / 扎根");
-    Assert(byRealm["realm_3"].SequenceEqual(new[] { "skill_05", "skill_09", "skill_18" }), "realm_3 = 寒潮 / 望月 / 天陨");
-    Assert(byRealm["realm_4"].SequenceEqual(new[] { "skill_10", "skill_15", "skill_19" }), "realm_4 = 斩鬼 / 诛仙 / 身外身");
+    Assert(byRealm["realm_2"].SequenceEqual(new[] { "skill_02", "skill_07", "skill_12" }), "realm_2 = 焚天剑诀 / 御雷真诀 / 寒冰龙卷");
+    Assert(byRealm["realm_3"].SequenceEqual(new[] { "skill_05", "skill_09", "skill_18" }), "realm_3 = 剑气流云壁 / 醉仙望月步 / 苍穹剑陨");
+    Assert(byRealm["realm_4"].SequenceEqual(new[] { "skill_10", "skill_15", "skill_19" }), "realm_4 = 斩鬼神 / 诛仙剑阵 / 剑二十三");
     // 被挤出的四个已进归档表，不再参与加载（剑侍的跟随召唤机制留给以后的剑灵系统）。
     Assert(new[] { "skill_03", "skill_08", "skill_13", "skill_16" }.All(id => !config.Skills.ContainsKey(id)), "retired skills are gone");
 });
 Check("new and moved skills carry the intended effects", () => {
     // 天剑：改为**横向贯穿**（line_pierce），带斩杀；不锁层（空 hits = both）。
-    // 它原来和落雷、斩鬼一样是"对最近的一只打一发"，三者撞车，这一改把它让了出来。
+    // 它原来和御雷真诀、斩鬼神一样是"对最近的一只打一发"，三者撞车，这一改把它让了出来。
     var sky = config.Skills["skill_17"];
     Assert(sky.Secondary == "execute" && sky.SecondaryValue > 0, "天剑 executes");
     Assert(sky.Kind == "projectile" && sky.Trajectory == "line_pierce" && sky.Hits == "", "天剑 sweeps a line and hits both layers");
-    // 须芒：改为**收割**——取射程内血量最低的 3 个（御剑打最前的，它打最脆的）。
-    Assert(config.Skills["skill_11"].Targeting == "lowest_hp", "须芒 reaps the weakest");
-    // **妖王档只留一个神通**：三个都做概率触发时整层不可控、成长反馈不明显，所以妖火与扎根
-    // 改回固定冷却，只留落雷当"低频乱杀"的那一发。
-    Assert(config.Skills["skill_07"].TriggerChance > 0, "落雷 仍是神通");
+    // 青元剑芒：改为**收割**——取射程内血量最低的 3 个（御剑术打最前的，它打最脆的）。
+    Assert(config.Skills["skill_11"].Targeting == "lowest_hp", "青元剑芒 reaps the weakest");
+    // **妖王档只留一个神通**：三个都做概率触发时整层不可控、成长反馈不明显，所以焚天剑诀与寒冰龙卷
+    // 改回固定冷却，只留御雷真诀当"低频乱杀"的那一发。
+    Assert(config.Skills["skill_07"].TriggerChance > 0, "御雷真诀 仍是神通");
     Assert(config.Skills["skill_02"].TriggerChance == 0 && config.Skills["skill_12"].TriggerChance == 0,
-        "妖火 / 扎根 改回固定冷却");
+        "焚天剑诀 / 寒冰龙卷 改回固定冷却");
     Assert(config.Skills.Values.Count(s => s.TriggerChance > 0) == 1, "全名单只留一个神通");
-    // 妖火：火海铺在**最靠前的那只**身上（迎宾位），不是脚边那只；火海也更持久。
+    // 焚天剑诀：火海铺在**最靠前的那只**身上（迎宾位），不是脚边那只；火海也更持久。
     Assert(config.Skills["skill_02"].Targeting == "farthest" && config.Skills["skill_02"].SecondaryDuration >= 5,
-        "妖火：落点在迎宾位、火海持久");
-    // 扎根：改成**聚怪**——形态从"推出去的平射贯穿"换成"落在目标位置的持续力场"，
+        "焚天剑诀：落点在迎宾位、火海持久");
+    // 寒冰龙卷：改成**聚怪**——形态从"推出去的平射贯穿"换成"落在目标位置的持续力场"，
     // 靠 `gather` 把周围的敌人朝风眼（阵心）拖近。`ground` 的落点本来就是选中目标的 X，所以
     // "在敌人位置生成"是现成的，不需要新形态。
     var tornado = config.Skills["skill_12"];
     Assert(tornado.Kind == "ground" && tornado.Trajectory == "" && tornado.AoeRadius > 0,
-        "扎根 改成落在目标位置的持续力场");
+        "寒冰龙卷 改成落在目标位置的持续力场");
     Assert(tornado.Gather > 0 && tornado.Secondary == "chill",
-        "扎根 吸附与减速并存（两者都是正交旋钮，不占 secondary）");
-    Assert(tornado.Knockback == 0, "扎根 不再推人：聚怪与击退是反向的一对，同时挂着会互相抵消");
+        "寒冰龙卷 吸附与减速并存（两者都是正交旋钮，不占 secondary）");
+    Assert(tornado.Knockback == 0, "寒冰龙卷 不再推人：聚怪与击退是反向的一对，同时挂着会互相抵消");
     // 预览靶场的靶子固定在 520 处（SkillPreview.PreviewTargetDistance）；射程比它还短的法术在预览页
-    // **永远放不出来**（没有合法目标就不出手）——薯皮一度把射程压到 400，预览里连护盾都上不了，
+    // **永远放不出来**（没有合法目标就不出手）——剑罡护体一度把射程压到 400，预览里连护盾都上不了，
     // 画面上什么都没有。这条断言就是为了拦住那种"配置上没错、但在预览里什么都看不到"的坑。
     Assert(config.Skills.Values.All(s => s.Range >= 520), "每个法术的射程都不短于预览靶距");
-    // 斩鬼：利用状态——对携带任意状态的目标增伤。
+    // 斩鬼神：利用状态——对携带任意状态的目标增伤。
     Assert(config.Skills["skill_10"].Secondary == "bonus_vs_state" && config.Skills["skill_10"].SecondaryValue > 0,
-        "斩鬼 利用状态（目标带状态就增伤）");
-    // 天陨（原 18 大庚剑阵）：从"持续破甲地面"换成**爆炸类**——复用现成的 `sky_drop`，
-    // 六柄剑在目标区域上空铺开后坠地，**靠扎根把怪捏到一处才炸得满**。易伤（vulnerable）
+        "斩鬼神 利用状态（目标带状态就增伤）");
+    // 苍穹剑陨（原 18 大庚剑阵）：从"持续破甲地面"换成**爆炸类**——复用现成的 `sky_drop`，
+    // 六柄剑在目标区域上空铺开后坠地，**靠寒冰龙卷把怪捏到一处才炸得满**。易伤（vulnerable）
     // 因此下线回到死配置（代码与自检覆盖保留），将来由参悟授予别的分支。
     var array = config.Skills["skill_18"];
-    Assert(array.Kind == "projectile" && array.Trajectory == "sky_drop", "天陨 是爆炸类的天降形态");
-    Assert(array.ProjectileCount > 1 && array.AoeRadius > 0, "天陨 多柄齐落、按落点半径结算");
-    Assert(array.Secondary == "", "天陨 不再挂易伤（易伤下线回到死配置）");
-    Assert(array.Hits == "", "天陨 hits both layers");
+    Assert(array.Kind == "projectile" && array.Trajectory == "sky_drop", "苍穹剑陨 是爆炸类的天降形态");
+    Assert(array.ProjectileCount > 1 && array.AoeRadius > 0, "苍穹剑陨 多柄齐落、按落点半径结算");
+    Assert(array.Secondary == "", "苍穹剑陨 不再挂易伤（易伤下线回到死配置）");
+    Assert(array.Hits == "", "苍穹剑陨 hits both layers");
     // **生成带**：落点锚在玩家身上、等分铺在 `[玩家X + range − band, 玩家X + range]`（从身前一路铺到射程末端），
     // 与阵心在哪无关。数量初期是 3 支、爆炸只笼罩两三个身位——**靠怪聚成一堆才划算**，"加数量 / 加半径"
     // 留给参悟（见 sword_skills.md 第八节第 13 条）。
-    Assert(array.Band > 0 && array.Band <= 1400, "天陨 的黑洞铺开宽度配了、且夹得进画面");
-    // 与诛仙的分工：后者是**无条件全屏**，前者只在射程带里稀疏落点。
-    Assert(!array.AoeAll && config.Skills["skill_15"].AoeAll, "天陨 打一条带、诛仙 打全场");
+    Assert(array.Band > 0 && array.Band <= 1400, "苍穹剑陨 的黑洞铺开宽度配了、且夹得进画面");
+    // 与诛仙剑阵的分工：后者是**无条件全屏**，前者只在射程带里稀疏落点。
+    Assert(!array.AoeAll && config.Skills["skill_15"].AoeAll, "苍穹剑陨 打一条带、诛仙剑阵 打全场");
     // 各支按 `spread` 在阵心两侧铺开，最外侧那支离阵心 `(count-1)/2 × spread`——**大于落点半径就打不到阵心那只**。
     // 这条几何关系仍然要盯住：它是"一次施法铺多宽"的定义，改 `spread` / `aoe_radius` / `count` 都会动它。
     var wan = config.Skills["skill_06"];
     int wanLanes = Enumerable.Range(0, wan.ProjectileCount)
         .Count(i => Math.Abs((i - (wan.ProjectileCount - 1) / 2.0) * wan.Spread) < wan.AoeRadius);
-    Assert(wanLanes == 3, $"万剑 的落点里有 {wanLanes} 支压在阵心上（铺开宽度与落点半径的关系）");
+    Assert(wanLanes == 3, $"万剑决 的落点里有 {wanLanes} 支压在阵心上（铺开宽度与落点半径的关系）");
     foreach (var s in config.Skills.Values.Where(s => s.Band > 0))
     {
         Assert(s.Trajectory == "sky_drop", $"{s.Id}：黑洞铺开宽度只对 sky_drop 有意义");
@@ -122,27 +122,27 @@ Check("new and moved skills carry the intended effects", () => {
         // 右边缘切掉——这正是这条断言存在的理由（远端那支曾经正好压在 1590 上）。
         Assert(s.Band <= 1400, $"{s.Id}：黑洞铺开宽度 {s.Band} 会把剑开到画面外（上限 1400）");
     }
-    // 身外身：影分身是**自身状态**，必须是 buff + power 1（power != 1 会占用共享伤害倍率窗口）。
+    // 剑二十三：影分身是**自身状态**，必须是 buff + power 1（power != 1 会占用共享伤害倍率窗口）。
     var clone = config.Skills["skill_19"];
-    Assert(clone.Kind == "buff" && clone.Secondary == "mirror", "身外身 is a self buff carrying the mirror effect");
-    Assert(clone.Power == 1, "身外身 must not occupy the shared damage-multiplier window");
-    Assert(clone.SecondaryValue > 0 && clone.SecondaryValue <= 1 && clone.SecondaryDuration > 0, "身外身 has a fractional inherit ratio and a positive lifetime");
-    // 落雷：下移时按设计文档把「雷」落成眩晕。
-    Assert(config.Skills["skill_07"].Secondary == "stun" && config.Skills["skill_07"].SecondaryDuration > 0, "落雷 stuns");
+    Assert(clone.Kind == "buff" && clone.Secondary == "mirror", "剑二十三 is a self buff carrying the mirror effect");
+    Assert(clone.Power == 1, "剑二十三 must not occupy the shared damage-multiplier window");
+    Assert(clone.SecondaryValue > 0 && clone.SecondaryValue <= 1 && clone.SecondaryDuration > 0, "剑二十三 has a fractional inherit ratio and a positive lifetime");
+    // 御雷真诀：下移时按设计文档把「雷」落成眩晕。
+    Assert(config.Skills["skill_07"].Secondary == "stun" && config.Skills["skill_07"].SecondaryDuration > 0, "御雷真诀 stuns");
 });
 Check("影分身：本体每放一式，分身同步再放一份、伤害打折、不递归", () => {
     // 暴击是逐弹丸摇的，会把 70% 这个比值打乱，用改过配置的靶场把暴击关掉。
     var noCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
-    var g = SalvoOn(noCrit, "skill_01", 400);      // 靶场只学了御剑
+    var g = SalvoOn(noCrit, "skill_01", 400);      // 靶场只学了御剑术
     g.State.Skills["skill_19"] = 1;                // 再挂上影分身
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-    Assert(g.ForceRelease("skill_19"), "身外身 released");
+    Assert(g.ForceRelease("skill_19"), "剑二十三 released");
     Assert(g.MirrorRemaining > 0, "clone window opened");
     // 影分身自己不产生效果，也不该被自己镜像（否则会无限递归）。
     Assert(g.Effects.Count == 0, "影分身本身不产生效果、也不镜像自己");
-    // 只清效果、不清冷却：ForceRelease 已经给身外身写上了 40 秒冷却，清掉的话下面 Step 时它会被再放一次。
+    // 只清效果、不清冷却：ForceRelease 已经给剑二十三写上了 40 秒冷却，清掉的话下面 Step 时它会被再放一次。
     g.Effects.Clear();
-    Assert(g.ForceRelease("skill_01"), "御剑 released");
+    Assert(g.ForceRelease("skill_01"), "御剑术 released");
     var volley = g.Effects.Where(e => e.Skill == "skill_01").ToArray();
     Assert(volley.Length == 2, "本体与分身各出一支：" + volley.Length);
     Assert(volley.Count(e => e.Mirrored) == 1, "恰好一支来自分身");
@@ -153,7 +153,7 @@ Check("影分身：本体每放一式，分身同步再放一份、伤害打折�
     Assert(copy.X < real.X, "分身那一支从身后出发");
     // 分身那一式晚一拍出现：本体立刻就走，分身要等 Delay 走完。
     Assert(copy.Delay > 0 && real.Delay == 0, $"只有分身那一份带延迟：{copy.Delay}/{real.Delay}");
-    // 跨过起飞前停留（御剑 hover_time 0.12）再看一眼：本体已经飞出去了，分身必须**仍然**在身后。
+    // 跨过起飞前停留（御剑术 hover_time 0.12）再看一眼：本体已经飞出去了，分身必须**仍然**在身后。
     // 这里曾经是个真 bug——停留期无条件 `effect.X = Battle.PlayerX`，把镜像的偏移抹掉，两支剑完全重叠。
     Step(g, .2);
     Assert(copy.Delay <= 0, "延迟已经走完");
@@ -162,7 +162,7 @@ Check("影分身：本体每放一式，分身同步再放一份、伤害打折�
     Step(g, 11);
     Assert(g.MirrorRemaining == 0, "clone window closed");
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-    Assert(g.ForceRelease("skill_01"), "御剑 released again");
+    Assert(g.ForceRelease("skill_01"), "御剑术 released again");
     Assert(g.Effects.All(e => !e.Mirrored), "窗口过期后不再产生镜像效果");
 });
 Check("CSV BOM, quotes, multiline and write roundtrip", () => {
@@ -179,7 +179,47 @@ Check("reject repeat core and non-deterministic first-core quantity", () => {
     Reject(() => GameConfig.Load(f => f == "drop.csv" ? source[f].Replace("boss_repeat,gold,60", "boss_repeat,core,1") : source[f]));
     Reject(() => GameConfig.Load(f => f == "drop.csv" ? source[f].Replace("boss_first,core,1", "boss_first,core,2") : source[f]));
 });
-Check("reject talent cycles", () => Reject(() => GameConfig.Load(f => f == "TalentLink.csv" ? source[f] + "cycle,t_end,t_root\n" : source[f])));
+Check("reject malformed talent star map", () => {
+    // 前置连成了环。刻意让两个节点**同一列**（t_hp 与 t_atk 都在 col 1），否则会先被
+    // "只能向右延伸"拦下，这条用例就测不到查环本身了。
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv"
+        ? Cell(Cell(source[f], "t_hp", "prereq", "t_atk"), "t_atk", "prereq", "t_hp") : source[f]));
+    // 节点自指
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_hp", "prereq", "t_hp") : source[f]));
+    // 两个根（t_root 之外又多一个没有前置的）
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_hp", "prereq", "") : source[f]));
+    // 根必须落在最左一列的正中
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_root", "row", "0") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_root", "col", "1") : source[f]));
+    // 行越界（网格是 5 行，0..4）
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "row", "5") : source[f]));
+    // 格位重复
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv"
+        ? Cell(Cell(source[f], "t_end", "col", "2"), "t_end", "row", "2") : source[f]));
+    // 只能向右延伸：前置跑到右边去了
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_hp", "prereq", "t_end") : source[f]));
+    // 超过两条前置
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_root|t_hp|t_atk") : source[f]));
+    // 前置写了两遍
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_auto|t_auto") : source[f]));
+    // 引用不存在的节点
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_missing") : source[f]));
+    // prereq_state 与 prereq 条数对不上 / 取值非法
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_auto", "prereq_state", "max") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_auto", "prereq_state", "active|bogus") : source[f]));
+    // 每级消耗的项数必须等于 max_level
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "cost", "30|60") : source[f]));
+    // 未知 effect / icon
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "effect", "bogus") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "icon", "bogus") : source[f]));
+    // 消耗币种必须是 item.csv 里 kind=currency 的道具
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "cost_currency", "t_missing") : source[f]));
+    // 占位节点（effect=none）必须免费——可购买却没有效果，等于让玩家白花钱
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "effect", "none") : source[f]));
+    // 两表 id 必须一一对应（缺哪一边都拒绝）
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? source[f] + "t_orphan,9,0,t_root,\n" : source[f]));
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? source[f] + "t_orphan,孤儿,1,gold,1,atk,0.1,attack\n" : source[f]));
+});
 Check("reject unknown secondary effect", () => Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "secondary", "bogus") : source[f])));
 Check("reject invalid flight shape, count and arc band", () => {
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "trajectory", "warp") : source[f]));
@@ -275,14 +315,14 @@ Check("伤害分级：多目标形态确实按波次人数结算，单体的只�
     }
     // 贯穿（`line_pierce`）：一条线扫过整个战场，在场的都在内——命中数跟着人数走，不是恒定值。
     int few = Struck("skill_05", 5), many = Struck("skill_05", 9);
-    Assert(few == 5, $"寒潮 一次扫到整排：{few}");
+    Assert(few == 5, $"剑气流云壁 一次扫到整排：{few}");
     Assert(many > few, $"人多了就多打到几只：{few} → {many}");
     // 单体 / 定点：一次一只，人多也不变。
-    Assert(Struck("skill_01", 5) == 1, "御剑 只打最先遇到的那只");
-    Assert(Struck("skill_10", 5) == 1, "斩鬼 只打一只");
+    Assert(Struck("skill_01", 5) == 1, "御剑术 只打最先遇到的那只");
+    Assert(Struck("skill_10", 5) == 1, "斩鬼神 只打一只");
 });
 Check("伤害分级：同境界里功能越杂的水位越低、后一档高过前一档", () => {
-    // 用户点名的设计意图：寒潮（妖尊·控场，功能最杂）的伤害必须低于同境界的范围技能天陨。
+    // 用户点名的设计意图：剑气流云壁（妖尊·控场，功能最杂）的伤害必须低于同境界的范围技能苍穹剑陨。
     // 两个 N 取自 [skill_values.md](../docs/design/skill_values.md) 第三节的形态表（贯穿 = 参考波次 8、
     // 各锁一敌 ×3 ≈ 3.6）；改那张表就要同步改这里。这条护栏防的是"随手调 power 把某个技能调出档位"。
     var cloud = config.Skills["skill_05"];      // 妖尊 · 控场
@@ -294,7 +334,7 @@ Check("伤害分级：同境界里功能越杂的水位越低、后一档高过�
     Assert(cloudLevel < fallLevel, $"妖尊控场 {cloudLevel:0.##} 应低于同档范围 {fallLevel:0.##}");
     Assert(fallLevel < godLevel, $"后一档要更强：妖尊范围 {fallLevel:0.##} vs 妖圣单体 {godLevel:0.##}");
 });
-Check("参悟按 effect 分类：身外身的继承比例不再串味到伤害里", () => {
+Check("参悟按 effect 分类：剑二十三的继承比例不再串味到伤害里", () => {
     // 那 4 行配的是 `inherit_percent`。以前 `SkillBonus` **完全不看 effect**、凡 skill_id 命中就把
     // 四行全求和，于是"影分身的参悟"同时被算进了 `SkillPower`（对 buff 无害，但机制上就是错的），
     // 而且以后每加一种 effect 都会被卷进伤害——所以拆开。这条用例锁住拆分。
@@ -306,7 +346,7 @@ Check("参悟按 effect 分类：身外身的继承比例不再串味到伤害�
     foreach (var r in config.Rows("SwordUpgrade").Where(r => r.Text("skill_id") == "skill_01"))
         g.State.Upgrades[r.Text("id")] = 1;
     Assert(g.SkillBonus("skill_01", "damage_percent") > 0 && g.SkillBonus("skill_01", "inherit_percent") == 0,
-        "御剑的参悟只进伤害");
+        "御剑术的参悟只进伤害");
 });
 Check("等级上限归购买闸门、不归存档：超过 max_level 的等级读得回来", () => {
     // 用户定的成长口径是"技能升级给的那个数值线性不封顶"，后期手段会把等级顶过 `max_level`。
@@ -521,9 +561,50 @@ Check("intent auto-production, capacity and hover collection contract", () => {
     g.CollectIntent("intent_0"); g.CollectIntent("intent_0"); Assert(g.State.Amount("intent_0") == 200, "collect once");
 });
 Check("talent visibility, atomic costs and finite core spending", () => {
-    var g = New(); Assert(!g.TalentVisible("t_auto") && !g.BuyTalent("t_auto"), "hidden node");
-    g.State.Wallet["gold"] = 1000; Assert(g.BuyTalent("t_root") && g.TalentVisible("t_hp"), "adjacent");
-    g.BuyTalent("t_hp"); double gold = g.State.Amount("gold"); Assert(!g.BuyTalent("t_auto") && g.State.Amount("gold") == gold, "atomic cost");
+    var g = New();
+    // 生根挂着**两条**前置，所以一开始既不可见也买不了。
+    Assert(!g.TalentVisible("t_auto") && !g.BuyTalent("t_auto"), "hidden node");
+    g.State.Wallet["gold"] = 10000;
+    Assert(g.BuyTalent("t_root"), "root buyable");
+    Assert(g.TalentVisible("t_hp") && g.TalentVisible("t_atk"), "adjacent revealed");
+    // 只点亮一条前置还不够——星图是收敛的，两条都得亮。
+    g.BuyTalent("t_hp");
+    Assert(!g.TalentVisible("t_auto"), "one prereq is not enough");
+    g.BuyTalent("t_atk");
+    Assert(g.TalentVisible("t_auto"), "both prereqs lit");
+    // 生根只花灵核。买不起时**绝不部分生效**：钱与等级都不动。
+    g.State.Wallet["core"] = 0;
+    double gold = g.State.Amount("gold"), core = g.State.Amount("core");
+    Assert(!g.BuyTalent("t_auto") && g.State.Amount("gold") == gold && g.State.Amount("core") == core, "atomic cost");
+    g.State.Wallet["core"] = 5;
+    Assert(g.BuyTalent("t_auto") && g.State.Talents["t_auto"] == 1, "core purchase");
+    // 每级消耗取的是列表的第 N 项：破土 1 级要 1 颗、2 级要 2 颗。
+    Assert(g.TalentCost("t_end", 1) == 1 && g.TalentCost("t_end", 2) == 2, "per-level cost list");
+    // 花灵核**不能**回头改投放账本——改了就过不了「累计投放量 = 首杀关卡数 + 调试发放量」那条存档校验。
+    Assert(g.State.FirstKills.Count == 0 && g.State.DebugGranted.GetValueOrDefault("core") == 0, "spending core must not write the ledger");
+    // 两条前置的关系也要能读出来（界面画连线与说明条都靠它）。
+    var prereqs = g.TalentPrereqs("t_auto");
+    Assert(prereqs.Count == 2 && prereqs.Any(p => p.Id == "t_hp") && prereqs.Any(p => p.Id == "t_atk") && prereqs.All(p => !p.NeedMax), "prereq list");
+});
+Check("每种天赋效果都有中文文案", () => {
+    // 文案放在 Features/Talent/TalentText.cs 就是为了能在这里验：兜底分支会把 effect id 原样吐回来，
+    // 那正是"配了效果、忘了写文案"的静默失败——界面上看不出来，玩着只觉得这个节点没用。
+    foreach (var r in config.Rows("Talent"))
+    {
+        string text = TalentText.DescribeEffect(r);
+        Assert(text.Length > 0 && !text.Contains(r.Text("effect")), "effect has copy: " + r.Text("id"));
+    }
+});
+Check("天赋图标都在 visuals.json 里", () => {
+    // 图标按 "node_" + icon 拼出来，加载期只校验 icon 是那四个枚举值，管不到资源在不在。
+    // 少一条映射的话界面会静默画成空白——那是最难发现的一类。
+    var manifest = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+        File.ReadAllText(Path.Combine(root, "..", "..", "Assets", "visuals.json")))!;
+    foreach (var r in config.Rows("Talent"))
+    {
+        string icon = "node_" + r.Text("icon");
+        Assert(manifest.ContainsKey(icon), $"Talent.csv 的 {r.Text("id")} 用了图标 {icon}，但 visuals.json 里没有这一条");
+    }
 });
 Check("all live effect types execute without invalid targets", () => {
     var g = New(); foreach (var realm in config.Rows("SwordLevel")) g.State.Realms.Add(realm.Text("id"));
@@ -548,18 +629,18 @@ Check("secondary: vulnerable amplifies, stun freezes, slow halves, dot ticks", (
     e.Hp = e.MaxHp = 1000; e.VulnerableUntil = 0; e.VulnerableFactor = 1; e.DotUntil = 1; e.DotDps = 50; double hp = e.Hp; g.Step(1);
     Assert(e.Hp < hp - 40 && e.Hp > hp - 60, "dot");
 });
-// hover_homing 已无在役技能使用（御剑改走 line_pierce），但形态留在词汇表里供日后配，故用改过的配置保住覆盖。
+// hover_homing 已无在役技能使用（御剑术改走 line_pierce），但形态留在词汇表里供日后配，故用改过的配置保住覆盖。
 var hoverForm = GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_01", "trajectory", "hover_homing") : source[f]);
 Check("hover_homing hovers above the caster, then homes and hits", () => {
     var g = SalvoOn(hoverForm, "skill_01");
-    var blade = g.Effects.First(e => e.Trajectory == "hover_homing");   // 御剑默认 1 支（剑支数是成长轴，不是初值）
+    var blade = g.Effects.First(e => e.Trajectory == "hover_homing");   // 御剑术默认 1 支（剑支数是成长轴，不是初值）
     Assert(blade.Timer > 0 && blade.X == g.Battle.PlayerX, "hovers above the caster before flying");
     double hp = g.Battle.Enemies[0].Hp;
     Step(g, 1);                                     // 悬浮 0.12s + 飞行
     Assert(g.Battle.Enemies.Any(e => e.Hp < hp), "hits the target after hovering");
 });
 Check("sky_drop builds a fixed formation of distinct landing points", () => {
-    var g = Salvo("skill_06");                      // 万剑：5 支、间距 40、落点半径 60
+    var g = Salvo("skill_06");                      // 万剑决：5 支、间距 40、落点半径 60
     var blades = g.Effects.Where(e => e.Trajectory == "sky_drop").ToArray();
     Assert(blades.Length == 5, $"five blades: {blades.Length}");
     double center = g.Battle.PlayerX + 90;          // 三个靶子重叠在阵心
@@ -577,7 +658,7 @@ Check("sky_drop builds a fixed formation of distinct landing points", () => {
 });
 Check("arc_homing fires a configurable salvo with distinct targets and reproducible arcs", () => {
     // 靶子放到 160：贴着 90 摆时剑芒会在同一个 Step 内就飞到并结算移除，观察不到编排信息。
-    var g = Salvo("skill_11", 160);                 // 须芒：3 支
+    var g = Salvo("skill_11", 160);                 // 青元剑芒：3 支
     var arcs = g.Effects.Where(e => e.Trajectory == "arc_homing").Select(e => e.Arc).ToArray();
     Assert(arcs.Length == 3, $"three blades: {arcs.Length}");
     Assert(arcs.All(a => a >= -50 && a <= 140), "arc inside the configured band: " + string.Join(",", arcs));
@@ -602,7 +683,7 @@ Check("arc_homing can bend downwards, keeping both sides of the lane in play", (
     Assert(arcs.Count(a => a < 0) < arcs.Count(a => a > 0), "downward arcs are the minority");
 });
 Check("line_shot strikes the first enemy on its path and is destroyed", () => {
-    // 御剑：肩侧横射、命中即散、不穿透。清空技能保证伤害只可能来自这些剑。
+    // 御剑术：肩侧横射、命中即散、不穿透。清空技能保证伤害只可能来自这些剑。
     var g = New(); g.Step(.05); g.State.Skills.Clear(); g.Battle.Cooldowns.Clear();
     var line = g.Battle.Enemies.ToArray();
     for (int i = 0; i < line.Length; i++) { line[i].Atk = 0; line[i].Hp = line[i].MaxHp = 1e8; line[i].X = g.Battle.PlayerX + 200 + i * 400; line[i].StunUntil = 1e9; }
@@ -638,7 +719,7 @@ Check("line_shot pierces only on the first hit, and only when the chance allows"
     Assert(blade.Pierced, "the first hit marked the blade as already pierced, so it can never pierce again");
 });
 Check("line_pierce sweeps every enemy along the line", () => {
-    // 恒穿透形态现在由寒潮与扎根使用；这里仍用改过的配置单独跑一遍，作为形态自身的对照
+    // 恒穿透形态现在由剑气流云壁与寒冰龙卷使用；这里仍用改过的配置单独跑一遍，作为形态自身的对照
     // （两个在役技能各自还叠了击退与寒冷，混在一起就看不清形态本身的行为）。
     var sweeping = GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(Cell(source[f], "skill_01", "trajectory", "line_pierce"), "skill_01", "projectile_count", "1") : source[f]);
     var g = SalvoOn(sweeping, "skill_01", 200);
@@ -680,7 +761,7 @@ Check("basic attack fires one flat shot per interval, and stays silent without a
     Assert(fired == 3, $"one shot per configured interval: {fired} in 2.55s");
 });
 Check("trigger skills never auto-cast, only fire on a basic attack, and stay gated by cooldown", () => {
-    // 落雷（触发概率 4%）：靶场关了普攻，冷却到点也绝不会自己放出来。
+    // 御雷真诀（触发概率 4%）：靶场关了普攻，冷却到点也绝不会自己放出来。
     var idle = Salvo("skill_07");
     Step(idle, 30);
     Assert(!idle.Effects.Any(e => e.Skill == "skill_07"), "a trigger skill never auto-casts on cooldown");
@@ -697,9 +778,9 @@ Check("trigger skills never auto-cast, only fire on a basic attack, and stay gat
     Assert(g.Effects.Any(e => e.Skill == ""), "the basic attack itself still happens");
     Assert(!g.Effects.Any(e => e.Skill == "skill_07"), "a cooling trigger skill cannot fire");
 });
-Check("妖火 lands a flame sword that leaves a lingering fire sea refreshing the burn", () => {
+Check("焚天剑诀 lands a flame sword that leaves a lingering fire sea refreshing the burn", () => {
     var g = Salvo("skill_02", 90);                  // 三个靶子重叠在阵心
-    // 妖火现在是**固定冷却**：Salvo 那一步已经自动放过一次了，先清干净再显式放，
+    // 焚天剑诀现在是**固定冷却**：Salvo 那一步已经自动放过一次了，先清干净再显式放，
     // 否则下面按"只有一个天降效果"写的断言会撞上两个。
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     Assert(g.ForceRelease("skill_02"), "the flame sword is released");
@@ -722,8 +803,8 @@ Check("妖火 lands a flame sword that leaves a lingering fire sea refreshing th
     Step(g, config.Skills["skill_02"].SecondaryDuration);
     Assert(!g.Effects.Any(e => e.Kind == "ground" && e.Skill == "skill_02"), "the sea burns out after its duration");
 });
-Check("扎根 gathers the pack toward its eye, and chills it", () => {
-    var g = Salvo("skill_12", 200);                 // 扎根：ground + gather + chill
+Check("寒冰龙卷 gathers the pack toward its eye, and chills it", () => {
+    var g = Salvo("skill_12", 200);                 // 寒冰龙卷：ground + gather + chill
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();  // 它是固定冷却，先清掉自动放的那一次
     // 三只怪摆进力场半径内、彼此隔开：只有吸附才会把它们拉近，其它机制（减速/伤害）都不改变 X 的散布。
     // 靶场把敌人定死了，所以 X 的变化只可能来自 gather（或将来误配回来的 knockback）。
@@ -761,7 +842,7 @@ Check("扎根 gathers the pack toward its eye, and chills it", () => {
     Assert(!g.Effects.Any(x => x.Skill == "skill_12"), "the field dies once its configured duration runs out");
 });
 
-Check("天陨 各锁一敌：只剩一只时三支全砸在它身上（打 BOSS 不丢伤害）", () => {
+Check("苍穹剑陨 各锁一敌：只剩一只时三支全砸在它身上（打 BOSS 不丢伤害）", () => {
     var g = Salvo("skill_18", 200);
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     var s = config.Skills["skill_18"];
@@ -804,7 +885,7 @@ Check("天陨 各锁一敌：只剩一只时三支全砸在它身上（打 BOSS 
     Assert(lone.Hp == afterBurst, "余韵一次伤害都不造成（它不是第二段伤害）");
     Assert(!g.Effects.Any(e => e.Skill == "skill_18"), "余韵超时自散");
 });
-Check("天陨 有多只时各锁一只，尽量不重复", () => {
+Check("苍穹剑陨 有多只时各锁一只，尽量不重复", () => {
     var g = Salvo("skill_18", 300);
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     var pack = g.Battle.Enemies.ToArray();
@@ -835,7 +916,7 @@ Check("伤害统计：按技能归因，有效伤害与实际掉血一致", () =
     Assert(g.ForceRelease("skill_01"), "released");
     Step(g, .5);
     var row = g.DamageStats.Rows["skill_01"];
-    Assert(row.Hits == 1, $"御剑单发打中一次：{row.Hits}");
+    Assert(row.Hits == 1, $"御剑术单发打中一次：{row.Hits}");
     Assert(Math.Abs(row.Effective - (before - target.Hp)) < 1e-9,
         $"有效伤害就是实际掉的血：{row.Effective} vs {before - target.Hp}");
 });
@@ -861,7 +942,7 @@ Check("伤害统计：记的是**乘过易伤之后**的值", () => {
         $"易伤要算进去：{g.DamageStats.Rows["skill_v"].Effective}");
 });
 Check("伤害统计：灼烧跳伤归到施加它的那个技能名下", () => {
-    var g = Salvo("skill_02", 90);                  // 妖火：天降火海
+    var g = Salvo("skill_02", 90);                  // 焚天剑诀：天降火海
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     g.ResetDamageStats();
     Assert(g.ForceRelease("skill_02"), "released");
@@ -876,23 +957,23 @@ Check("伤害统计：普攻单列一行（来源是空串）", () => {
     Step(g, 4);
     Assert(g.DamageStats.Rows.ContainsKey("") && g.DamageStats.Rows[""].Effective > 0, "普攻记在空串名下");
 });
-Check("伤害统计：影分身那一份归到身外身名下（它复制出来的东西就是它的价值）", () => {
+Check("伤害统计：影分身那一份归到剑二十三名下（它复制出来的东西就是它的价值）", () => {
     var g = Salvo("skill_01", 400);
-    g.State.Skills["skill_19"] = 1;                 // 身外身
+    g.State.Skills["skill_19"] = 1;                 // 剑二十三
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     Assert(g.ForceRelease("skill_19"), "分身窗口开了");
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     g.ResetDamageStats();
     Assert(g.ForceRelease("skill_01"), "released");
     Step(g, 1);
-    Assert(g.DamageStats.Rows["skill_01"].Hits == 1, $"本体那一份记在御剑名下：{g.DamageStats.Rows["skill_01"].Hits}");
-    Assert(g.DamageStats.Rows["skill_19"].Hits == 1, $"分身那一份记在身外身名下：{g.DamageStats.Rows["skill_19"].Hits}");
-    // 分身那一份按继承比例打折，所以更小——"身外身到底值多少"因此能单独看出来。
+    Assert(g.DamageStats.Rows["skill_01"].Hits == 1, $"本体那一份记在御剑术名下：{g.DamageStats.Rows["skill_01"].Hits}");
+    Assert(g.DamageStats.Rows["skill_19"].Hits == 1, $"分身那一份记在剑二十三名下：{g.DamageStats.Rows["skill_19"].Hits}");
+    // 分身那一份按继承比例打折，所以更小——"剑二十三到底值多少"因此能单独看出来。
     Assert(g.DamageStats.Rows["skill_19"].Effective < g.DamageStats.Rows["skill_01"].Effective,
         "分身按继承比例打折，伤害小于本体");
 });
 Check("伤害统计：零伤害的爆炸余韵不记账", () => {
-    // 天陨落地派生的那个 `Damage = 0` 的余韵照样会走 `Hit`，不拦的话会凭空加一次命中。
+    // 苍穹剑陨落地派生的那个 `Damage = 0` 的余韵照样会走 `Hit`，不拦的话会凭空加一次命中。
     var g = Salvo("skill_18", 200);
     var lone = g.Battle.Enemies[0];
     g.Battle.Enemies.RemoveAll(e => e != lone);     // 只留一只：命中数应当恰等于支数
@@ -921,7 +1002,7 @@ Check("默认（无生成带）的天降剑雨仍以阵心对称铺开，命中�
     // 各支按 spread 在阵心两侧铺开，最外侧那支离阵心 (count-1)/2 × spread，超过 aoe_radius 就打不到阵心那只。
     // 这里用**真实会话**数一遍，而不是在自检里把工具那条公式再抄一遍——它同时验证了 Core 的落点算法
     // （`CastVolley` 把 lane 算进 effect.X）与配置文件是同一条口径。
-    var g = Salvo("skill_06", 300);          // 万剑：5 支 / 间距 40 / 落点半径 60 → 只有中间 3 支够得着
+    var g = Salvo("skill_06", 300);          // 万剑决：5 支 / 间距 40 / 落点半径 60 → 只有中间 3 支够得着
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     var s = config.Skills["skill_06"];
     var lone = g.Battle.Enemies[0];
@@ -933,7 +1014,7 @@ Check("默认（无生成带）的天降剑雨仍以阵心对称铺开，命中�
     Assert(reaching == want && reaching < s.ProjectileCount,
         $"{s.ProjectileCount} 支里 {reaching} 支够得着阵心（口径记 {want} 支）");
 });
-Check("寒潮 roots the whole field at cast, then a ground wave shoves each enemy exactly once", () => {
+Check("剑气流云壁 roots the whole field at cast, then a ground wave shoves each enemy exactly once", () => {
     // 定身：射程 950 之外的敌人也要被定住——"全屏"不看射程。
     var rooted = Salvo("skill_05", 200);
     var line = rooted.Battle.Enemies.ToArray();
@@ -966,7 +1047,7 @@ Check("寒潮 roots the whole field at cast, then a ground wave shoves each enem
     Step(pushed, 3.5);                                  // duration 4 + 前摇 0.5 = 寿命 4.5 秒
     Assert(!pushed.Effects.Any(e => e.Skill == "skill_05"), "the wave dies after its configured duration");
 });
-Check("斩鬼 strikes the field's healthiest enemy however far away, and only after the wind-up", () => {
+Check("斩鬼神 strikes the field's healthiest enemy however far away, and only after the wind-up", () => {
     var g = Salvo("skill_10", 200);
     var line = g.Battle.Enemies.ToArray();
     foreach (var e in line) { e.X = g.Battle.PlayerX + 200; e.Hp = e.MaxHp = 1e6; }
@@ -982,7 +1063,7 @@ Check("斩鬼 strikes the field's healthiest enemy however far away, and only af
     Assert(far.Hp < far.MaxHp, "the chosen enemy was struck");
     Assert(near.Hp == near.MaxHp, "and the one in front was left alone");
 });
-Check("诛仙 drops four swords in sequence, each one striking every enemy on the field", () => {
+Check("诛仙剑阵 drops four swords in sequence, each one striking every enemy on the field", () => {
     var g = Salvo("skill_15", 400);
     var line = g.Battle.Enemies.ToArray();
     // 一个在身前、一个在身后、一个远到任何落点半径都够不着：aoe_all 必须三个全打。
@@ -1011,13 +1092,13 @@ Check("ground-only skills cannot touch flying monsters, while everything else st
     }
     var ground = Add("slime", g.Battle.PlayerX + 200);
     var flyer = Add("bat", g.Battle.PlayerX + 260);   // 就在地面靶旁边：没有层判定的话它一定会被波及
-    // 妖火定位是 ground（天降火海），且是触发类神通，必须显式放一次：地面靶掉血，空中靶毫发无损。
+    // 焚天剑诀定位是 ground（天降火海），且是触发类神通，必须显式放一次：地面靶掉血，空中靶毫发无损。
     g.State.Skills["skill_02"] = 1; g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-    Assert(g.ForceRelease("skill_02"), "妖火 released");
+    Assert(g.ForceRelease("skill_02"), "焚天剑诀 released");
     Step(g, 2);
     Assert(ground.Hp < ground.MaxHp, "the ground target was struck");
     Assert(flyer.Hp == flyer.MaxHp, $"the flying target was left alone: {flyer.Hp}");
-    // 不限层的技能（御剑 / 普攻）照样打得到它——这是"只练地面招也不会卡死"的护栏。
+    // 不限层的技能（御剑术 / 普攻）照样打得到它——这是"只练地面招也不会卡死"的护栏。
     g.Battle.Enemies.Remove(ground);
     g.State.Skills.Clear(); g.State.Skills["skill_01"] = 1; g.Battle.Cooldowns.Clear();
     flyer.Hp = flyer.MaxHp; flyer.X = g.Battle.PlayerX + 300;
@@ -1035,8 +1116,8 @@ Check("a skill aimed only at the air never picks a ground target", () => {
     Assert(g.Battle.Cooldowns.GetValueOrDefault("skill_18") == 0, "no legal target means no cooldown consumed");
 });
 Check("haste speeds up attack cooldowns but never buff cooldowns", () => {
-    // 攻速若连增益类法术一起加速，疾风（15s 冷却 / 6s 持续）会在持续期内转好，变成 100% 常驻。
-    var g = Salvo("skill_04");                       // 疾风：以自身为目标的增益，交战即可放
+    // 攻速若连增益类法术一起加速，仙风云体术（15s 冷却 / 6s 持续）会在持续期内转好，变成 100% 常驻。
+    var g = Salvo("skill_04");                       // 仙风云体术：以自身为目标的增益，交战即可放
     Assert(g.HasteRemaining > 0 && Math.Abs(g.HasteFactor - 1.25) < 1e-9, "haste 25% means cooldowns tick 1.25x");
     g.Battle.Cooldowns.Clear();
     g.Battle.Cooldowns["skill_01"] = 10;              // 输出类法术：应被加速
@@ -1046,7 +1127,7 @@ Check("haste speeds up attack cooldowns but never buff cooldowns", () => {
     Assert(Math.Abs(g.Battle.Cooldowns["skill_04"] - (10 - .05)) < 1e-9, $"buff cooldown ticked 1x: {g.Battle.Cooldowns["skill_04"]}");
 });
 Check("a power-1 buff leaves the shared damage window alone", () => {
-    // 薯皮（power 1.5，持续走配置）生效中再放疾风（power 1，6 秒）：
+    // 剑罡护体（power 1.5，持续走配置）生效中再放仙风云体术（power 1，6 秒）：
     // 若纯功能向的增益也占用共享窗口，剩余时间会被顶成 6 秒。
     // 持续秒数从配置读，别写死——增益时长是会调的。
     double window = config.Skills["skill_14"].Duration;
@@ -1060,7 +1141,7 @@ Check("a power-1 buff leaves the shared damage window alone", () => {
 Check("crit_reduce raises the crit rate while it lasts", () => {
     // 固定 seed 下确定性可比：叠伤害合计，加成期间应明显高于基础暴击率。
     // 每轮清冷却 → 该轮必定出手；每轮跑 0.4 秒，够肩侧的三支剑飞到 200 处的靶子。
-    // 清冷却顺带让望月每轮重新上，保证整个统计窗口内加成都生效。
+    // 清冷却顺带让醉仙望月步每轮重新上，保证整个统计窗口内加成都生效。
     double Harvest(GameSession s, EnemyState target, int rounds)
     {
         double total = 0;
@@ -1084,11 +1165,11 @@ Check("a crit shortens one cooling skill's cooldown", () => {
         var s = Salvo("skill_01", 200);
         s.Battle.Enemies[0].Hp = s.Battle.Enemies[0].MaxHp = 1e9;
         s.State.Skills["skill_06"] = 1;                       // sink：习得但冷却很长，不会出手
-        if (withBuff) s.State.Skills["skill_09"] = 1;         // 望月
+        if (withBuff) s.State.Skills["skill_09"] = 1;         // 醉仙望月步
         s.Battle.Cooldowns.Clear();
         s.Battle.Cooldowns["skill_06"] = 30;
         s.Battle.Cooldowns["skill_09"] = 0;
-        // 窗口要够长：缩冷却改成"每次施法最多一次"之后，触发密度降到 1/3（御剑一轮 3 支只由第一支触发），
+        // 窗口要够长：缩冷却改成"每次施法最多一次"之后，触发密度降到 1/3（御剑术一轮 3 支只由第一支触发），
         // 3 秒里等不到暴击就会变成假失败。10 秒足够，增益自身 6 秒持续也会在这段时间里覆盖大部分。
         Step(s, 10);
         return s;
@@ -1109,7 +1190,7 @@ Check("crits never shorten buff cooldowns, and only fire once per cast", () => {
         $"a buff cooldown only decays naturally: {g.Battle.Cooldowns["skill_04"]:0.##}");
     Assert(g.Battle.Cooldowns["skill_06"] < 29, $"crits did shorten a non-buff cooldown: {g.Battle.Cooldowns["skill_06"]:0.##}");
 
-    // 每次施法最多一次：把暴击率拉满，御剑一轮 3 支，旧写法会一轮触发 3 次。
+    // 每次施法最多一次：把暴击率拉满，御剑术一轮 3 支，旧写法会一轮触发 3 次。
     var alwaysCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "1") : source[f]);
     var b = SalvoOn(alwaysCrit, "skill_01", 200);
     b.State.Skills["skill_06"] = 1; b.State.Skills["skill_09"] = 1;
@@ -1144,8 +1225,8 @@ Check("homing blade finishes its flight to the dead target's last position", () 
     Step(g, 1);
     Assert(!g.Effects.Contains(blade), "gone once it reaches that point");
 });
-Check("须芒 keeps closing on the dead target's position instead of drifting right", () => {
-    var g = Salvo("skill_11", 700);                 // 须芒：3 支弧线追踪
+Check("青元剑芒 keeps closing on the dead target's position instead of drifting right", () => {
+    var g = Salvo("skill_11", 700);                 // 青元剑芒：3 支弧线追踪
     var blades = g.Effects.Where(e => e.Trajectory == "arc_homing").ToArray();
     Assert(blades.Length == 3, "three blades");
     double targetX = blades[0].TargetX;
@@ -1179,12 +1260,12 @@ Check("神通的概率可以逐次累加，摇中后清零", () => {
     }
     Assert(grew, "没摇中时会逐次累加");
     Assert(reset, "摇中之后回到起步值");
-    // step = 0 的法术（妖火 / 落雷）永远是固定概率，行为与改动前一致。
+    // step = 0 的法术（焚天剑诀 / 御雷真诀）永远是固定概率，行为与改动前一致。
     Assert(Math.Abs(g.TriggerChanceNow("skill_02") - ramp.Skills["skill_02"].TriggerChance) < 1e-9, "未配置累加的法术不涨");
 });
 Check("利用状态：目标带状态时增伤，不带时不变", () => {
     var noCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
-    var g = SalvoOn(noCrit, "skill_10", 400);          // 斩鬼：target 类，延迟 0.9 秒结算
+    var g = SalvoOn(noCrit, "skill_10", 400);          // 斩鬼神：target 类，延迟 0.9 秒结算
     var foe = g.Battle.Enemies.OrderBy(e => e.Id).First();
     // SalvoOn 为了定住靶子给了 StunUntil = 1e9——那本身就算「带状态」。先清掉，否则两组都吃加成、比不出差异。
     foe.StunUntil = 0;
@@ -1192,7 +1273,7 @@ Check("利用状态：目标带状态时增伤，不带时不变", () => {
     double HitOnce()
     {
         g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-        Assert(g.ForceRelease("skill_10"), "斩鬼 released");
+        Assert(g.ForceRelease("skill_10"), "斩鬼神 released");
         Step(g, 1.2);
         double dealt = foe.MaxHp - foe.Hp;
         foe.Hp = foe.MaxHp;
@@ -1204,11 +1285,11 @@ Check("利用状态：目标带状态时增伤，不带时不变", () => {
     double marked = HitOnce();
     Assert(Math.Abs(marked / clean - 1.3) < 1e-9, $"带状态的目标多挨 30%：{marked:0.#}/{clean:0.#}");
 });
-Check("薯皮：护盾吸收伤害，敌人近身时环绕飞剑还手", () => {
+Check("剑罡护体：护盾吸收伤害，敌人近身时环绕飞剑还手", () => {
     // 关掉闪避：不然"血没掉"可能是因为躲开了，而不是护盾挡的。
     var noDodge = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "dodge", "base_value", "0") : source[f]);
     var g = SalvoOn(noDodge, "skill_14", 200);
-    Assert(g.ForceRelease("skill_14"), "薯皮 released");
+    Assert(g.ForceRelease("skill_14"), "剑罡护体 released");
     Assert(g.ShieldRemaining > 0, "护盾生效");
     // 还手：护盾一上身就开始按 guard_interval 出手。抓"刚射出那一帧"——它飞得很快，一步之后就已经命中了。
     // Index = 1 是刻意的：技能名标签与"暴击缩冷却"都只认第 0 支，环绕飞剑不该抢那个名额。
@@ -1232,14 +1313,14 @@ Check("薯皮：护盾吸收伤害，敌人近身时环绕飞剑还手", () => {
     Step(g, 1);
     Assert(foe.Hp < foeHp, "环绕飞剑自行出手并打中了敌人");
 });
-Check("妖火的火海铺在最靠前的那只身上（而不是脚边）", () => {
+Check("焚天剑诀的火海铺在最靠前的那只身上（而不是脚边）", () => {
     var g = Salvo("skill_02", 400);
     var foes = g.Battle.Enemies.OrderBy(e => e.Id).ToArray();
     foes[0].X = g.Battle.PlayerX + 200;      // 脚边那只
     foes[1].X = g.Battle.PlayerX + 500;
     foes[2].X = g.Battle.PlayerX + 800;      // 最靠前的那只
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-    Assert(g.ForceRelease("skill_02"), "妖火 released");
+    Assert(g.ForceRelease("skill_02"), "焚天剑诀 released");
     Step(g, 1);                              // 天降要 0.75 秒才落地成火海
     var sea = g.Effects.FirstOrDefault(e => e.Kind == "ground" && e.Skill == "skill_02");
     Assert(sea is not null, "落点留下一片火海");
@@ -1254,7 +1335,7 @@ Check("追踪弹的目标中途死亡时，飞完这一程再落点重索敌（�
     foes[1].X = g.Battle.PlayerX + 440;      // 落点 80 以内
     foes[2].X = g.Battle.PlayerX + 900;      // 远处，够不到（不该被改追）
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-    Assert(g.ForceRelease("skill_11"), "须芒 released");
+    Assert(g.ForceRelease("skill_11"), "青元剑芒 released");
     var blade = g.Effects.Single(e => e.Trajectory == "arc_homing");
     Assert(blade.Target == foes[0].Id, "同血量按 Id 升序锁定");
     double arcBefore = blade.Arc;
@@ -1271,40 +1352,40 @@ Check("追踪弹的目标中途死亡时，飞完这一程再落点重索敌（�
     var prey = lonely.Battle.Enemies.OrderBy(e => e.Id).First();
     lonely.Battle.Enemies.RemoveAll(e => e.Id != prey.Id);
     lonely.Battle.Cooldowns.Clear(); lonely.Effects.Clear();
-    Assert(lonely.ForceRelease("skill_11"), "须芒 released");
+    Assert(lonely.ForceRelease("skill_11"), "青元剑芒 released");
     var alone = lonely.Effects.Single(e => e.Trajectory == "arc_homing");
     lonely.Battle.Enemies.Remove(prey);      // 目标死了，附近也没有别人
     Step(lonely, 1);
     Assert(!lonely.Effects.Contains(alone), "索不到敌就消失");
 });
 Check("定点弹的目标中途死亡时，同样改打落点附近的敌人", () => {
-    var g = Salvo("skill_10", 400);          // 斩鬼：target 类，延迟 0.9 秒才结算
+    var g = Salvo("skill_10", 400);          // 斩鬼神：target 类，延迟 0.9 秒才结算
     var foes = g.Battle.Enemies.OrderBy(e => e.Id).ToArray();
     foes[0].Hp = foes[0].MaxHp = 1e9;        // 拉高，确保 highest_hp 锁定它
     foes[1].X = foes[0].X + 60;              // 落点 80 以内
     foes[2].X = foes[0].X + 900;
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-    Assert(g.ForceRelease("skill_10"), "斩鬼 released");
+    Assert(g.ForceRelease("skill_10"), "斩鬼神 released");
     double before = foes[1].Hp;
     g.Battle.Enemies.Remove(foes[0]);        // 目标在延迟期死掉
     Step(g, 1.2);
     Assert(foes[1].Hp < before, "落点附近的那只挨到了这一剑");
 });
 Check("增益类法术的升级缩短冷却，且有覆盖率下限", () => {
-    var g = Salvo("skill_04", 200);          // 疾风：增益，冷却 15 / 持续 6
+    var g = Salvo("skill_04", 200);          // 仙风云体术：增益，冷却 15 / 持续 6
     Assert(Math.Abs(g.BuffCooldownNow("skill_04", 1) - 15) < 1e-9, "1 级等于配置冷却");
     double high = g.BuffCooldownNow("skill_04", 32);
     Assert(high < 15, $"等级高了冷却变短：{high:0.#}");
     Assert(high >= 6 * 1.25 - 1e-9, $"但不低于 持续×1.25：{high:0.#}");
     Assert(Math.Abs(g.BuffCooldownNow("skill_01", 32) - 1.2) < 1e-9, "输出类冷却不随等级变");
 });
-Check("须芒 reaps the weakest and focuses fire when outnumbered", () => {
+Check("青元剑芒 reaps the weakest and focuses fire when outnumbered", () => {
     // 阶梯血量：三只靶子分别 300 / 200 / 100，让"最低血"有唯一解。
     var g = Salvo("skill_11", 400);
     var foes = g.Battle.Enemies.OrderBy(e => e.Id).ToArray();
     foes[0].Hp = foes[0].MaxHp = 300; foes[1].Hp = foes[1].MaxHp = 200; foes[2].Hp = foes[2].MaxHp = 100;
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
-    Assert(g.ForceRelease("skill_11"), "须芒 released");
+    Assert(g.ForceRelease("skill_11"), "青元剑芒 released");
     // 三段分别指向最脆、次脆、最厚——而不是"离玩家最近的三个"。
     Assert(g.Effects.Select(e => e.Target).SequenceEqual(new[] { foes[2].Id, foes[1].Id, foes[0].Id }),
         "aims at the weakest first: " + string.Join(",", g.Effects.Select(e => e.Target)));
@@ -1313,7 +1394,7 @@ Check("须芒 reaps the weakest and focuses fire when outnumbered", () => {
     solo.Battle.Enemies.RemoveRange(1, solo.Battle.Enemies.Count - 1);
     long only = solo.Battle.Enemies[0].Id;
     solo.Battle.Cooldowns.Clear(); solo.Effects.Clear();
-    Assert(solo.ForceRelease("skill_11"), "须芒 released solo");
+    Assert(solo.ForceRelease("skill_11"), "青元剑芒 released solo");
     var shots = solo.Effects.Where(e => e.Skill == "skill_11").ToArray();
     Assert(shots.Length == 3 && shots.All(e => e.Target == only), "all three blades focus the only enemy");
 });
@@ -1403,7 +1484,7 @@ Check("legacy save with untracked GM cores is adopted instead of rejected", () =
     store.Save(state); Assert(store.Load(config)!.Amount("core") == 500 && store.Warning is null, "stable after adoption");
 });
 Check("effects carry their source skill so the view can tell the 15 skills apart", () => {
-    // 唯一的神通（落雷）只由普攻概率触发：用触发概率为 1 的改过配置跑，让"非增益法术一律留痕"这条断言是确定的，
+    // 唯一的神通（御雷真诀）只由普攻概率触发：用触发概率为 1 的改过配置跑，让"非增益法术一律留痕"这条断言是确定的，
     // 不必依赖 10% 在有限步数里摇中。其余法术都是固定冷却，冷却一到自然出手。
     var certain = GameConfig.Load(f => f == "SwordSkill.csv"
         ? Cell(source[f], "skill_07", "trigger_chance", "1")
@@ -1414,7 +1495,7 @@ Check("effects carry their source skill so the view can tell the 15 skills apart
     g.Step(.05); foreach (var e in g.Battle.Enemies) { e.Hp = e.MaxHp = 1e8; e.Atk = 0; }
     var fired = new HashSet<string>();
     for (int i = 0; i < 400; i++) { g.Step(.05); foreach (var effect in g.Effects) if (effect.Skill != "") fired.Add(effect.Skill); }
-    // buff 类（疾风 / 望月 / 万剑归心 / 身外身）不产生飞行/地面效果，普攻的 Skill 为空也在这里被排除；
+    // buff 类（仙风云体术 / 醉仙望月步 / 万剑归心 / 剑二十三）不产生飞行/地面效果，普攻的 Skill 为空也在这里被排除；
     // 其余每一个都该带着来源标记出手。条数从配置推出来，别再写死——编制每调一次就会错一次。
     Assert(fired.Count >= certain.Skills.Values.Count(s => s.Kind != "buff"), $"distinct skills fired: {string.Join(",", fired.Order())}");
     Assert(fired.All(certain.Skills.ContainsKey), "skill ids resolve to SwordSkill rows");
@@ -1435,7 +1516,7 @@ Check("atomic save, reload without offline gains, and corrupt-primary backup rec
     File.WriteAllText(path, "{broken"); Assert(store.Load(config)!.Amount("core") == 1 && store.Warning is not null, "backup recovery");
 });
 Check("base character can reach boss and obtain first core in a sustained run", () => {
-    // 开局不再白送法术，所以第一件事是习得御剑（它属默认解锁的小妖档）。
+    // 开局不再白送法术，所以第一件事是习得御剑术（它属默认解锁的小妖档）。
     // 这一趟验证的是完整的推进循环，而不是"什么都不买"的裸角色：BOSS 格的小怪在 BOSS 死前不会停刷，
     // DPS 不涨就会越堆越多、陷入复活循环——边打边把灵钱投回武器与法术等级，才是设计上的正常打法。
     // 预算 90000 步（4500 秒）：标准怪抬到 88、BOSS 抬到 75 SU 之后，这一趟比调数值前长得多。

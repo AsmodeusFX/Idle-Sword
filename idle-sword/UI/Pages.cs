@@ -5,36 +5,6 @@ namespace IdleSword.UI;
 
 public partial class Main
 {
-    private void TalentPage()
-    {
-        UiKit.Label(_page, "修行 · 一念启程", 20, 0, 480, 45, 29, UiKit.Gold);
-        UiKit.Label(_page, "沿已点亮的连线探索。灵钱修行，灵核破境。", 20, 44, 720, 32, 19, UiKit.Muted);
-        var visible = _game.Config.Rows("Talent").Where(r => _game.TalentVisible(r.Text("id"))).ToList();
-        var scroll = new ScrollContainer { VerticalScrollMode = ScrollContainer.ScrollMode.Disabled };
-        UiKit.Place(scroll, 0, 80, 1872, 220); _page.AddChild(scroll);
-        var graph = new Control { CustomMinimumSize = new(Math.Max(1830, visible.Max(r => r.Int("column")) * 395), 210) }; scroll.AddChild(graph);
-        Vector2 Point(CsvRow r) => new(195 + (r.Int("column") - 1) * 395, 22 + (r.Int("row") - 1) * 42);
-        foreach (var link in _game.Config.Rows("TalentLink"))
-        {
-            var from = visible.FirstOrDefault(r => r.Text("id") == link.Text("from_id"));
-            var to = visible.FirstOrDefault(r => r.Text("id") == link.Text("to_id"));
-            if (from is null || to is null) continue;
-            var line = new Line2D { Points = [Point(from), Point(to)], DefaultColor = UiKit.Line, Width = 3 }; graph.AddChild(line);
-        }
-        foreach (var r in visible)
-        {
-            string id = r.Text("id"); int rank = _game.State.Talents.GetValueOrDefault(id); var p = Point(r);
-            var button = UiKit.Button(graph, $"{r.Text("name")} {rank}/{r.Int("max_level")} · {r.Number("cost_gold") * (rank + 1):0}钱" + (r.Number("cost_core") > 0 ? $" +{r.Number("cost_core"):0}核" : ""), p.X - 172, p.Y - 18, 344, 36, () => Act(() => _game.BuyTalent(id)), rank > 0);
-            button.AddThemeFontSizeOverride("font_size", 18);
-            foreach (var style in new[] { "normal", "hover", "pressed", "focus" })
-            {
-                var box = (StyleBoxFlat)button.GetThemeStylebox(style).Duplicate(); box.ContentMarginTop = 1; box.ContentMarginBottom = 1; button.AddThemeStyleboxOverride(style, box);
-            }
-            string description = r.Text("effect") switch { "atk" => $"攻击加成 +{r.Number("value"):P0}", "hp" => $"气血加成 +{r.Number("value"):P0}", _ => "解锁在线自动参悟" };
-            button.TooltipText = $"点击精进。{description}；当前 {rank}/{r.Int("max_level")}。";
-        }
-        UiKit.Label(_page, "沿连线点击节点精进   ·   生根解锁自动参悟   ·   横向可滚动", 22, 296, 1500, 24, 16, UiKit.Muted);
-    }
     /// <summary>技能预览页：15 个法术各一个按钮，逐个对照表现与数值。</summary>
     private void PreviewPage()
     {
@@ -67,7 +37,7 @@ public partial class Main
     /// - **输出类**：每级威力 +`skill_level_bonus`（就是 `SkillPower` 用的那个系数，两边同源）。
     /// - **增益类**：峰值强度**不随等级变**（它走 `secondary_value`，是定值），成长全在**覆盖率**上——
     ///   每级冷却 −`buff_cooldown_per_level`，下限 `持续 × buff_cooldown_floor_ratio`（覆盖率封顶 80%）。
-    ///   身外身另有一条"继承比例 +1%/级"（它的强度确实随等级涨）。
+    ///   剑二十三另有一条"继承比例 +1%/级"（它的强度确实随等级涨）。
     /// 所有数字都从 `game_settings` 读；硬编码会让提示与实现悄悄对不上。
     /// </summary>
     private string UpgradeTip(SkillDef skill, int rank)
@@ -142,7 +112,7 @@ public partial class Main
     }
     /// <summary>
     /// 参悟行的效果文案——按配置的 `effect` 渲染，而不是一律写「效果 +X%」。
-    /// 身外身那 4 行的语义是**继承比例**（它的 `power` 根本不参与伤害），写成"伤害"会误导；
+    /// 剑二十三那 4 行的语义是**继承比例**（它的 `power` 根本不参与伤害），写成"伤害"会误导；
     /// 未知取值由加载期校验拦住（见 `GameConfig` 对 `SwordUpgrade.effect` 的检查），这里给个兜底。
     /// </summary>
     private static string IntentEffectText(CsvRow r) => r.Text("effect") switch

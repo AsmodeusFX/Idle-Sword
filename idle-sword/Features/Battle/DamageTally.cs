@@ -32,7 +32,7 @@ public sealed class DamageTally
     public double Seconds(double elapsed) => Math.Max(0, elapsed - _since);
 
     /// <summary>
-    /// 记一次落血。**两个数都为 0 就直接返回**：天陨落地派生的那个 `Damage = 0` 的"爆炸余韵"
+    /// 记一次落血。**两个数都为 0 就直接返回**：苍穹剑陨落地派生的那个 `Damage = 0` 的"爆炸余韵"
     /// 照样会走到这里，不拦的话它会凭空给技能加一次命中。
     /// </summary>
     public void Add(string source, double effective, double overkill)

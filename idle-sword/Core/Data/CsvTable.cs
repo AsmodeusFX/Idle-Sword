@@ -22,6 +22,26 @@ public sealed class CsvRow(string file, int line, Dictionary<string, string> cel
         throw Error(field, "需要整数");
     }
     public bool Flag(string field) => Text(field) switch { "1" => true, "0" => false, _ => throw Error(field, "需要 0 或 1") };
+    /// <summary>
+    /// 按 `|` 切分的字符串列表。**空串或纯空白 → 空列表**——"整列留空"在配置里是合法写法
+    /// （例：TalentLayout 的 `prereq_state` 留空 = 全部按 active）。每一项都会 Trim，空项直接丢掉，
+    /// 所以 `a||b` 与 `a|b` 等价。
+    /// </summary>
+    public List<string> TextList(string field) => Text(field)
+        .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        .ToList();
+    /// <summary>按 `|` 切分的数值列表。逐项解析，报错会带上那一项的实际内容，便于定位是第几个写错了。</summary>
+    public List<double> NumberList(string field)
+    {
+        var result = new List<double>();
+        foreach (string item in TextList(field))
+        {
+            if (!double.TryParse(item, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || !double.IsFinite(value))
+                throw Error(field, $"需要有限数值，实际是 '{item}'");
+            result.Add(value);
+        }
+        return result;
+    }
     public InvalidDataException Error(string field, string message) => new($"{File}:{Line} [{field}] {message}");
 }
 

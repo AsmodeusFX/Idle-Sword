@@ -162,7 +162,7 @@ public partial class Main
     /// 技能释放用"冷却 0 → 正"的跳变检测，而不是比较 Session.Effects 的引用集合：
     /// 3 个 buff 类法术走 CastBuff，根本不产生 CombatEffect，差集法会永久漏掉它们。
     /// CastSkills 在真正出手时必定写入 Cooldowns[id]（无目标会 continue，不写冷却），五种 kind 一律成立。
-    /// 普攻（GameSession.BasicAttackKey）刻意不走这里：它每秒一发，再叠上御剑 1.2 秒一轮的出手音，
+    /// 普攻（GameSession.BasicAttackKey）刻意不走这里：它每秒一发，再叠上御剑术 1.2 秒一轮的出手音，
     /// 出路音会盖过背景音乐；它的反馈已经由命中音承担，不与五大 kind 的释放音混为一谈。
     /// </summary>
     private void TrackSkillCasts(GameSession session)

@@ -14,6 +14,8 @@ SpriteDef[] sprites =
     Sprites.Player,
     Sprites.WhiteSilhouette(Sprites.Player),
     .. Monsters.All(),
+    // 天赋星图的节点图标（UI 图标，居中图形，见 FirstProblem 里的豁免）。
+    Sprites.NodeAttack, Sprites.NodeDefense, Sprites.NodeUtility, Sprites.NodeSpecial,
 ];
 
 int failures = 0;
@@ -63,8 +65,9 @@ static string FirstProblem(SpriteDef def, string svg)
 
     // 内容必须真的存在，且贴着底部锚点——锚点是"底部中心"，空精灵或浮在中间的精灵都会画歪。
     if (PixelArt.OpaqueCells(def) == 0) return "空精灵";
+    // `node_` 是**UI 图标**：它们是居中图形，天然不贴底边——那条约束是给贴地实体准备的，豁免掉。
     int lowest = (PixelArt.LowestOpaqueRow(def) + 1) * def.Scale;
-    if (lowest < 52) return $"内容离底边太远（最低像素 y={lowest}），会浮在地面之上";
+    if (!def.Id.StartsWith("node_") && lowest < 52) return $"内容离底边太远（最低像素 y={lowest}），会浮在地面之上";
 
     // 全族统一描边：白闪伴生图是纯白剪影，按定义不参与这条。
     if (!def.Id.EndsWith("_flash") && !def.Palette.Values.Contains(Palette.Outline))

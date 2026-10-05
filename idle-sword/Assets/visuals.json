@@ -16,5 +16,9 @@
   "pet_snow": "res://Assets/Sprites/pet_snow.svg",
   "summon_shadow": "res://Assets/Sprites/summon_shadow.svg",
   "summon_taixu": "res://Assets/Sprites/summon_taixu.svg",
-  "summon_zhuxie": "res://Assets/Sprites/summon_zhuxie.svg"
+  "summon_zhuxie": "res://Assets/Sprites/summon_zhuxie.svg",
+  "node_attack": "res://Assets/Sprites/node_attack.svg",
+  "node_defense": "res://Assets/Sprites/node_defense.svg",
+  "node_utility": "res://Assets/Sprites/node_utility.svg",
+  "node_special": "res://Assets/Sprites/node_special.svg"
 }

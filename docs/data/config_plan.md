@@ -29,7 +29,7 @@
 | drop.csv | 奖励组、物品、数量、概率、首杀/重复调用 |
 | cost.csv | 单次或按等级的多货币消耗 |
 | effect.csv | 属性、技能参数与功能解锁效果 |
-| TalentLink.csv | 天赋图连线及前置关系 |
+| TalentLayout.csv | 修行星图的格子坐标与前置连线（**归节点编辑器所有**，见 `fields.md`） |
 | contemplation.csv | 参悟对象、点击规则、产物组、自动参悟周期、积存容量及解锁引用 |
 | game_settings.csv | 全局默认规则与可调参数 |
 

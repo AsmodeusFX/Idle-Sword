@@ -2,16 +2,83 @@ using IdleSword.Core;
 
 namespace IdleSword.Features;
 
-/// <summary>独立养成功能的会话操作；统一扣费与持久化，不依赖界面节点。</summary>
+/// <summary>
+/// 修行（天赋）星图的会话操作：解锁判定、扣费、加点。
+///
+/// 配置拆成两张表：`Talent.csv` 是**内容**（名字 / 等级 / 消耗 / 效果 / 图标），
+/// `TalentLayout.csv` 是**几何与拓扑**（col / row / 前置）。**几何那张归工具整份拥有**
+/// （下一轮的节点编辑器），所以这里只读、不写。
+/// </summary>
 public sealed partial class GameSession
 {
+    /// <summary>节点当前等级。</summary>
+    public int TalentLevel(string id) => State.Talents.GetValueOrDefault(id);
+
+    /// <summary>
+    /// 该节点的前置清单。<c>NeedMax</c> 为真表示那条前置必须**满级**才算数，而不是点过即可
+    /// （用来卡后期节奏；`prereq_state` 整列留空时全是 false）。
+    /// </summary>
+    public List<(string Id, bool NeedMax)> TalentPrereqs(string id)
+    {
+        var row = Config.Row("TalentLayout", id);
+        var ids = row.TextList("prereq");
+        var states = row.TextList("prereq_state");
+        // `prereq_state` 允许整列留空 = 全部按 active。绝大多数节点都是这样，写满只会让表变吵，
+        // 还会把真正要求满级的那几行淹没在里面。
+        return ids.Select((p, i) => (p, states.Count > i && states[i] == "max")).ToList();
+    }
+
+    /// <summary>
+    /// 节点该不该出现在星图上。**要求前置全部点亮**（不是"任意一条"）——
+    /// 星图是收敛的：一个节点挂着两条前置时，玩家该读作"这两条都得走通"，而不是"随便走一条"。
+    /// </summary>
+    public bool TalentVisible(string id) =>
+        TalentLevel(id) > 0 || TalentPrereqs(id).All(p => TalentLevel(p.Id) >= 1);
+
+    /// <summary>把该节点从 <paramref name="level"/> 点到下一级要花的钱（`cost` 列表的第 level 项）。</summary>
+    public double TalentCost(string id, int level) => Config.Row("Talent", id).NumberList("cost")[level - 1];
+
+    /// <summary>
+    /// 现在能不能买。失败时**必须给出能读的中文原因**——悬停说明条直接把它显示给玩家，
+    /// 所以每条分支都要说清"还差什么"，不能笼统地写"不可用"。
+    /// </summary>
+    public bool CanBuyTalent(string id, out string reason)
+    {
+        var r = Config.Row("Talent", id);
+        int level = TalentLevel(id), max = r.Int("max_level");
+        if (r.Text("effect") == "none") { reason = "该节点还没有配置效果。"; return false; }
+        if (!TalentVisible(id)) { reason = "前置节点尚未点亮。"; return false; }
+        if (level >= max) { reason = "已达最高等级。"; return false; }
+        foreach (var (pid, needMax) in TalentPrereqs(id))
+        {
+            var up = Config.Row("Talent", pid);
+            if (needMax && TalentLevel(pid) < up.Int("max_level"))
+            { reason = $"需要前置「{up.Text("name")}」满级。"; return false; }
+        }
+        string currency = r.Text("cost_currency");
+        double cost = TalentCost(id, level + 1);
+        if (State.Amount(currency) < cost)
+        {
+            reason = $"{Config.Row("item", currency).Text("name")}不足：需要 {cost:0.#}，持有 {State.Amount(currency):0.#}。";
+            return false;
+        }
+        reason = "";
+        return true;
+    }
+
+    /// <summary>
+    /// 点一次节点。**绝不部分生效**——买不起就什么都不改，不会扣掉一半的钱。
+    ///
+    /// `Pay` 只动 `State.Wallet`、**不写投放账本**：灵核是记账货币（累计投放量必须等于
+    /// 首杀关卡数 + 调试发放量），花掉它不该回头去改投放记录，否则存档校验会直接拒绝整份存档。
+    /// </summary>
     public bool BuyTalent(string id)
     {
-        var r = Config.Row("Talent", id); int rank = State.Talents.GetValueOrDefault(id);
-        if (!TalentVisible(id) || rank >= r.Int("max_level")) return Say("节点尚不可用或已满级。");
-        double gold = r.Number("cost_gold") * (rank + 1), core = r.Number("cost_core");
-        if (State.Amount("gold") < gold || State.Amount("core") < core) return Say("灵钱或灵核不足。");
-        Pay("gold", gold); Pay("core", core); State.Talents[id] = rank + 1;
-        return Changed("修行精进 · " + r.Text("name"));
+        if (!CanBuyTalent(id, out string reason)) return Say(reason);
+        var r = Config.Row("Talent", id);
+        int level = TalentLevel(id) + 1;
+        Pay(r.Text("cost_currency"), TalentCost(id, level));
+        State.Talents[id] = level;
+        return Changed($"{r.Text("name")} 提升至 {level} 级");
     }
 }

@@ -59,8 +59,12 @@ public partial class Main
         grant.TooltipText = "item.csv 中每种货币各 +10000，新增货币自动纳入。";
 
         // 伤害统计是独立面板：先关掉自己再开，保证同时只有一个弹层（`Tap("关闭")` 是全树取首个匹配）。
-        var damage = UiKit.Button(_gmRoot, "伤害统计", 740, 426, 440, 44, () => { CloseGm(); OpenDamage(); });
+        var damage = UiKit.Button(_gmRoot, "伤害统计", 740, 426, 215, 44, () => { CloseGm(); OpenDamage(); });
         damage.TooltipText = "按技能看累计伤害 / 每秒伤害，用来核对数值平衡。";
+        // 修行星图的节点编辑器（开发期工具）。它**只写 TalentLayout.csv**，内容表仍手工维护；
+        // 保存前按与加载期同一套规则自查，不合格就拒绝保存、不碰任何文件。
+        var editor = UiKit.Button(_gmRoot, "节点编辑器", 965, 426, 215, 44, () => { CloseGm(); ToggleTalentEditor(); });
+        editor.TooltipText = "编辑修行星图的格子与前置连线。只写布局表；新建节点会给内容表补一行骨架。";
 
         // 怪物倍率：乘在关卡 / 波次倍率之后，**改完立刻作用于场上的怪**（不必等下一波）。
         // 按钮文字带上名字（"血量−" / "血量＋"），否则烟雾测试里 `Tap("＋")` 会撞上另外两行——

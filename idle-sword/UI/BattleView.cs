@@ -110,6 +110,9 @@ public partial class BattleView : Control
         }
         if (missing.Count > 0) LoadError = "缺少美术资源（未导入、路径错误或 visuals.json 里没有该 ID）: " + string.Join(", ", missing);
     }
+    /// <summary>按 `visuals.json` 的逻辑 id 取贴图（修行星图画节点图标要用）。取不到返回 null。</summary>
+    public Texture2D? Texture(string id) => _textures.GetValueOrDefault(id);
+
     /// <summary>世界坐标 → 屏幕坐标。镜头跟随玩家时（默认），它等于改动前的 `330 + (world - PlayerX)`。</summary>
     private float X(double world) => PlayerScreenX + (float)(world - CameraX);
     /// <summary>同上，公开给自检断言"默认路径没被改动"。见 <see cref="CameraOverride"/> 的说明。</summary>
@@ -226,7 +229,7 @@ public partial class BattleView : Control
     public static float SkyDropTop(int index) => 10 + index % 5 * 20;
 
     /// <summary>
-    /// 平射剑的排列位次（御剑）：以玩家为原点，身前身后交替、同侧逐层上抬，横向间距由 spread 配置。
+    /// 平射剑的排列位次（御剑术）：以玩家为原点，身前身后交替、同侧逐层上抬，横向间距由 spread 配置。
     /// 纯函数，只吃序号／总数／间距，可被自检断言；y 落在肩部一带（268 上下），不遮挡下方界面。
     /// </summary>
     public static (float X, float Y) VolleySlot(int index, int count, float spread)
@@ -390,12 +393,12 @@ public partial class BattleView : Control
             DrawRect(new(x + 5, 297, 35, 27), spawn.Passed ? new Color("#3d5a55") : new Color("#75684a"));
             DrawString(font, new(x - 20, 394), spawn.Passed ? "已越过" : $"刷怪点 {cell + 1}", HorizontalAlignment.Left, -1, 18, UiKit.Muted);
         }
-        // 诛仙的"天光尽墨"要盖住角色、敌人与已有的地面效果，所以铺在这里；神剑本身稍后才画，因此是亮的。
+        // 诛仙剑阵的"天光尽墨"要盖住角色、敌人与已有的地面效果，所以铺在这里；神剑本身稍后才画，因此是亮的。
         DrawEclipse();
         // 地面持续效果（剑阵/领域）画在角色与敌人之下，避免盖住血条。
         foreach (var effect in Session.Effects.Where(e => e.Kind == "ground" && !e.Hostile)) DrawEffect(effect, font);
         float bob = MovingNow ? (float)Math.Sin(MotionClock * 14) * 3 : 0;
-        // 影分身（身外身）：先画本体身后那个半透明分身，再画本体，保证本体压在上面。
+        // 影分身（剑二十三）：先画本体身后那个半透明分身，再画本体，保证本体压在上面。
         // 位置取固定偏移而不是 FollowerSlot：FollowerSlot 是给召唤单位"左右交替、逐层向外"用的，
         // 分身只有一个、且必须恒定在本体正后方，用它会随位次左右跳。
         if (Session.MirrorRemaining > 0)
@@ -502,9 +505,9 @@ public partial class BattleView : Control
             case "arc_homing": DrawArcBlade(effect, x); return;
             case "line_shot": DrawPierceBlade(effect, x, false); return;
             case "line_pierce":
-                // 同样是 line_pierce，两招的读法不同：寒潮是贴地的弧形剑气、天剑是横空斩出的巨剑，
+                // 同样是 line_pierce，两招的读法不同：剑气流云壁是贴地的弧形剑气、天剑是横空斩出的巨剑，
                 // 其余仍走原来的平射贯穿剑。形态只决定"怎么飞、怎么命中"，观感由技能 ID 分流。
-                // （扎根原先是第三支 line_pierce，改成落在目标位置的聚怪力场后走 DrawGround。）
+                // （寒冰龙卷原先是第三支 line_pierce，改成落在目标位置的聚怪力场后走 DrawGround。）
                 if (effect.Skill == "skill_05") DrawGroundWave(effect, x);
                 else if (effect.Skill == "skill_17") DrawHeavenSword(effect, x);
                 else DrawPierceBlade(effect, x, true);
@@ -527,7 +530,7 @@ public partial class BattleView : Control
     }
 
     /// <summary>
-    /// 御剑：肩侧浮现后平射。`line_shot` 命中即散，只拉一小段拖尾；`line_pierce` 是恒穿透形态，
+    /// 御剑术：肩侧浮现后平射。`line_shot` 命中即散，只拉一小段拖尾；`line_pierce` 是恒穿透形态，
     /// 保留贯穿全屏的剑光读法。两者共用肩侧排列与错时（VolleySlot + volley_interval）。
     /// </summary>
     private void DrawPierceBlade(CombatEffect effect, float x, bool pierce)
@@ -550,13 +553,13 @@ public partial class BattleView : Control
 
     /// <summary>
     /// 天剑：一柄巨剑**横空斩出**，贯穿一整排。刻意做成横向的大剑，而不是"自上而下的一戳"——
-    /// 与斩鬼（自斜上方斩落**一只**）分开，也比御剑的肩侧小剑大一圈、慢一截，带一条长刀光。
+    /// 与斩鬼神（自斜上方斩落**一只**）分开，也比御剑术的肩侧小剑大一圈、慢一截，带一条长刀光。
     /// </summary>
     private void DrawHeavenSword(CombatEffect effect, float x)
     {
         float fade = effect.MaxLife > 0 ? (float)Math.Clamp(effect.Life / effect.MaxLife, 0, 1) : 1;
         const float y = 300;                        // 与敌人身体同高：横向扫过去才"斩到人"
-        const float len = 200;                      // 御剑的剑身是 68，这里大一圈
+        const float len = 200;                      // 御剑术的剑身是 68，这里大一圈
         // 起手（hover_time）在身前蓄势：由小涨大；起飞后才是全尺寸的长刀光。
         float grow = effect.Timer > 0
             ? Math.Clamp(1 - (float)(effect.Timer / Math.Max(.01, ShapeOf(effect).Hold)), .3f, 1f)
@@ -586,16 +589,16 @@ public partial class BattleView : Control
     }
 
     /// <summary>
-    /// 万剑：固定剑阵从敌人上空垂直落剑。落点 X 已由 Core 按间距算进 effect.X（表现层不再自己偏移，
+    /// 万剑决：固定剑阵从敌人上空垂直落剑。落点 X 已由 Core 按间距算进 effect.X（表现层不再自己偏移，
     /// 否则会出现"看着没打中却掉血"），这里只负责出生高度、空中停留、下落与落点预警。
     /// </summary>
     private void DrawSkyDropBlade(CombatEffect effect, float x)
     {
-        if (effect.Skill == "skill_18") { DrawMeteorBlade(effect, x); return; }   // 天陨有自己的一整套读法
+        if (effect.Skill == "skill_18") { DrawMeteorBlade(effect, x); return; }   // 苍穹剑陨有自己的一整套读法
         var shape = ShapeOf(effect);
         float radius = (float)(effect.AoeRadius > 0 ? effect.AoeRadius : 60);
-        // 妖火与诛仙复用同一套下落编排，只换配色与剑的尺寸：
-        // 前者是一柄火焰剑落地成火海（后续由 DrawGround 的 skill_02 分支接手），后者是四柄结成剑阵的诛仙剑。
+        // 焚天剑诀与诛仙剑阵复用同一套下落编排，只换配色与剑的尺寸：
+        // 前者是一柄火焰剑落地成火海（后续由 DrawGround 的 skill_02 分支接手），后者是四柄结成剑阵的诛仙剑阵剑。
         bool flame = effect.Skill == "skill_02", divine = effect.Skill == "skill_15";
         Color hue = flame ? Flame : divine ? Void : Thunder;
         // 出生高度带随机高低差；随机值由 Core 摇定一次，逐帧重摇会抖动。
@@ -612,9 +615,9 @@ public partial class BattleView : Control
     }
 
     /// <summary>
-    /// 天陨：天上先浮出一个**黑洞**，剑锋自洞中慢慢探出、停一拍，再加速坠下，落地炸开一圈冲击环。
-    /// 与诛仙共用 `sky_drop` 的时序（`hover_time` = 探出 + 停顿，`duration` = 下落），读法却完全不同：
-    /// 诛仙是四道天光同时压下来，这里是"从黑洞里一柄柄射出去"。
+    /// 苍穹剑陨：天上先浮出一个**黑洞**，剑锋自洞中慢慢探出、停一拍，再加速坠下，落地炸开一圈冲击环。
+    /// 与诛仙剑阵共用 `sky_drop` 的时序（`hover_time` = 探出 + 停顿，`duration` = 下落），读法却完全不同：
+    /// 诛仙剑阵是四道天光同时压下来，这里是"从黑洞里一柄柄射出去"。
     /// **生成带模式**下，黑洞开在天上那条宽带的**出生点**上，而剑要斜落到窄带里的落点——于是飞行过程中
     /// 位置在"出生点 → 落点"之间插值，朝向**沿飞行轨迹**（不另摇随机倾角：剑尖扫出画面外就是这么来的）。
     /// 判定始终是落点 `x`（Core 算进 effect.X），表现层只负责画得像"收束过去"。
@@ -627,11 +630,11 @@ public partial class BattleView : Control
         float sx = effect.SpawnX != 0 ? X(effect.SpawnX) : x;
         float top = SkyDropTop(effect.Index) + (float)(effect.Jitter * shape.SpawnJitter);
         float fall = (float)Math.Clamp(1 - effect.Timer / Math.Max(.05, shape.Duration), 0, 1);
-        // 立方而不是平方：越接近地面越快，读作"被黑洞甩出去"，与万剑的匀速垂落区分开。
+        // 立方而不是平方：越接近地面越快，读作"被黑洞甩出去"，与万剑决的匀速垂落区分开。
         float y = Math.Clamp(top + (356 - top) * fall * fall * fall, 6f, 394f);
         float bx = sx + (x - sx) * fall;             // 横向：一半时间走完一半路程会觉得"晚拐弯"，所以与纵向同步
         float emerge = (float)Math.Clamp(1 - effect.Timer / Math.Max(.05, shape.Hold), 0, 1);
-        // 朝向 = 本支的飞行方向（出生点 → 落点）。落点与出生点重合时退回垂直，也就是万剑那种直落。
+        // 朝向 = 本支的飞行方向（出生点 → 落点）。落点与出生点重合时退回垂直，也就是万剑决那种直落。
         double angle = Math.Abs(x - sx) < 1 ? Math.PI / 2 : Math.Atan2(356 - top, x - sx);
         float hole = 1 - fall;                       // 剑一下落，黑洞就随之散去
         DrawCircle(new(sx, top), 26, new Color("#0b0716", .92f * hole));
@@ -658,7 +661,7 @@ public partial class BattleView : Control
     }
 
     /// <summary>
-    /// 寒潮：一道**紧贴地面**的弧形刀光整体向前平移（不是肩侧平射，也不拉贯穿全屏的剑光）。
+    /// 剑气流云壁：一道**紧贴地面**的弧形刀光整体向前平移（不是肩侧平射，也不拉贯穿全屏的剑光）。
     /// 形状取新月：后缘自左下贴地起、扬起一条长曲线到尖端，前缘贴着尖端收回来，
     /// 中间填半透明的虚空剑气、前缘描亮，底下再拖一层尘土——读作"一道立起来的刀光在平推"，
     /// 而不是一个对称的鼓包。
@@ -711,7 +714,7 @@ public partial class BattleView : Control
     }
 
     /// <summary>
-    /// 扎根：立在目标位置上的**聚怪力场**。位置就是 Core 算好的 effect.X（= 施放时选中那只的 X），
+    /// 寒冰龙卷：立在目标位置上的**聚怪力场**。位置就是 Core 算好的 effect.X（= 施放时选中那只的 X），
     /// 表现层不得再自己偏移。风眼是一道细龙卷，地面上是一圈**朝里转**的旋纹——它是把敌人卷进来、
     /// 而不是推出去，所以旋纹的走向必须向心，散场时越转越淡，不会突然消失。
     /// </summary>
@@ -722,7 +725,7 @@ public partial class BattleView : Control
         // 地面霜痕：只在力场范围内，别抢走风眼的注意力。
         DrawEllipseFloor(x, radius * .68f, new Color(Frost, .18f * fade));
         // 向心旋纹：三条螺线各绕一圈半、半径由外向内收，读作"往里卷"——
-        // 与寒潮向外推的新月正好相反，这两招因此不会看混。
+        // 与剑气流云壁向外推的新月正好相反，这两招因此不会看混。
         for (int arm = 0; arm < 3; arm++)
         {
             var spiral = new Vector2[28];
@@ -767,7 +770,7 @@ public partial class BattleView : Control
     }
 
     /// <summary>
-    /// 须芒：一道能量流光从角色前方划弧飞出。弧高取 Core 摇定的 effect.Arc（表现层不重摇，否则逐帧抖动），
+    /// 青元剑芒：一道能量流光从角色前方划弧飞出。弧高取 Core 摇定的 effect.Arc（表现层不重摇，否则逐帧抖动），
     /// 允许为负——负值时从下方掠过（上方空间多、下方少，区间由配置给出）。
     /// 夹取：上到 250（弧顶 = 发射高度 300 − 弧高，再高会顶出战斗区）、下到地面线以上（356），不越界也不压下方界面。
     /// </summary>
@@ -819,7 +822,7 @@ public partial class BattleView : Control
         DrawLine(new(px, py), new(px + (float)Math.Cos(angle) * 14, py + (float)Math.Sin(angle) * 14), new Color("#e8dcff", .35f), 2);
     }
     /// <summary>
-    /// 天陨的落地爆炸：内核闪一下 + 一圈扩散的冲击环 + 一圈**放射状的剑气**（沿圆周甩出去又收细）。
+    /// 苍穹剑陨的落地爆炸：内核闪一下 + 一圈扩散的冲击环 + 一圈**放射状的剑气**（沿圆周甩出去又收细）。
     /// `progress` 由 Core 给的寿命算出 0→1，所以这是真正的"炸开"而不是坠落最后一帧闪一下。
     /// 落点 X 与半径都取自 Core（`effect.X` / `AoeRadius`），表现层不自己偏移。
     /// </summary>
@@ -853,13 +856,13 @@ public partial class BattleView : Control
         float progress = effect.MaxLife > 0 ? (float)(1 - effect.Life / effect.MaxLife) : 0;
         switch (effect.Skill)
         {
-            case "skill_18": // 天陨落地：剑气爆炸的余韵（0→1 的进度驱动，见 GameSession.BurstLife）
+            case "skill_18": // 苍穹剑陨落地：剑气爆炸的余韵（0→1 的进度驱动，见 GameSession.BurstLife）
                 DrawBladeBurst(x, radius, progress);
                 break;
-            case "skill_12": // 扎根：落在目标位置的聚怪力场（向心旋纹 + 驻留的风眼）
+            case "skill_12": // 寒冰龙卷：落在目标位置的聚怪力场（向心旋纹 + 驻留的风眼）
                 DrawIceField(effect, x, radius, progress);
                 break;
-            case "skill_02": // 妖火：火焰剑落地 → 一片小火海（落点半径 120，火苗因此更稀）
+            case "skill_02": // 焚天剑诀：火焰剑落地 → 一片小火海（落点半径 120，火苗因此更稀）
                 DrawEllipseFloor(x, radius, new Color(Flame, .22f));
                 for (int i = 0; i < 10; i++)
                 {
@@ -891,13 +894,13 @@ public partial class BattleView : Control
         if (effect.Hostile) { DrawArc(new(PlayerScreenX, 340), 38, 0, Mathf.Tau, 24, Hostile, 3); DrawLine(new(PlayerScreenX, 170), new(PlayerScreenX, 306), Hostile, 2); return; }
         switch (effect.Skill)
         {
-            case "skill_07": // 落雷：天雷贯顶——主落雷之外再叠两道细弧，读起来比单体小技能重得多
+            case "skill_07": // 御雷真诀：天雷贯顶——主御雷真诀之外再叠两道细弧，读起来比单体小技能重得多
                 DrawLightning(x, 96, 348, Thunder);
                 DrawLightning(x - 34, 150, 340, new Color(Thunder, .5f));
                 DrawLightning(x + 34, 150, 340, new Color(Thunder, .5f));
                 DrawArc(new(x, 350), 30 + progress * 52, 0, Mathf.Tau, 30, new Color(Thunder, .85f), 4);
                 break;
-            case "skill_10": // 斩鬼：巨剑自目标右上浮现，斜着**斩**过去——剑尖扫过目标，拖一道刀光
+            case "skill_10": // 斩鬼神：巨剑自目标右上浮现，斜着**斩**过去——剑尖扫过目标，拖一道刀光
             {
                 const float bladeLen = 170;                                 // 剑身长度：得够得着目标（柄距目标约 164）
                 float wind = Math.Clamp(progress / .3f, 0f, 1f);            // 前摇：把剑亮出来
@@ -1009,7 +1012,7 @@ public partial class BattleView : Control
         }
     }
     /// <summary>
-    /// 诛仙的"天光尽墨"：整片战斗区压暗。取所有诛仙剑效果里「开头快速升起、结尾渐隐」的最大值，
+    /// 诛仙剑阵的"天光尽墨"：整片战斗区压暗。取所有诛仙剑阵剑效果里「开头快速升起、结尾渐隐」的最大值，
     /// 于是四柄剑错时落下的整段时间里天色都是暗的，而不是每柄剑各暗一次、中间回亮。
     /// </summary>
     private void DrawEclipse()
@@ -1025,8 +1028,8 @@ public partial class BattleView : Control
     }
 
     /// <summary>
-    /// 斩鬼的虚影：半身持剑的能量体浮在主角身上，先渐显、剑光落下时散去。
-    /// 纯表现——它不改任何数值，也不产生 CombatEffect；只要场上还有斩鬼的效果就跟着画。
+    /// 斩鬼神的虚影：半身持剑的能量体浮在主角身上，先渐显、剑光落下时散去。
+    /// 纯表现——它不改任何数值，也不产生 CombatEffect；只要场上还有斩鬼神的效果就跟着画。
     /// </summary>
     private void DrawPhantom()
     {
@@ -1067,7 +1070,7 @@ public partial class BattleView : Control
         }
     }
 
-    /// <summary>玩家增益光环：护盾金罡、归元回气、万剑吸血、疾风攻速、醉仙暴击，以及通用增益环。</summary>
+    /// <summary>玩家增益光环：护盾金罡、归元回气、万剑决吸血、仙风云体术攻速、醉仙暴击，以及通用增益环。</summary>
     private void DrawPlayerAuras()
     {
         float t = (float)_clock;
@@ -1086,7 +1089,7 @@ public partial class BattleView : Control
                 DrawLine(new(c - span - 40 - (float)((t * 120 + i * 24) % 60), py), new(c - span, py), new Color(Wind, .35f), 3);
             }
         }
-        // 薯皮：一圈半透明的剑气护罩 + 环绕的飞剑。护盾还在时那些小剑会自行射向来犯之敌
+        // 剑罡护体：一圈半透明的剑气护罩 + 环绕的飞剑。护盾还在时那些小剑会自行射向来犯之敌
         // （逻辑见 GameSession.TickSwordGuard），所以这里画六把只是"待发的家伙在转"，不代表出手数。
         if (Session.ShieldRemaining > 0)
         {
