@@ -24,7 +24,7 @@ public sealed class CsvRow(string file, int line, Dictionary<string, string> cel
     public bool Flag(string field) => Text(field) switch { "1" => true, "0" => false, _ => throw Error(field, "需要 0 或 1") };
     /// <summary>
     /// 按 `|` 切分的字符串列表。**空串或纯空白 → 空列表**——"整列留空"在配置里是合法写法
-    /// （例：TalentLayout 的 `prereq_state` 留空 = 全部按 active）。每一项都会 Trim，空项直接丢掉，
+    /// （例：TalentLayout 的 `prereq` 留空 = 它是根节点）。每一项都会 Trim，空项直接丢掉，
     /// 所以 `a||b` 与 `a|b` 等价。
     /// </summary>
     public List<string> TextList(string field) => Text(field)

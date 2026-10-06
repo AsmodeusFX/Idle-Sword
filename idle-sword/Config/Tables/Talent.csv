@@ -2,55 +2,52 @@ id,name,max_level,cost_currency,cost,effect,effect_per_level,icon
 t_root,开智,3,gold,3|6|9,atk_flat,1,attack
 t_hp,培土,5,gold,4|8|12|16|20,hp_flat,10,defense
 t_atk,拔节,5,gold,6|12|18|24|30,atk_flat,3,attack
-t_drop,掉落,1,gold,6,drop_flat,1,utility
+t_drop,掉落,1,gold,5,drop_flat,1,utility
 t_auto,生根,1,core,1,auto_basic,1,utility
 t_ranged,剑气,1,core,1,ranged_basic,1,special
 t_realm,法术,1,core,1,realm_system,1,special
 t_forge,铸造,1,core,1,forge_system,1,utility
-t_intent,参悟,1,core,1,intent_system,1,utility
-t_atk_01,攻击 01,1,gold,12,atk_flat,1,attack
-t_hp_01,气血 01,1,gold,12,hp_flat,5,defense
-t_atk_02,攻击 02,1,gold,15,atk_flat,1,attack
-t_hp_02,气血 02,1,gold,15,hp_flat,5,defense
-t_atk_03,攻击 03,1,gold,20,atk_flat,1,attack
-t_hp_03,气血 03,1,gold,20,hp_flat,5,defense
-t_atk_04,攻击 04,1,gold,25,atk_flat,1,attack
-t_hp_04,气血 04,1,gold,25,hp_flat,5,defense
-t_atk_05,攻击 05,1,gold,32,atk_flat,1,attack
-t_hp_05,气血 05,1,gold,32,hp_flat,5,defense
-t_atk_06,攻击 06,1,gold,41,atk_flat,1,attack
-t_hp_06,气血 06,1,gold,41,hp_flat,5,defense
-t_atk_07,攻击 07,1,gold,53,atk_flat,1,attack
-t_hp_07,气血 07,1,gold,53,hp_flat,5,defense
-t_atk_08,攻击 08,1,gold,68,atk_flat,1,attack
-t_hp_08,气血 08,1,gold,68,hp_flat,5,defense
-t_atk_09,攻击 09,1,gold,86,atk_flat,1,attack
-t_hp_09,气血 09,1,gold,86,hp_flat,5,defense
-t_atk_10,攻击 10,1,gold,111,atk_flat,1,attack
-t_hp_10,气血 10,1,gold,111,hp_flat,5,defense
-t_atk_11,攻击 11,1,gold,142,atk_flat,1,attack
-t_hp_11,气血 11,1,gold,142,hp_flat,5,defense
-t_atk_12,攻击 12,1,gold,181,atk_flat,1,attack
-t_hp_12,气血 12,1,gold,181,hp_flat,5,defense
-t_atk_13,攻击 13,1,gold,232,atk_flat,1,attack
-t_hp_13,气血 13,1,gold,232,hp_flat,5,defense
-t_atk_14,攻击 14,1,gold,297,atk_flat,1,attack
-t_hp_14,气血 14,1,gold,297,hp_flat,5,defense
-t_atk_15,攻击 15,1,gold,380,atk_flat,1,attack
-t_hp_15,气血 15,1,gold,380,hp_flat,5,defense
-t_atk_16,攻击 16,1,gold,487,atk_flat,1,attack
-t_hp_16,气血 16,1,gold,487,hp_flat,5,defense
-t_atk_17,攻击 17,1,gold,623,atk_flat,1,attack
-t_hp_17,气血 17,1,gold,623,hp_flat,5,defense
-t_atk_18,攻击 18,1,gold,798,atk_flat,1,attack
-t_hp_18,气血 18,1,gold,798,hp_flat,5,defense
-t_atk_19,攻击 19,1,gold,1021,atk_flat,1,attack
-t_hp_19,气血 19,1,gold,1021,hp_flat,5,defense
-t_atk_20,攻击 20,1,gold,1307,atk_flat,1,attack
-t_hp_20,气血 20,1,gold,1307,hp_flat,5,defense
-t_atk_21,攻击 21,1,gold,1673,atk_flat,1,attack
-t_hp_21,气血 21,1,gold,1673,hp_flat,5,defense
-t_atk_22,攻击 22,1,gold,2141,atk_flat,1,attack
-t_hp_22,气血 22,1,gold,2141,hp_flat,5,defense
-t_atk_23,攻击 23,1,gold,2740,atk_flat,1,attack
-t_end,破土,1,core,1,drop_flat,3,special
+t_atk_01,攻击 01,1,gold,5,atk_flat,1,attack
+t_hp_01,培土 5 5,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100001,拔节 2,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100002,拔节 4,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100003,拔节 3,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100004,拔节 3 5,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100005,拔节 3 4,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100006,拔节 3 3,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100007,拔节 3 2,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100008,拔节 3 2 2,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100009,培土 2,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100010,培土 4,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100011,培土 3,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100012,培土 5,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100013,培土 6,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100014,拔节 2 3,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100015,拔节 2 4,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100016,拔节 2 2,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100017,拔节 2 5,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100018,培土 5 2,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100019,培土 5 3,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100020,培土 5 4,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100021,拔节 2 4 2,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100022,培土 5 2 2,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100023,拔节 2 4 2 4,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100024,拔节 2 4 2 5,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100025,培土 5 2 2 9,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100026,参悟,1,core,1,intent_system,1,utility
+t_100027,拔节 2 4 2 2,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100028,拔节 2 2 6,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100029,拔节 2 4 2 3,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100030,拔节 2 2 2,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100031,t_100031,1,core,1,atk,20,utility
+t_100032,拔节 2 2 5,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100033,拔节 2 2 3,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100034,培土 5 2 2 2,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100035,拔节 2 2 4,5,gold,6|12|18|24|30,atk_flat,3,attack
+t_100036,培土 5 2 2 8,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100037,培土 5 2 2 6,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100038,培土 5 2 2 3,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100039,培土 5 2 2 4,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100040,培土 5 2 2 5,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100041,培土 5 2 2 7,5,gold,4|8|12|16|20,hp_flat,10,defense
+t_100042,t_100042,1,core,1,hp,20,utility

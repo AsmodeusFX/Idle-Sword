@@ -10,6 +10,7 @@ public sealed class SaveStore(string path)
     public PlayerState? Load(GameConfig config)
     {
         bool exists = false;
+        string failure = "";
         foreach (var candidate in new[] { path, path + ".bak" })
         {
             if (!File.Exists(candidate)) continue;
@@ -19,15 +20,81 @@ public sealed class SaveStore(string path)
                 var state = JsonSerializer.Deserialize<PlayerState>(File.ReadAllText(candidate)) ?? throw new InvalidDataException("存档为空");
                 AdoptUntrackedCores(state);
                 AdoptUnlockState(state);
+                string pruned = PruneUnknownReferences(state, config);
                 Validate(state, config);
-                if (candidate.EndsWith(".bak")) Warning = "主存档损坏，已从上一份备份恢复。";
+                string note = (candidate.EndsWith(".bak") ? "主存档损坏，已从上一份备份恢复。" : "") + pruned;
+                Warning = note.Length > 0 ? note : null;
                 return state;
             }
             catch (Exception e) when (e is JsonException or InvalidDataException or ArgumentException or NullReferenceException)
-            { Warning = "存档校验失败：" + e.Message; }
+            { failure = "存档校验失败：" + e.Message; }
         }
-        if (exists) throw new InvalidDataException("主存档和备份均不可用。为避免覆盖进度，停止加载。" + Warning);
+        return exists ? Archive(failure) : null;
+    }
+
+    /// <summary>
+    /// 主存档与备份**都**过不了校验时的退路：**改名归档、绝不删除**，然后让调用方以新档继续。
+    ///
+    /// 「为避免覆盖进度，停止加载」那条初衷是对的——别拿一份新进度盖掉真存档。但它的代价是
+    /// **把人锁在门外**：一次配置改动就能让工程再也起不来，而磁盘上那份进度再也读不回来。
+    /// 归档改名两头都顾上：文件还在（随时能捞回来），人也不至于进不去。
+    /// </summary>
+    private PlayerState? Archive(string reason)
+    {
+        string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var kept = new List<string>();
+        foreach (string candidate in new[] { path, path + ".bak" })
+            if (File.Exists(candidate))
+            {
+                string moved = $"{candidate}.rejected-{stamp}";
+                File.Move(candidate, moved, overwrite: true);
+                kept.Add(Path.GetFileName(moved));
+            }
+        Warning = reason + "　已归档为 " + string.Join(" / ", kept) + "，本次以新进度开始——**原文件没有被删除**。";
         return null;
+    }
+    /// <summary>
+    /// 迁移：把**指向已经不在配置里的 id 的引用丢掉**，保住存档的其余部分，并报出丢了什么。
+    ///
+    /// 要分两类看。成长类的 id（修行节点 / 法术 / 参悟 / 已开境界 / 剑灵）是**设计迭代的产物**——
+    /// 删一个节点、重排一次修行树，旧存档里立刻出现查不到的 id。把这种"配置漂移"当成篡改整份拒掉，
+    /// 结果是**每改一次配置就废一次档**（2026-10-06 就是这么把工程锁死的）。所以这里丢弃它们。
+    ///
+    /// **净化只会删、永远不会给**，因此它不构成一条作弊通道。真正的不一致——灵核账本对不上、
+    /// 数值非法、位置越界，以及系统 id 拼错（那是**代码 bug**，不是配置漂移）——仍然由
+    /// <see cref="Validate"/> 硬拒。
+    /// </summary>
+    private static string PruneUnknownReferences(PlayerState s, GameConfig c)
+    {
+        var known = new Dictionary<string, HashSet<string>>();
+        bool Exists(string table, string id)
+        {
+            if (!known.TryGetValue(table, out var set))
+                known[table] = set = c.Rows(table).Select(r => r.Text("id")).ToHashSet();
+            return set.Contains(id);
+        }
+        var dropped = new List<string>();
+        void PruneMap<T>(Dictionary<string, T> map, string table, string label)
+        {
+            var gone = map.Keys.Where(id => !Exists(table, id)).ToList();
+            foreach (string id in gone) map.Remove(id);
+            if (gone.Count > 0) dropped.Add($"{label} {gone.Count} 项");
+        }
+        void PruneSet(HashSet<string> set, string table, string label)
+        {
+            int n = set.RemoveWhere(id => !Exists(table, id));
+            if (n > 0) dropped.Add($"{label} {n} 项");
+        }
+
+        PruneMap(s.Talents, "Talent", "修行节点");
+        PruneMap(s.Skills, "SwordSkill", "法术");
+        PruneMap(s.Upgrades, "SwordUpgrade", "参悟");
+        PruneSet(s.Realms, "SwordLevel", "已开境界");
+        PruneSet(s.Pets, "Pet", "剑灵");
+        // 剑灵本体没了，出战与增强里对它的引用会变成悬空的——必须先摘引用再让 `Validate` 过。
+        s.EquippedPets.RemoveAll(id => !s.Pets.Contains(id));
+        foreach (string pet in s.PetBuffs.Keys.Where(id => !s.Pets.Contains(id)).ToList()) s.PetBuffs.Remove(pet);
+        return dropped.Count == 0 ? "" : "存档里有已从配置移除的内容，已丢弃：" + string.Join("、", dropped) + "；其余进度保留。";
     }
     /// <summary>删除主存档与备份。仅用于"重置游戏进度"，调用方负责重新建立会话。</summary>
     public void Delete()

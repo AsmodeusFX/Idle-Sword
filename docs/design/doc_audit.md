@@ -89,9 +89,10 @@
 原文：「第 1 关的 BOSS 仍是 6600 血、`cells` 仍是 25——教学段**目前还走不通**」。
 实际：`level.csv:2` 第 1 关 `cells=5`、`boss_id=boss_melee`（150 血）；同文件 `:519` 自己已经写了「前三关统一 5 格 / 5·10·20 SU」。→ 删掉或标历史。
 
-### A10. `docs/README.md` 索引漏了 3 份文档
+### A10. ~~`docs/README.md` 索引漏了 3 份文档~~ **（已失效：复查时这三份已在索引里）**
 
-索引没有 `docs/design/monsters.md`、`docs/design/intent_packaging.md`、`docs/design/worldview.md`（三份都真实存在且被别处引用）。反向检查：索引里 14 个链接**都有效**，无死链。
+~~索引没有 `docs/design/monsters.md`、`docs/design/intent_packaging.md`、`docs/design/worldview.md`。~~
+复查（2026-10-06，归档轮）：这三份**都在索引里**（`:9` / `:10` / `:11`），本条已不成立——多半是在本轮审计之后、同一轮里已顺手补上。索引里原有链接**全部有效**，无死链。本轮另新增了 `planning/roadmap.md`、`design/design_lens.md`、`design/value_inventory.md` 三条。
 
 ### A11. `fields.md` 三处
 
@@ -176,5 +177,6 @@
 | **C2 / C3**（破土） | `t_end` 改成 **1 级灵核 + 高价值功能**（本轮先落成"每只怪多掉 3 灵石"），两条口径冲突同时消解 |
 | **B2 / B3 的一部分** | `balance_ttk` §4.4 与 §3 的数随重生成对齐；`level.csv` 已按新模型重生成（`normal_hp(100)` 1217 → **2212.88**） |
 
-**还剩的**：A1/A3/A4/A5/A6/A8/A9/A10/A11/A12、B 组的其余各条、C4/C5/C6、D 组全部。
+**还剩的**：A1/A3/A4/A5/A6/A8/A9/A11/A12、B 组的其余各条、C4/C5/C6、D 组全部。
+（~~A10~~ 复查为已失效，见该条。）
 

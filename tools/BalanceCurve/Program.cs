@@ -77,7 +77,7 @@ double WaveSize(int order) => Lerp(NStart, NEnd, order);
 //
 // 现在改成模拟：
 //   每关收入 ≈ 格数 × 波次只数 × 平均单只掉落 + 那一关 BOSS 的掉落与首杀奖励
-//   沿树**贪心买最便宜的**（前置全部点过才能点）
+//   沿树**贪心买最便宜的**（任意一条前置点过就能点）
 //   灵核门：灵核只由 BOSS 首杀产出 ⇒ 打第 N 关时手上最多 N−1 颗
 //
 // ⚠️ **"贪心买最便宜的"是一个可调旋钮**（见 balance_ttk.md）。改它必须重跑曲线。
@@ -135,7 +135,12 @@ for (int order = 1; order <= levelRows.Count; order++)
         {
             var r = talent[id];
             if (r.Text("effect") == "none" || bought[id] >= r.Int("max_level")) continue;  // `none` 是占位节点，游戏里不可购
-            if (!layout[id].TextList("prereq").All(p => bought[p] >= 1)) continue;
+            // 前置与 `TalentVisible` **同一口径：任意一条点亮即可**。这里是 AND 语义的第三处实现
+            // （另两处在玩法逻辑与测试里）——只改那两处不改这里，模型会按"全部满足"推算玩家能走多深，
+            // 与游戏**静默脱钩**，而 `--check` 照样绿。
+            // 没有前置的（根）当然可买：`Any` 对空集返回 false，漏掉这一条根节点永远买不到，整条曲线会崩。
+            var prereqs = layout[id].TextList("prereq");
+            if (prereqs.Count > 0 && !prereqs.Any(p => bought[p] >= 1)) continue;
             double cost = r.NumberList("cost")[bought[id]];
             if (cost >= best) continue;
             if (r.Text("cost_currency") == Gold ? cost > goldLeft : cost > coresLeft) continue;

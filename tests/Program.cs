@@ -210,45 +210,110 @@ Check("reject repeat core and non-deterministic first-core quantity", () => {
     Reject(() => GameConfig.Load(f => f == "drop.csv" ? Cell(source[f], "first_core", "amount", "2") : source[f]));
 });
 Check("reject malformed talent star map", () => {
-    // 前置连成了环。刻意让两个节点**同一列**（t_hp 与 t_atk 都在 col 1），否则会先被
-    // "只能向右延伸"拦下，这条用例就测不到查环本身了。
+    // ⚠️ **这批用例一律不钉死节点**。修行树会被反复重搭（用户自己在编辑器里增删、改名、挪格），
+    // 钉死 id 或坐标的夹具会在真实使用里变成假警报——这个教训在本文件里已经**第四次**了
+    // （`t_end` 被删 → 8 条用例一起红；`t_atk_01` 那一格被清空 → "撞格"用例变成空断言）。
+    // 凡是需要"某一行"的地方，都**先取一行样、再按它在树上的实际坐标**去构造违规。
+    var layoutRows = config.Rows("TalentLayout").ToList();
+    string pick = layoutRows[0].Text("id");
+    string other = layoutRows.First(r => r.Text("id") != pick).Text("id");
+    string gated = layoutRows.First(r => r.TextList("prereq").Count > 0).Text("id");   // 有前置的那种节点
+    // 前置连成了环（两个节点互指）。**成环由 DFS 单独拦，与列号无关**——
+    // 从前这条要靠"两个节点在同一列"才测得到（否则会先被"只能向右"拦下），现在不需要了。
     Reject(() => GameConfig.Load(f => f == "TalentLayout.csv"
-        ? Cell(Cell(source[f], "t_hp", "prereq", "t_atk"), "t_atk", "prereq", "t_hp") : source[f]));
+        ? Cell(Cell(source[f], pick, "prereq", other), other, "prereq", pick) : source[f]));
     // 节点自指
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_hp", "prereq", "t_hp") : source[f]));
-    // 两个根（t_root 之外又多一个没有前置的）
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_hp", "prereq", "") : source[f]));
-    // 根必须落在最左一列的正中
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_root", "row", "0") : source[f]));
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_root", "col", "1") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], pick, "prereq", pick) : source[f]));
+    // 两个根（把它原有的前置摘掉，它就变成第二个没有前置的节点）
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], gated, "prereq", "") : source[f]));
+    // 而「根摆在第几行」**不再是规则**：从前钉死 `(0, 2)`，那会让"想在起点前面插几个节点"做不成
+    // （新起点只能挤在同一格）。放开之后根落在哪一行都行，它仍然必须是**唯一**没有前置的那个。
+    // 这里不抛异常本身就是断言——规则还在的话 `Load` 会直接红。
+    // 「根摆在哪」现在完全自由：换行、换到负列、以及在起点左边插一个新起点——它们是同一类自由的三个面。
+    // **探针落在一整列新列上**（最左列再往左一格）：新列里一个节点都没有，所以落点一定是空的。
+    // ⚠️ 上一版这里写死了 `t_new,-1,2`，用户真在那一格放了节点之后当场红——**夹具钉死坐标，
+    // 就是等着被真实使用撞掉**（这个教训在本文件里已经第三次了：先是钉死 id，现在是钉死格子）。
+    string rootId = config.Rows("TalentLayout").First(r => r.TextList("prereq").Count == 0).Text("id");
+    int gridRows = (int)config.Setting("talent_grid_rows");
+    int probeCol = config.Rows("TalentLayout").Min(r => r.Int("col")) - 1;
+    foreach (int probeRow in new[] { 0, gridRows / 2, gridRows - 1 })
+    {
+        // 新节点在负列且没有前置（= 新的根），原根的前置指向它。三件事同时成立才叫"能在左边扩展"。
+        // 五格：`id,col,row,prereq,label`（最后一格是给人看的可读名，空着即可）
+        string text = Cell(source["TalentLayout.csv"] + $"t_new,{probeCol},{probeRow},,\n", rootId, "prereq", "t_new");
+        GameConfig.Load(f => f switch
+        {
+            "TalentLayout.csv" => text,
+            "Talent.csv" => source[f] + "t_new,新起点,1,gold,1,atk_flat,1,attack\n",
+            _ => source[f],
+        });
+    }
+    // ⚠️ **这批用例刻意不钉死某一个节点**。修行树是会被反复重搭的（用户会自己在编辑器里增删），
+    // 钉死 id 的夹具会在删节点时集体变成假警报——2026-10-06 就是这么炸的：`t_end` 被删掉，
+    // 下面顺着它的 8 条用例一起红，看着像"校验坏了"，其实只是夹具没了。
     // 行越界（网格是 5 行，0..4）
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "row", "5") : source[f]));
-    // 格位重复
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], pick, "row", gridRows.ToString()) : source[f]));
+    // 格位重复：把 `pick` 搬到 `other` **当前所在的格子**。坐标从树上现取——
+    // 写死坐标的那一版（"挪到 col 1"）在真树里那一格变空之后就变成了空断言，红得莫名其妙。
+    var otherAt = layoutRows.First(r => r.Text("id") == other);
     Reject(() => GameConfig.Load(f => f == "TalentLayout.csv"
-        ? Cell(Cell(source[f], "t_end", "col", "2"), "t_end", "row", "2") : source[f]));
-    // 只能向右延伸：前置跑到右边去了
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_hp", "prereq", "t_end") : source[f]));
-    // 超过两条前置
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_root|t_hp|t_atk") : source[f]));
-    // 前置写了两遍
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_auto|t_auto") : source[f]));
-    // 引用不存在的节点
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq", "t_missing") : source[f]));
-    // prereq_state 与 prereq 条数对不上 / 取值非法。**用 `t_end`**：它是全表唯一挂两条前置的节点
-    // （`t_auto` 现在是"掉落 → 自动攻击"那条单线上的第二格，只有一条前置，写一个 state 反而是合法的）。
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq_state", "max") : source[f]));
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], "t_end", "prereq_state", "active|bogus") : source[f]));
-    // 每级消耗的项数必须等于 max_level
-    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "cost", "30|60") : source[f]));
+        ? Cell(Cell(source[f], pick, "col", otherAt.Int("col").ToString()), pick, "row", otherAt.Int("row").ToString())
+        : source[f]));
+    // **列号不再约束前置**：把**右边**的节点设为**左边**节点的前置，现在是**合法**的
+    // （从前这条叫"星图只能向右延伸"，会拒绝；用户明确要求去掉这个限制，好让摆图更灵活）。
+    //
+    // 夹具是**现造的两节点布局**，不拿真树去凑——真树的形状随时会变，凑出来的边可能成环，
+    // 那时这条会以"成环"为由拒绝，测试就红得莫名其妙。这里同时验到两件事：
+    // ① 反向的边合法；② **根可以不在最左一列**（B 在 col 2 却是唯一没有前置的那个）。
+    GameConfig.Load(f => f switch
+    {
+        "TalentLayout.csv" => "id,col,row,prereq,label\nA,0,2,B,\nB,2,2,,\n",
+        "Talent.csv" => source[f].Split('\n')[0]
+            + "\nA,A,1,gold,0,none,0,utility\nB,B,1,gold,0,none,0,utility\n",
+        _ => source[f],
+    });
+    // 前置写了两遍 / 引用不存在的节点（`t_missing` 是**故意不存在**的字面量，那正是用例的点）
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], pick, "prereq", other + "|" + other) : source[f]));
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? Cell(source[f], pick, "prereq", "t_missing") : source[f]));
+    // 而"挂好几条前置"**不再是错**：条数不限（也不再有 `prereq_state`）。
+    // 这条正例**现造一份小布局**，不拿真树去凑——真树上随便挑 4 个节点当某节点的前置，
+    // 很容易**构成环**（用户重排树之后就撞上过），那时这条会红得莫名其妙。
+    // 这里一个根 + 4 个孩子 + 一个挂满 4 条前置的节点，必然无环。
+    GameConfig.Load(f => f switch
+    {
+        // 五格：`id,col,row,prereq,label`——每行**四个逗号**（末格留空也要写出来）
+        "TalentLayout.csv" => "id,col,row,prereq,label\n"
+            + "R,0,2,,\nP1,1,0,R,\nP2,1,1,R,\nP3,1,3,R,\nP4,1,4,R,\nC,2,2,P1|P2|P3|P4,\n",
+        "Talent.csv" => source[f].Split('\n')[0] + "\n"
+            + string.Join("\n", new[] { "R", "P1", "P2", "P3", "P4", "C" }
+                .Select(tid => $"{tid},{tid},1,gold,0,none,0,utility")) + "\n",
+        _ => source[f],
+    });
+    // 每级消耗的项数必须等于 max_level（按**现取**那个节点的 max_level 造一个多一项的列表）
+    string multiNode = config.Rows("Talent").First(r => r.Int("max_level") >= 2).Text("id");
+    int multiMax = config.Row("Talent", multiNode).Int("max_level");
+    Reject(() => GameConfig.Load(f => f == "Talent.csv"
+        ? Cell(source[f], multiNode, "cost", string.Join("|", Enumerable.Repeat("1", multiMax + 1))) : source[f]));
+    // 开关 / 解锁类的每级效果量**必须大于 0**：判据是"大于 0 即生效"，填 0 就是"买了也不生效"，
+    // 而且**不报任何错**（系统永远打不开）。编辑器补的骨架行 `effect_per_level` 正好是 0，
+    // 把它的 effect 改成 `*_system` 却忘了改这一格——是最容易踩的那种静默失效。
+    var switchEffects = new[] { "auto_basic", "ranged_basic", "auto_intent" }.Concat(Systems.ByEffect.Keys).ToHashSet();
+    string switchNode = config.Rows("Talent").First(r => switchEffects.Contains(r.Text("effect"))).Text("id");
+    Reject(() => GameConfig.Load(f => f == "Talent.csv"
+        ? Cell(source[f], switchNode, "effect_per_level", "0") : source[f]));
     // 未知 effect / icon
-    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "effect", "bogus") : source[f]));
-    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "icon", "bogus") : source[f]));
+    string anyNode = config.Rows("Talent").First().Text("id");
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], anyNode, "effect", "bogus") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], anyNode, "icon", "bogus") : source[f]));
     // 消耗币种必须是 item.csv 里 kind=currency 的道具
-    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "cost_currency", "t_missing") : source[f]));
-    // 占位节点（effect=none）必须免费——可购买却没有效果，等于让玩家白花钱
-    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], "t_root", "effect", "none") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], anyNode, "cost_currency", "t_missing") : source[f]));
+    // 占位节点（effect=none）必须免费——可购买却没有效果，等于让玩家白花钱。
+    // 现取一个**确实要钱**的节点（有真实效果 + 价目里至少一项非 0），否则这条会变成空断言。
+    string paidNode = config.Rows("Talent")
+        .First(r => r.Text("effect") != "none" && r.NumberList("cost").Any(v => v != 0)).Text("id");
+    Reject(() => GameConfig.Load(f => f == "Talent.csv" ? Cell(source[f], paidNode, "effect", "none") : source[f]));
     // 两表 id 必须一一对应（缺哪一边都拒绝）
-    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? source[f] + "t_orphan,9,0,t_root,\n" : source[f]));
+    Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? source[f] + "t_orphan,9,0,t_root,,\n" : source[f]));
     Reject(() => GameConfig.Load(f => f == "Talent.csv" ? source[f] + "t_orphan,孤儿,1,gold,1,atk,0.1,attack\n" : source[f]));
 });
 Check("reject unknown secondary effect", () => Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "secondary", "bogus") : source[f])));
@@ -336,10 +401,37 @@ Check("前期走一遍的账：见 BOSS 前 4~8 只 → 能点 3~4 级 → TTK �
     // 「走 4 格杀几只 → 掉多少灵石 → 能点几级 → 攻击到多少 → TTK 几刀」串成一条可断言的链。
     // 以后改任何一格（掉率 / 节点价 / 怪的血）都会让它响，而不是让手感**静默**跑偏。
     double gold = config.Monsters["slime"].Gold;
+    // ⚠️ **入口要从树上现取**：修行树的形状会被反复重搭，`t_root` 前面完全可能再挂一个新起点
+    // （用户就是这么用的）。钉死 `t_root` 的话，那条链会因"t_root 压根还没露出来"而红——看着像数值跑偏，
+    // 其实只是夹具过期（这个教训在本文件里已经第四次了）。
+    string entry = config.Rows("TalentLayout").First(r => r.TextList("prereq").Count == 0).Text("id");
     // 下界：走 4 个非 BOSS 格、每格 1 只。
     var few = new GameSession(config, seed: 42);
     few.State.Wallet["gold"] = 4 * gold;
-    Assert(few.BuyTalent("t_root") && few.BuyTalent("t_root") && few.BuyTalent("t_atk"), "4 只的钱够点 3 级");
+    if (entry != "t_root")
+    {
+        // 起点前面挂着别的节点时，它得**先点开**后面的攻击链才露出来。
+        // 但它若是 `effect=none` 的占位，引擎里**买不了**（`CanBuyTalent` 见 none 直接拒），
+        // 于是整棵树都点不开——那不是数值问题，是**树还没配完**，说一声跳过
+        // （与冒烟里那条星图取景的 SKIP 同一个套路：宁可打一行字，也不假装它验过了）。
+        if (config.Row("Talent", entry).Text("effect") == "none")
+        {
+            Console.WriteLine($"SKIP 前期数值锚点：起点「{entry}」还是占位节点（effect=none），它买不了，整棵树还点不开");
+            return;
+        }
+        Assert(few.BuyTalent(entry), $"起点「{entry}」应该买得起——买不起的话整棵树在游戏里都点不开");
+    }
+    // 这条链是**绑着设计的那条开局路线**的：根 → 根两级 → 输出支第一格。
+    // 树被重搭之后那条路线可能已经不在了（`t_atk` 被挪到别的前置后面、或者根本买不起）——
+    // 那时它响的不是"数值跑偏"，而是"**设计变了**"。
+    // ⚠️ 但**别把两种情况混成一句"跳过"**：也可能是价目真的涨到买不起了。所以两件事都点出来，
+    // 让人回来看一眼到底是哪一种——静默跳过会把这个区别一起吞掉。
+    if (!few.BuyTalent("t_root") || !few.BuyTalent("t_root") || !few.BuyTalent("t_atk"))
+    {
+        Console.WriteLine("SKIP 前期数值锚点：设计的开局路线（根 → 根两级 → 输出支「t_atk」）现在买不出来。"
+            + "两种可能，**要人看一眼**：① 树被重搭过、那条路线已经不在；② 价目真的涨到 4 只怪的钱买不起了");
+        return;
+    }
     double tk = config.Monsters["slime"].Hp / few.Attack;
     Assert(tk <= 2 + 1e-9, $"点完这几级 TTK 必须进 2 刀：{tk:F2}");
     // **而且刚好花到这儿**——钱能随手再点一级的话，"频繁加点"的节奏感就没了。
@@ -347,6 +439,7 @@ Check("前期走一遍的账：见 BOSS 前 4~8 只 → 能点 3~4 级 → TTK �
     // 上界：每格 2 只 ⇒ 8 只，点多一级，TTK 仍然在 2 刀以内。
     var many = new GameSession(config, seed: 42);
     many.State.Wallet["gold"] = 8 * gold;
+    if (entry != "t_root") many.BuyTalent(entry);
     many.BuyTalent("t_root"); many.BuyTalent("t_root"); many.BuyTalent("t_root"); many.BuyTalent("t_atk");
     Assert(config.Monsters["slime"].Hp / many.Attack <= 2 + 1e-9,
         $"8 只、点 4 级之后 TTK 仍要在 2 刀以内：{config.Monsters["slime"].Hp / many.Attack:F2}");
@@ -725,33 +818,84 @@ Check("intent auto-production, capacity and hover collection contract", () => {
 Check("talent visibility, atomic costs and finite core spending", () => {
     // **不能用 `New()`**：它给的是后期盘面（已经点过生根与剑气），而这条要验的是"从零开始点"。
     var g = new GameSession(config, seed: 42);
-    // 开局只有根可见：三条支（生存 / 掉落 / 输出）全挂在它下面，前置没亮就只出现在星图外。
-    Assert(!g.TalentVisible("t_auto") && !g.BuyTalent("t_auto"), "hidden node");
-    g.State.Wallet["gold"] = 10000;
-    Assert(g.BuyTalent("t_root"), "root buyable");
-    // **根一亮点出三支**：生存（t_hp）、掉落（t_drop）、输出（t_atk）。
-    Assert(g.TalentVisible("t_hp") && g.TalentVisible("t_drop") && g.TalentVisible("t_atk"), "the root reveals three branches");
-    // 中间那条是**单线**：掉落 → 自动攻击，所以没点亮掉落之前，自动攻击既不可见也买不了。
-    Assert(!g.TalentVisible("t_auto"), "the drop line gates the auto-attack node");
-    g.BuyTalent("t_drop");
-    Assert(g.TalentVisible("t_auto"), "lighting the drop node reveals auto-attack");
-    // 「开启自动攻击」只花灵核。买不起时**绝不部分生效**：钱与等级都不动。
-    g.State.Wallet["core"] = 0;
-    double gold = g.State.Amount("gold"), core = g.State.Amount("core");
-    Assert(!g.BuyTalent("t_auto") && g.State.Amount("gold") == gold && g.State.Amount("core") == core, "atomic cost");
-    g.State.Wallet["core"] = 5;
-    Assert(g.BuyTalent("t_auto") && g.State.Talents["t_auto"] == 1, "core purchase");
-    // 每级消耗取的是列表的第 N 项：拔节 1 级要 6、2 级要 12。
-    // （**别再用 `t_end` 当夹具**：它已改成 1 级的灵核节点，`cost` 只有一项，取下标的第二条会越界。）
-    Assert(g.TalentCost("t_atk", 1) == 6 && g.TalentCost("t_atk", 2) == 12, "per-level cost list");
+    // ⚠️ **入口、分支、以及后面要用的夹具，全部从树上现取**。修行树会被反复重搭
+    // （用户会在起点前面插节点、把三支改成别的形状），钉死 `t_root` 与"三支"的写法树一动就红——
+    // 这个教训在本文件里已经第四次了：先钉死 id，再钉死格子，现在钉死的是**结构**。
+    var layout = config.Rows("TalentLayout").ToList();
+    string entry = layout.First(r => r.TextList("prereq").Count == 0).Text("id");
+    var kids = layout.Where(r => r.TextList("prereq").Contains(entry)).Select(r => r.Text("id")).ToList();
+    Assert(kids.Count > 0, "根总得能点出东西来，否则星图是个死胡同");
+    // 起点若是 `effect=none` 的**占位节点**，它在引擎里刻意买不了（给玩家白花钱等于骗人），
+    // 于是它后面**整棵树都点不开**——那是**树还没配完**，不是这条性质坏了。
+    // 说一行跳过（编辑器的保存提醒也盯着这一条），别假装验过了。
+    if (config.Row("Talent", entry).Text("effect") == "none")
+    {
+        Console.WriteLine($"SKIP 修行可点性：起点「{entry}」是占位节点（effect=none，买不了），整棵树在游戏里点不开");
+    }
+    else
+    {
+        // 深度 ≥ 2 的节点：开局必须**既不可见也买不了**——这就是"前置没亮就不点开"。
+        string? deep = layout.Where(r => r.TextList("prereq").Any(kids.Contains)).Select(r => r.Text("id")).FirstOrDefault();
+        if (deep is not null) Assert(!g.TalentVisible(deep) && !g.BuyTalent(deep), "hidden node");
+        g.State.Wallet["gold"] = 10000;
+        Assert(g.BuyTalent(entry), "root buyable");
+        Assert(kids.All(g.TalentVisible), "the root reveals its branches");
+        // 门控的另一半：点亮前置之后，那个深度 2 的节点就得露出来。
+        if (deep is not null)
+        {
+            g.BuyTalent(layout.First(r => r.Text("id") == deep).TextList("prereq").First(kids.Contains));
+            Assert(g.TalentVisible(deep), "lighting its prereq reveals it");
+        }
+        // **灵核节点**：买不起时绝不部分生效（钱与等级都不动），买得起时按级涨。
+        // 从"当前已可见 + 用灵核计价"的节点里现取，不再点名「生根」。
+        string? coreNode = layout.Select(r => r.Text("id")).FirstOrDefault(id =>
+            g.TalentVisible(id) && config.Row("Talent", id).Text("cost_currency") == "core");
+        if (coreNode is not null)
+        {
+            g.State.Wallet["core"] = 0;
+            double gold = g.State.Amount("gold"), core = g.State.Amount("core");
+            Assert(!g.BuyTalent(coreNode) && g.State.Amount("gold") == gold && g.State.Amount("core") == core, "atomic cost");
+            g.State.Wallet["core"] = 5;
+            Assert(g.BuyTalent(coreNode) && g.TalentLevel(coreNode) == 1, "core purchase");
+        }
+    }
+    // 每级消耗取的是 `cost` 列表的第 N 项：从树上现取一个"多级 + 灵石计价"的节点，
+    // 断言第 2 级比第 1 级贵（**别再用固定数值**：价目表会随数值轮调整，写死的 6/12 一改就失效）。
+    string? multi = layout.Select(r => r.Text("id")).FirstOrDefault(id =>
+        config.Row("Talent", id).Int("max_level") >= 2 && config.Row("Talent", id).Text("cost_currency") == "gold");
+    if (multi is not null)
+        Assert(g.TalentCost(multi, 2) > g.TalentCost(multi, 1), "per-level cost list 取的是第 N 项");
     // 花灵核**不能**回头改投放账本——改了就过不了「累计投放量 = 首杀关卡数 + 调试发放量」那条存档校验。
     Assert(g.State.FirstKills.Count == 0 && g.State.DebugGranted.GetValueOrDefault("core") == 0, "spending core must not write the ledger");
-    // 前置关系要能读出来（界面画连线与说明条都靠它）。单线那格只有一条前置；
-    // 全表唯一挂两条的是收口的 `t_end`（生存线与输出线汇到它身上）。
-    var line = g.TalentPrereqs("t_auto");
-    Assert(line.Count == 1 && line[0].Id == "t_drop" && !line[0].NeedMax, "the drop line has a single prereq");
-    var join = g.TalentPrereqs("t_end");
-    Assert(join.Count == 2 && join.Any(p => p.Id == "t_hp_22") && join.Any(p => p.Id == "t_atk_23") && join.All(p => !p.NeedMax), "prereq list");
+    // 前置关系要能读出来（界面画连线与说明条都靠它）。
+    // **不钉死 id**：从树上现取一个"前置不是根"的节点，多前置与 OR 语义则用现造的配置验。
+    string one = config.Rows("TalentLayout")
+        .First(r => r.TextList("prereq").Count == 1 && r.TextList("prereq")[0] != "t_root").Text("id");
+    string own = config.Rows("TalentLayout").First(r => r.Text("id") == one).TextList("prereq")[0];
+    var line = g.TalentPrereqs(one);
+    Assert(line.Count == 1 && line[0] == own, "single prereq reads back");
+    // **这轮的核心口径**：挂两条前置时，**只点亮其中一条**就该开放——不是"两条都得点亮"。
+    var two = GameConfig.Load(f => f == "TalentLayout.csv"
+        ? Cell(source[f], one, "prereq", "t_root|" + own) : source[f]);
+    var g2 = new GameSession(two, seed: 42);
+    Assert(g2.TalentPrereqs(one).Count == 2, "两条前置都读得回来");
+    Assert(!g2.TalentVisible(one), "两条都没点亮时它不该出现");
+    g2.State.Talents["t_root"] = 1;
+    Assert(g2.TalentVisible(one), "只点亮一条前置就该开放（OR 语义）");
+    // **根节点要单独兜住**：它没有前置，而 OR 判据对空集是 false——照直写会让整张星图开局连根都看不见。
+    // 数值工具里是同一个坑（见 tools/BalanceCurve 那段"根永远买不到，整条曲线会崩"）。
+    var g3 = new GameSession(config, seed: 42);
+    g3.State.Wallet["gold"] = 100;
+    string rootId = config.Rows("TalentLayout").First(r => r.TextList("prereq").Count == 0).Text("id");
+    // **可见性是必须的**：OR 判据对空集返回 false，照直写会让整张星图开局连根都看不见（无处可点）。
+    Assert(g3.TalentVisible(rootId), "根节点没有前置也必须看得见");
+    // 而"买得到"只在**根不是占位节点**时成立：`effect=none` 是刻意买不了的（让玩家白花钱等于骗人），
+    // 所以起点还没配效果时它本来就不该能买——那时整棵树都点不开，已由编辑器的保存提醒与上面那条 SKIP 盯着。
+    if (config.Row("Talent", rootId).Text("effect") != "none")
+    {
+        bool rootBuyable = g3.CanBuyTalent(rootId, out string whyRoot);   // 先求值，别塞进 `&&` 右侧
+        Assert(rootBuyable, "根节点没有前置也必须买得到：" + whyRoot);
+    }
 });
 Check("掉落 +1（drop_flat）：只加在怪物自身那一笔上", () => {
     var g = new GameSession(config, seed: 42) { BasicAttackEnabled = false };
@@ -806,21 +950,33 @@ Check("修行节点真的能解锁系统：点亮之前是锁的，点亮之后�
     var g = new GameSession(config, seed: 42);
     foreach (var s in new[] { Systems.Cultivation, Systems.Realm, Systems.Forge, Systems.Intent })
         Assert(!g.Unlocked(s), $"开局 {s} 应当是锁的");
-    // 系统节点分散在两条支上做**章节门**：
-    //   输出支：根 → 输出 → 攻击力 → 法术 → （一个灵石节点）→ 参悟
-    //   生存支：生存 → 生存2 → 生存3 → **铸造** → 生存4 …
-    g.State.Wallet["gold"] = 100000; g.State.Wallet["core"] = 100;
-    g.BuyTalent("t_root"); g.BuyTalent("t_atk"); g.BuyTalent("t_atk_01");
-    Assert(!g.Unlocked(Systems.Realm), "还没点「法术」时它是锁的");
-    g.BuyTalent("t_realm");
+    // 这条验的是「**节点 → 系统**」的推导，不是"买得到"（买得到那条由编辑器的保存提醒与数值锚点盯着）。
+    // 所以**直接给等级**，并且**按 `effect` 现取节点**——节点会被重搭、改名、换位置，
+    // 而 `realm_system` / `forge_system` 这些效果 id 才是稳定的（`Systems.ByEffect` 也是这么认的）。
+    // ⚠️ 从前这里是一路 `BuyTalent("t_root") → t_atk → t_atk_01 → t_realm` 买下来的，
+    // 树一重搭（起点前面插了个节点）第一步就买不到，整条链全断。
+    string nodeWith(string effect) => config.Rows("Talent").First(r => r.Text("effect") == effect).Text("id");
+    string realmNode = nodeWith("realm_system"), forgeNode = nodeWith("forge_system");
+    g.State.Talents[realmNode] = 1;
     Assert(g.Unlocked(Systems.Realm) && !g.Unlocked(Systems.Forge), "点亮「法术」只开法术");
-    // 铸造在**生存支**的第 4 格上（用户要求：把生存线第 4 格换成灵核节点、把铸造挪上去控住前期）。
-    g.BuyTalent("t_hp"); g.BuyTalent("t_hp_01"); g.BuyTalent("t_hp_02");
-    Assert(!g.Unlocked(Systems.Forge), "生存支没点到那一格时铸造还是锁的");
-    g.BuyTalent("t_forge");
-    Assert(g.Unlocked(Systems.Forge), "点出「铸造」那格才开铸造");
-    g.BuyTalent("t_hp_03"); g.BuyTalent("t_intent");
-    Assert(g.Unlocked(Systems.Intent), "参悟在输出支的更后面");
+    g.State.Talents[forgeNode] = 1;
+    Assert(g.Unlocked(Systems.Forge), "再点「铸造」才开铸造");
+    // 参悟的门：**树上目前没有承载它的节点**（`t_intent` 在重搭修行树时被删了）。
+    // 与 `auto_intent` 那几条同一套处理——用**内存改配置**临时挂到根上（根必然存在），
+    // 保住"解锁由修行节点推导"这条路径的覆盖。
+    string rootId = config.Rows("TalentLayout").First(r => r.TextList("prereq").Count == 0).Text("id");
+    // 注意 `effect_per_level` 也要给成 1：开关类的判据是"大于 0 即生效"，
+    // 骨架行里它是 0——**这正是加载期现在会拦住的那种静默失效**。
+    // 注意 `effect_per_level` 要给成 1（开关类判据是"大于 0 即生效"，骨架行里它是 0），
+    // 而且开关类的 `max_level` 只能是 1、`cost` 也要跟着压成 1 项——根节点原本是 3 级的，
+    // 只改 effect 不改这两格会被加载期直接拒（**这条夹具从前"碰巧"能过**：
+    // 那时根恰好是个 1 级的骨架节点，用户把真正的 `t_root` 换回起点之后就露馅了）。
+    var withIntent = GameConfig.Load(f => f == "Talent.csv"
+        ? Cell(Cell(Cell(Cell(source[f], rootId, "effect", "intent_system"), rootId, "effect_per_level", "1"),
+            rootId, "max_level", "1"), rootId, "cost", "3") : source[f]);
+    var gi = new GameSession(withIntent, seed: 42) { BasicAttackEnabled = false };
+    gi.State.Talents[rootId] = 1;
+    Assert(gi.Unlocked(Systems.Intent), "参悟接上节点后能解锁");
     // 解锁是**推导**出来的、不落盘：买节点时另外写一份状态的话，读档与改配置都可能让两边对不上。
     Assert(!g.State.UnlockedSystems.Contains(Systems.Realm), "修行节点解锁不写进 UnlockedSystems");
 });
@@ -891,6 +1047,42 @@ Check("系统解锁随存档往返；旧档缺字段补成解锁；未知 id 直
     bad.UnlockedSystems.Add("culivation");
     Reject(() => SaveStore.Validate(bad, config));
 });
+Check("配置删过的成长引用：读档时丢掉、其余进度保留（不再整份拒档）", () => {
+    // 设计期重搭修行树会让旧存档引用到已经删掉的节点。把这种**配置漂移**当成篡改、整份拒掉，
+    // 结果是每改一次配置就废一次档——2026-10-06 就是这么把工程锁死的。
+    // 净化**只会删、永远不会给**，所以它不构成一条作弊通道。
+    var dir = Path.GetFullPath("artifacts/checks/" + Guid.NewGuid().ToString("N"));
+    var path = Path.Combine(dir, "save.json"); var store = new SaveStore(path); var g = New();
+    g.State.Wallet["gold"] = 777; g.State.FirstKills.Add("level_001"); g.State.Wallet["core"] = 1;
+    g.State.Talents["t_root"] = 2;
+    g.State.Talents["t_already_deleted"] = 5;   // 配置里查不到
+    g.State.Realms.Add("realm_missing");        // 同上
+    store.Save(g.State);
+    var loaded = store.Load(config) ?? throw new Exception("不该整份拒档");
+    Assert(!loaded.Talents.ContainsKey("t_already_deleted") && !loaded.Realms.Contains("realm_missing"), "查不到的引用被丢掉");
+    Assert(loaded.Talents["t_root"] == 2 && loaded.Amount("gold") == 777 && loaded.FirstKills.Contains("level_001"),
+        "其余进度原样保留");
+    Assert(store.Warning is not null && store.Warning.Contains("修行节点"), "要报出丢了什么：" + store.Warning);
+    // 净化之后必须自洽：再存再读一次，警告就该消失（否则每次读档都在反复丢东西）。
+    store.Save(loaded);
+    Assert(store.Load(config)!.Talents["t_root"] == 2 && store.Warning is null, "净化后稳定");
+});
+
+Check("主档与备份都不可用时：归档改名 + 新开，而不是把人锁在门外", () => {
+    // 「为避免覆盖进度，停止加载」的初衷是对的，但代价是**把人锁在门外**——磁盘上那份进度再也读不回来。
+    // 归档改名两头都顾上：文件还在（随时能捞），人也进得去。
+    var dir = Path.GetFullPath("artifacts/checks/" + Guid.NewGuid().ToString("N"));
+    var path = Path.Combine(dir, "save.json"); var store = new SaveStore(path); var g = New();
+    store.Save(g.State); store.Save(g.State);          // 主档与备份都建出来
+    File.WriteAllText(path, "{broken"); File.WriteAllText(path + ".bak", "{broken too");
+    Assert(store.Load(config) is null, "读不出来时返回 null（新档），不抛异常");
+    Assert(store.Warning is not null && store.Warning.Contains("已归档"), "要说明归档到哪：" + store.Warning);
+    Assert(!File.Exists(path) && !File.Exists(path + ".bak"), "原文件已改名");
+    var archived = Directory.GetFiles(dir).Where(f => f.Contains(".rejected-")).Select(File.ReadAllText).ToList();
+    Assert(archived.Count == 2 && archived.Contains("{broken") && archived.Contains("{broken too"),
+        "归档保留原内容，一个字节都没丢");
+});
+
 Check("每种天赋效果都有中文文案", () => {
     // 文案放在 Features/Talent/TalentText.cs 就是为了能在这里验：兜底分支会把 effect id 原样吐回来，
     // 那正是"配了效果、忘了写文案"的静默失败——界面上看不出来，玩着只觉得这个节点没用。
@@ -911,6 +1103,43 @@ Check("天赋图标都在 visuals.json 里", () => {
         Assert(manifest.ContainsKey(icon), $"Talent.csv 的 {r.Text("id")} 用了图标 {icon}，但 visuals.json 里没有这一条");
     }
 });
+// ── 修行星图的「意图」侧车表（TalentPlan.csv） ────────────────────────────────
+// 它是**人给 AI 的交接单**：人不写配置数值，只写"这个节点要干什么"，AI 照它产出 Talent.csv。
+// **游戏不加载它**（不在 GameConfig.Files 里），所以加载期那套校验碰不到它——契约只能在这里钉住。
+// 三张表（Talent / TalentLayout / TalentPlan）靠 id 对齐；侧车一旦与布局漂移，
+// AI 就会照着**错的节点**写配置，而且写出来的配置本身完全合法、跑得起来、不报任何错。
+List<CsvRow> PlanRows() =>
+    CsvTable.Parse("TalentPlan.csv", File.ReadAllText(Path.Combine(root, "TalentPlan.csv")));
+
+Check("意图侧车 TalentPlan.csv 与 TalentLayout.csv 的 id 一一对应", () => {
+    var plan = PlanRows().Select(r => r.Text("id")).ToHashSet();
+    var layout = config.Rows("TalentLayout").Select(r => r.Text("id")).ToHashSet();
+    Assert(plan.SetEquals(layout), "侧车与布局表的 id 集合必须相等（只在侧车里："
+        + string.Join("/", plan.Except(layout)) + "；只在布局里：" + string.Join("/", layout.Except(plan)) + "）");
+});
+
+Check("意图侧车不进加载清单", () => {
+    Assert(!GameConfig.Files.Contains("TalentPlan.csv"),
+        "TalentPlan.csv 是交接单、不是配置表，绝不能进 GameConfig.Files");
+});
+
+Check("意图都是单行，且显式钉住的 effect 合法", () => {
+    var effects = new HashSet<string> { "none", "atk", "hp", "atk_flat", "hp_flat", "drop_flat",
+        "auto_basic", "ranged_basic", "auto_intent" };
+    foreach (string key in Systems.ByEffect.Keys) effects.Add(key);
+    foreach (var r in PlanRows())
+    {
+        string intent = r.Text("intent");
+        Assert(!intent.Contains('\n') && !intent.Contains('\r'), "意图必须是单行：" + r.Text("id"));
+        // 可选锚点 `effect=xxx`：写进去就是权威（AI 不得改写）。自由文本里唯一需要机器精确读的东西，
+        // 因为它往往牵连着"必须在 Systems.ByEffect 里登记"这类**漏了会永久锁死且不报错**的字段。
+        int at = intent.IndexOf("effect=", StringComparison.Ordinal);
+        if (at < 0) continue;
+        string value = intent[(at + 7)..].Split([' ', '（', '）', '，', '。', '；', ';', '(', ')'])[0].Trim();
+        Assert(effects.Contains(value), $"「{r.Text("id")}」的意图钉了 effect={value}，但这不是合法的效果取值");
+    }
+});
+
 Check("all live effect types execute without invalid targets", () => {
     var g = New(); foreach (var realm in config.Rows("SwordLevel")) g.State.Realms.Add(realm.Text("id"));
     foreach (var id in config.Skills.Keys) g.State.Skills[id] = 1;

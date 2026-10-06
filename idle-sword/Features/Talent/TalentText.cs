@@ -35,4 +35,30 @@ public static class TalentText
             _ => $"效果 {effect} +{per:0.##}/级",
         };
     }
+
+    /// <summary>
+    /// 效果的**短标签**，给节点编辑器的效果选择器用（那排按钮只放得下四五个字）。
+    ///
+    /// 与 <see cref="DescribeEffect"/> 放**同一处**：效果文案只有一个地方维护。
+    /// 编辑器里另写一套的话，新增效果时必然漏一处——而漏了的那处不会报错，只会显示成 id。
+    /// 自检里两条断言分别钉着长文案与短标签（见 `tests` 的「每种天赋效果都有中文文案」）。
+    /// </summary>
+    public static string ShortLabel(string effect) => effect switch
+    {
+        "none" => "空占位",
+        "atk" => "攻击%",
+        "hp" => "气血%",
+        "atk_flat" => "攻击+",
+        "hp_flat" => "气血+",
+        "drop_flat" => "掉落+",
+        "auto_basic" => "自动出手",
+        "ranged_basic" => "转远程",
+        "auto_intent" => "自动参悟",
+        // 解锁类按 `Systems.ByEffect` 的约定以 `_system` 结尾；没登记的取值会原样吐回来——
+        // 那正是"加了新效果忘了写文案"的样子，自检当场就能看见。
+        "realm_system" => "法术门",
+        "forge_system" => "铸造门",
+        "intent_system" => "参悟门",
+        _ => effect,
+    };
 }

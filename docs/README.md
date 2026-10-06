@@ -4,7 +4,10 @@
 
 ## 文档索引
 
+- [版本计划（Ver1.0 → Ver3.0）](planning/roadmap.md) —— **要知道"接下来做什么"看这份**
 - [文档一致性排查（待改清单，带行号）](design/doc_audit.md) —— **动文档前先看这份**
+- [设计镜片：养成系统的三层流转](design/design_lens.md)
+- [战斗价值清单（可投放的价值门类）](design/value_inventory.md)
 - [已确认规则与待确认边界](design/core_rules.md)
 - [世界观与包装](design/worldview.md)
 - [怪物设计与「层 / 定位」轴](design/monsters.md)
@@ -18,6 +21,7 @@
 - [工程框架方案](technical/architecture.md)
 - [配置表规划](data/config_plan.md)
 - [CSV 字段字典](data/fields.md)
+- [修行星图节点清单（ID → 功能）](data/talent_nodes.md)
 - [第一阶段实现与暂定规则](planning/phase_01.md)
 - [美术资源规范](art/asset_spec.md)
 - [参考资料](reference/zad_archery.md)

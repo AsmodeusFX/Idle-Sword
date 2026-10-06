@@ -11,12 +11,59 @@ public static class TalentMap
 {
     // 页签挪到左侧竖排之后，功能区从 1728×316 变成 1728×452：纵向多了 136px。
     // 5 行因此能分到 90px 一行，节点从 46px 放大到 **76px（+65%）**——这是这轮排版调整最直接的收益。
-    public const float CellWidth = 176f, CellHeight = 90f, NodeSize = 76f;
+    // 行高 90 是**功能区的高度定死的**（5 行分 452），所以"纵向太挤"只能靠**缩小节点**来解：
+    // 76 → 60 之后行间留出 30px，连线与箭头才看得出来（从前只剩 14px，两条线糊在一起）。
+    // 行高 90 是**功能区的高度定死的**（5 行分 452），所以"纵向太挤"只能靠**缩小节点**来解：
+    // 76 → 60 之后行间留出 30px，连线与箭头才看得出来（从前只剩 14px，两条线糊在一起）。
+    public const float CellWidth = 176f, CellHeight = 90f, NodeSize = 60f;
     /// <summary>5 行 × 90 = 450，居中在 452 高的功能区里，所以纵向留 1。</summary>
     public const float OriginY = 1f;
     /// <summary>贴边时留的余量：节点正好贴住框沿会显得被裁掉了半个。</summary>
     public const float EdgePad = 26f;
     public static Vector2 CellCenter(int col, int row) => new((col + .5f) * CellWidth, OriginY + (row + .5f) * CellHeight);
+
+    /// <summary>
+    /// 画一条**带箭头的连线**，箭头指向 <paramref name="to"/>——也就是"**被解锁的那个节点**"
+    /// （前置点亮之后，箭头指过去的那一个才开放）。
+    ///
+    /// **只画到目标方块的外沿**：连线平时两头都藏在方块底下，不缩短的话箭头也会被方块盖住、
+    /// 只看得见一条线段。编辑器画布与玩家星图共用这一个——两边形状必须一致，
+    /// 否则"编辑器里画的"和"玩家看到的"就不是一个东西了。
+    /// </summary>
+    /// <summary>
+    /// 给**灵核节点**（`cost_currency = core`，也就是"用灵核加点的那些"）画一圈**菱形框**——
+    /// 节点本身是方的，"方叠菱"从**形状**上就认得出来，不靠颜色也不靠粗细。
+    ///
+    /// **为什么不是别的**（前两版都被人否掉了，记在这儿免得再绕）：
+    /// ① 四角短角标——读起来像"**选中框**"，而且满级节点本来就有金框、四个角叠上去**看不出来**；
+    /// ② 换一种颜色——调色板只有青 / 金 / 墨，金框已经表示"根 / 已满级 / 选中"，再加一种金框分不清谁是谁。
+    ///
+    /// 菱形取 `NodeSize/2 + 5`：它的**四个顶点探出方形外**，所以和方框是"叠加"而不是重合；
+    /// 满级那个金方框（`+6`）正好与之交叉成一个花结，仍然读得出是两回事。
+    /// 编辑器画布与玩家星图共用这一个，两边形状必须一致。
+    /// </summary>
+    public static void DrawCoreMark(CanvasItem canvas, Vector2 center)
+    {
+        float half = NodeSize / 2 + 5;
+        var top = center + new Vector2(0, -half);
+        var right = center + new Vector2(half, 0);
+        var bottom = center + new Vector2(0, half);
+        var left = center + new Vector2(-half, 0);
+        foreach (var (a, b) in new[] { (top, right), (right, bottom), (bottom, left), (left, top) })
+            canvas.DrawLine(a, b, UiKit.Gold, 3);
+    }
+
+    public static void DrawArrow(CanvasItem canvas, Vector2 from, Vector2 to, Color color, float width)
+    {
+        var delta = to - from;
+        if (delta.LengthSquared() < 1f) return;
+        var dir = delta.Normalized();
+        var tip = to - dir * (NodeSize / 2 + 7);   // 箭头尖落在目标方块外沿稍外一点
+        canvas.DrawLine(from, tip, color, width);
+        var back = -dir;
+        canvas.DrawLine(tip, tip + back.Rotated(.40f) * 13, color, width);
+        canvas.DrawLine(tip, tip + back.Rotated(-.40f) * 13, color, width);
+    }
 
     /// <summary>
     /// 把平移量夹回合理范围。**横向不再居中，而是左对齐**：所有节点都在根节点的右边，
@@ -71,18 +118,22 @@ public partial class TalentLines : Control
 {
     private readonly List<(Vector2 From, Vector2 To, bool Lit)> _edges = [];
     private readonly List<Vector2> _maxed = [];
+    private readonly List<Vector2> _cores = [];
 
-    public void SetEdges(List<(Vector2 From, Vector2 To, bool Lit)> edges, List<Vector2> maxed)
+    public void SetEdges(List<(Vector2 From, Vector2 To, bool Lit)> edges, List<Vector2> maxed, List<Vector2> cores)
     {
         _edges.Clear(); _edges.AddRange(edges);
         _maxed.Clear(); _maxed.AddRange(maxed);
+        _cores.Clear(); _cores.AddRange(cores);
         QueueRedraw();
     }
 
     public override void _Draw()
     {
         foreach (var (from, to, lit) in _edges)
-            DrawLine(from, to, lit ? UiKit.Jade.Darkened(.35f) : UiKit.Line, 4);
+            TalentMap.DrawArrow(this, from, to, lit ? UiKit.Jade.Darkened(.35f) : UiKit.Line, 4);
+        foreach (var center in _cores)
+            TalentMap.DrawCoreMark(this, center);
         foreach (var center in _maxed)
         {
             float half = TalentMap.NodeSize / 2 + 6;
@@ -176,6 +227,7 @@ public partial class Main
     {
         var edges = new List<(Vector2 From, Vector2 To, bool Lit)>();
         var maxed = new List<Vector2>();
+        var cores = new List<Vector2>();
         foreach (var (id, node) in _talentNodes)
         {
             bool visible = _game.TalentVisible(id);
@@ -186,20 +238,36 @@ public partial class Main
             int level = _game.TalentLevel(id), max = content.Int("max_level");
             bool buyable = _game.CanBuyTalent(id, out _);
             bool done = level >= max;
-            // 三态靠**填充 + 描边 + 透明度**三样一起区分，单靠颜色在深底上分不干净。
+            // 三态靠**填充亮度 + 描边颜色 + 图标亮度**三样一起区分。
+            //
+            // ⚠️ **不能用透明度表达"不可点"**：整块按钮一透明，底下的连线就**穿过节点**显出来了
+            // （`Modulate` 会把本来不透明的底板一起调透）。线条是画在节点之前的、z 序没问题，
+            // 纯粹是这个半透明造成的——实机反馈"看起来很乱"就是它。
+            // 所以要暗就暗在**图标**上：`icon_*_color` 只作用于图标，底板保持**实心**。
             var (fill, border) = done ? (UiKit.Gold.Darkened(.62f), UiKit.Gold)
                 : buyable ? (UiKit.Panel, UiKit.Jade)
-                : (UiKit.Panel, UiKit.Line);
+                // 不可点的底色再暗一档（`Ink` 就是画布底色），但仍**实心**——
+                // 去掉透明度之后，光靠描边颜色区分三态会变弱，靠底色补齐。
+                : (UiKit.Ink, UiKit.Line);
+            var iconColor = done || buyable ? Colors.White : new Color(1, 1, 1, .45f);
             node.AddThemeStyleboxOverride("normal", UiKit.Box(fill, 6, border));
             node.AddThemeStyleboxOverride("hover", UiKit.Box(fill.Lightened(.12f), 6, UiKit.Gold));
             node.AddThemeStyleboxOverride("pressed", UiKit.Box(fill.Darkened(.15f), 6, UiKit.Gold));
             node.AddThemeStyleboxOverride("focus", UiKit.Box(new Color(0, 0, 0, 0), 6, UiKit.Gold));
-            node.Modulate = done || buyable ? Colors.White : new Color(1, 1, 1, .45f);
+            // 这三个必须**每次都设**：按钮是按 id 常驻复用的，上一次刷新的值会留到这一次。
+            node.AddThemeColorOverride("icon_normal_color", iconColor);
+            node.AddThemeColorOverride("icon_hover_color", iconColor);
+            node.AddThemeColorOverride("icon_pressed_color", iconColor);
+            // 显式写回不透明：万一别处（或旧版本）把它调暗过，必须当场清掉。
+            node.Modulate = Colors.White;
 
             var layout = _game.Config.Row("TalentLayout", id);
             var here = TalentMap.CellCenter(layout.Int("col"), layout.Int("row"));
             if (done) maxed.Add(here);
-            foreach (var (pid, _) in _game.TalentPrereqs(id))
+            // 灵核节点（用灵核加点的那些）：四角角标，一眼扫出"哪些是灵核门"——
+            // 它们天生稀缺（灵核只由 BOSS 首杀产出），值得在图上就跟普通灵石节点分开。
+            if (content.Text("cost_currency") == "core") cores.Add(here);
+            foreach (string pid in _game.TalentPrereqs(id))
             {
                 if (!_game.TalentVisible(pid)) continue;
                 var up = _game.Config.Row("TalentLayout", pid);
@@ -213,7 +281,7 @@ public partial class Main
             if (_game.TalentVisible(id) && _talentSeen.Add(id)) fresh.Add(id);
         if (fresh.Count > 0) RevealTalentNodes(fresh);
 
-        _talentLines.SetEdges(edges, maxed);
+        _talentLines.SetEdges(edges, maxed, cores);
         UpdateTalentTransform();
     }
 

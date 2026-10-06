@@ -27,12 +27,18 @@ public sealed class GameConfig
 {
     public static readonly string[] Files = ["monster.csv", "level.csv", "item.csv", "fightattr.csv", "SwordLevel.csv", "SwordSkill.csv", "Talent.csv", "Equip.csv", "SwordUpgrade.csv", "Pet.csv", "PetSkill.csv", "PetEquip.csv", "wave.csv", "wave_unit.csv", "drop.csv", "spawn_point.csv", "TalentLayout.csv", "contemplation.csv", "game_settings.csv"];
     /// <summary>
-    /// 一个天赋节点最多几条前置。定成 2 是刻意的：再多星图上的连线就成一团乱麻，玩家也读不出
-    /// 「到底还差哪个」。
-    /// **下一轮的节点编辑器必须镜像这条**，以及"根在 (0, rows/2)"与"只许向右延伸"两条约束——
-    /// 否则它能写出一份加载期会拒绝的布局。
+    /// **开关类**天赋效果（含解锁类）：语义是"大于 0 即生效"，不是档位。
+    ///
+    /// 名单**只此一处**——加载期校验与节点编辑器都从它取。以前它是 `Load` 里的一个局部变量，
+    /// 编辑器要用就得再抄一遍，而那正是这份配置一直在避免的重复（两处名单迟早分叉）。
+    /// 解锁类那三个由 `Systems.ByEffect` 现取：**它才是解锁系统的唯一登记处**。
     /// </summary>
-    public const int MaxTalentPrereqs = 2;
+    public static readonly string[] SwitchEffects =
+        ["auto_basic", "ranged_basic", "auto_intent", .. Systems.ByEffect.Keys];
+
+    // 天赋节点的前置**不设条数上限**——从前的 2 条是拍脑袋定的，而语义改成"任意一条点亮即可"之后，
+    // 多挂几条反而更好读（读者读的是"这几条里走通一条就行"，不是"这几条都得走通"）。
+    // 节点编辑器仍然要镜像"根在 (0, rows/2)"与"只许向右延伸"这两条约束，否则它能写出加载期会拒绝的布局。
 
     public Dictionary<string, List<CsvRow>> Tables { get; } = [];
     public Dictionary<string, MonsterDef> Monsters { get; } = [];
@@ -220,15 +226,20 @@ public sealed class GameConfig
             // 漏登记的后果是那个系统**永久锁死且不报任何错**，所以在这里当场拦住。
             if (effect.EndsWith("_system") && !Systems.ByEffect.ContainsKey(effect))
                 throw r.Error("effect", $"解锁类效果 {effect} 没有在 Systems.ByEffect 里登记（那个系统将永远打不开）");
-            // 开关类的名单**从 Systems.ByEffect 现取**，不在两处各写一遍——那种重复迟早会分叉。
-            var switches = new List<string> { "auto_basic", "ranged_basic", "auto_intent" };
-            switches.AddRange(Systems.ByEffect.Keys);
+            // 开关类的名单**只此一处**（见 `SwitchEffects`）：加载期校验与节点编辑器都从它取。
+            var switches = SwitchEffects.ToList();
             var choices = new List<string> { "none", "atk", "hp", "atk_flat", "hp_flat", "drop_flat" };
             choices.AddRange(switches);
             Choice(r, "effect", [.. choices]);
             // 开关类节点满级只有 1 级：写成多级的话"点第二级"什么都不会发生，是典型的静默失效。
             if (switches.Contains(effect) && r.Int("max_level") != 1)
                 throw r.Error("max_level", "解锁 / 开关类效果只能是 1 级");
+            // 开关类的 `effect_per_level` **必须大于 0**：判据是"大于 0 即生效"，
+            // 填 0 的话这个节点**买了也不生效**——而且不报任何错（系统永远打不开、普攻永远不转远程）。
+            // 这条特别容易踩：编辑器补的骨架行 `effect_per_level` 就是 0，给它换个 `*_system` 效果
+            // 却忘了改这一格，加载期会照常放行，玩起来只是"点了没反应"。
+            if (switches.Contains(effect) && r.Number("effect_per_level") <= 0)
+                throw r.Error("effect_per_level", "开关 / 解锁类效果的每级效果量必须大于 0（判据是\"大于 0 即生效\"，填 0 等于买了不生效）");
             // `none` 是编辑器给新节点补的占位行：可购买却没有效果 = 让玩家白花钱，所以必须免费。
             if (r.Text("effect") == "none" && costs.Any(v => v != 0)) throw r.Error("cost", "占位节点（effect=none）的每级消耗必须为 0");
         }
@@ -236,16 +247,14 @@ public sealed class GameConfig
         {
             int row = r.Int("row"), col = r.Int("col");
             if (row < 0 || row >= gridRows) throw r.Error("row", $"必须为 0～{gridRows - 1}");
-            if (col < 0) throw r.Error("col", "不能为负");
+            // `col` **可以为负**：根的行列都由设计摆，而"想在起点左边再长一节"就必须能往左。
+            // 从前这里卡着 `col < 0` 拒绝——根一旦被推到第 0 列左边就**再也存不下来**，
+            // 等于把"向左扩展"整条路堵死。向右那一侧本来就没有上限，左边也不该有。
             var prereqs = r.TextList("prereq");
-            if (prereqs.Count > MaxTalentPrereqs)
-                throw r.Error("prereq", $"最多 {MaxTalentPrereqs} 条前置——再多星图上的连线就成一团乱麻，玩家也读不出到底还差哪个");
+            // **不设条数上限**，也**没有"需满级"那一档**：前置的语义是"任意一条点亮即可"（见 `TalentVisible`），
+            // 这里只管结构合法性——不自指、不重复、引用存在、不成环、只能向右。
             if (prereqs.Distinct().Count() != prereqs.Count) throw r.Error("prereq", "同一个节点被写了两遍");
             if (prereqs.Contains(r.Text("id"))) throw r.Error("prereq", "不能把自己设为前置");
-            // prereq_state 要么整列留空（= 全部按 active，绝大多数节点都是这样），要么与 prereq 一一对应。
-            var states = r.TextList("prereq_state");
-            if (states.Count != 0 && states.Count != prereqs.Count) throw r.Error("prereq_state", "要么整列留空，要么与 prereq 一一对应写 N 项");
-            foreach (var s in states) if (s is not ("active" or "max")) throw r.Error("prereq_state", $"未知枚举值: {s}");
         }
         var layout = c.Rows("TalentLayout").ToDictionary(r => r.Text("id"));
         var content = c.Rows("Talent").Select(r => r.Text("id")).ToHashSet();
@@ -255,18 +264,21 @@ public sealed class GameConfig
         if (missingLayout.Count > 0) throw new InvalidDataException("TalentLayout.csv 缺少 Talent.csv 里这些节点的位置: " + string.Join(", ", missingLayout));
         if (layout.Values.Select(r => (r.Int("col"), r.Int("row"))).Distinct().Count() != layout.Count)
             throw new InvalidDataException("TalentLayout.csv: 节点坐标重复");
-        // 恰好一个根，且它固定在最左一列、纵向居中——星图的口径就是「起点在最左（中心），一点点向右加点」。
-        int rootRow = gridRows / 2;
+        // 恰好一个根 = **唯一那个没有前置的节点**。它的**行列都不限制**：
+        // 从前要求固定 `(0, 2)`，那是排版偏好而不是技术要求——而它让"想在起点前面插几个节点"变得很难做
+        // （新起点只能挤在同一格）。放开之后，根落在哪一行由设计决定（左上、左下都行），
+        // 而"它一定在最左一列"是**推导出来的**：每个非根节点都有前置，前置的列 ≤ 自己，
+        // 顺着追下去必然落到这个没有前置的节点上，所以它的列号天生就是全图最小。
         var roots = layout.Values.Where(r => r.TextList("prereq").Count == 0).ToList();
-        if (roots.Count != 1) throw new InvalidDataException($"TalentLayout.csv: 必须恰好有一个根节点，实际 {roots.Count} 个");
-        if (roots[0].Int("col") != 0 || roots[0].Int("row") != rootRow)
-            throw roots[0].Error("col", $"根节点必须落在最左一列的正中（col=0, row={rootRow}）");
+        if (roots.Count != 1) throw new InvalidDataException($"TalentLayout.csv: 必须恰好有一个根节点（没有前置的那个），实际 {roots.Count} 个");
         foreach (var r in layout.Values)
             foreach (var p in r.TextList("prereq"))
             {
                 if (!layout.TryGetValue(p, out var up)) throw r.Error("prereq", $"引用了不存在的节点: {p}");
-                // 右向约束：只能往右长。允许同列（纵向小链），但不允许倒退到左边。
-                if (up.Int("col") > r.Int("col")) throw r.Error("prereq", $"前置 {p} 在更右边——星图只能向右延伸");
+                // **列号不再约束前置**：从前要求"前置必须在左边或同列"（星图只能向右延伸），
+                // 那让"把右边那个节点当前置"做不成，摆图不够灵活。
+                // 去掉它是安全的——**成环由上面那段 DFS 单独拦**，不依赖列号；
+                // 代价只是"列号不再等于拓扑序"，也就是连线可能往回拐（好不好看交给设计判断）。
             }
         var visiting = new HashSet<string>(); var visited = new HashSet<string>();
         void Visit(string id)

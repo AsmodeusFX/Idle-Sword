@@ -38,6 +38,10 @@ public partial class Main : Control
     private readonly List<CanvasItem> _hudNodes = [];
     // 战斗区的常态位置。过场里 HUD 收起来之后画面会挤在上半屏，所以临时下移，见 StartPrologue。
     private Vector2 _battleHome, _battleHomeSize;
+    // 最底下那条 HUD 文本行的 y。两行文本共用它，改一处就够。
+    // 编辑器（整屏覆盖）**建在它之后**，所以打开编辑器时这两行被那块不透明底盖住——
+    // 之前是反的，那两行浮在编辑器上面，面板一长就叠字（见 BuildShell 里的说明）。
+    private const float HudBottomLineY = 1044f;
     private int _frames;
     private string _saveStatus = "本地存档";
     private string[] _args = [];
@@ -81,7 +85,15 @@ public partial class Main : Control
                 _game.State.Wallet["gold"] = 10000;
             }
             _game.PersistRequested += Save;
-            if (_store.Warning is not null) _saveStatus = _store.Warning;
+            // 读档时的警告要**同时**上屏幕与日志：`_saveStatus` 是 HUD 角上那行小字，
+            // 而下一次自动保存就会把它盖成"已保存 HH:mm:ss"。丢了进度却只在屏幕上一闪，
+            // 玩家只会觉得"东西莫名其妙没了"。所以通知行也放一份，并写进日志留底。
+            if (_store.Warning is not null)
+            {
+                _saveStatus = _store.Warning;
+                _gameNotice = "⚠ " + _store.Warning;
+                GD.PushError("[存档] " + _store.Warning);
+            }
             BuildShell(); ShowPage(0); Refresh(); StartBgm();
             // 序章只在"这台机器上从来没存过档"时播。注意不能用 `loaded is null` 单独判断——
             // QA、技能预览、冒烟用的隔离会话、以及重置进度**都会**传 null，那些场合必须跳过。
@@ -103,7 +115,7 @@ public partial class Main : Control
     private void BuildShell()
     {
         var bg = new ColorRect { Color = UiKit.Ink, MouseFilter = MouseFilterEnum.Ignore }; UiKit.Place(bg, 0, 0, 1920, 1080); AddChild(bg);
-        UiKit.Label(this, "土豆天尊", 32, 10, 270, 60, 35, UiKit.Gold);
+        UiKit.Label(this, "土豆修仙", 32, 10, 270, 60, 35, UiKit.Gold);
         UiKit.Label(this, "IMMORTATO  /  修行初境", 265, 20, 360, 45, 17, UiKit.Muted);
         // 顶栏右侧依次为 GM / 设置 / 保存，钱包宽度收窄给设置按钮让位。
         _wallet = UiKit.Label(this, "", 825, 14, 620, 48, 23);
@@ -157,11 +169,14 @@ public partial class Main : Control
         _lockMask = new LockMask(); UiKit.Place(_lockMask, 168, 580, 1728, 452); AddChild(_lockMask);
         // 解锁炸开的动画层：铺满整屏、永远不拦点击。加在这里，于是页签、操作区、星图都在它下面。
         _lockFx = new LockFx(); UiKit.Place(_lockFx, 0, 0, 1920, 1080); AddChild(_lockFx);
+        var bottomLeft = UiKit.Label(this, "初版试炼  ·  在线自动战斗  ·  离线不产出", 180, HudBottomLineY, 1050, 28, 17, UiKit.Muted);
+        var bottomRight = UiKit.Label(this, "每关首杀灵核 ×1   /   长路无重置", 1480, HudBottomLineY, 420, 28, 17, UiKit.Gold);
         // 节点编辑器：整屏覆盖的开发期工具，默认关着，从 GM 面板进。**不进 _hudNodes**——
         // 它本来就不是给玩家看的，序章收 HUD 时不必管它。
+        // **建在底部那两行 HUD 之后**：它是一块不透明底、铺满整屏，排在后面的兄弟画在它上面——
+        // 摆在前面的话，打开编辑器还能看到"初版试炼 / 每关首杀灵核"浮在面板底下，
+        // 而面板稍微长一点就会和它叠字。这层顺序一改，编辑器就是干净的独占画面。
         BuildTalentEditor();
-        var bottomLeft = UiKit.Label(this, "初版试炼  ·  在线自动战斗  ·  离线不产出", 180, 1044, 1050, 28, 17, UiKit.Muted);
-        var bottomRight = UiKit.Label(this, "每关首杀灵核 ×1   /   长路无重置", 1480, 1044, 420, 28, 17, UiKit.Gold);
         // 过场要收起来的 HUD。**故意不含标题**——开场挂着游戏名是想要的。
         // **星图与锁那三层（`_talentRoot` / `_lockMask` / `_lockFx`）刻意不在这里**：它们把守的矩形是
         // 同一块，而且星图的可见性本来就跟着"修行锁没锁"走——交给 `RefreshHudLayers` 一处算，
@@ -235,21 +250,57 @@ public partial class Main : Control
             // 面板各自有"关闭"，而 `Tap` 取的是**全树第一个**前缀匹配——隐藏的面板仍留在树上，会抢在真正打开的那个前面。
             // 所以按面板关闭时得从它自己的根往下找。
             void TapIn(Node root, string prefix) => Buttons(root).First(b => b.Text.StartsWith(prefix)).EmitSignal(Button.SignalName.Pressed);
+            // 画布上找一个空格子（5 行、列 0..40）。编辑器那几条"新建 / 落点"的探针都用它——
+            // **钉死格子的夹具会被真实编辑撞掉**（这个教训在本项目里已经四次了）。
+            (int Col, int Row) NextFreeCell()
+            {
+                var takenCells = TalentEditorNodesForCheck().Select(n => (n.Col, n.Row)).ToHashSet();
+                return Enumerable.Range(0, 40)
+                    .SelectMany(c => Enumerable.Range(0, 5).Select(r => (c, r)))
+                    .First(p => !takenCells.Contains(p));
+            }
             // 星图的节点**没有文字**（只有图标），所以不能再用 Press(前缀) 找它——改按 Name 找，
             // 顺带证明节点真的是可点的 Button（这正是当初把它们做成真 Button 而不是自绘的原因）。
             ShowPage(0); Refresh();
             // 星图取景的口径：**新节点在框内就一点不动**，只有长到框外才把画面推过去。
-            // 买根节点会让 t_hp/t_atk 冒出来，它们就在右边一点点、本来就在框内——所以画面必须纹丝不动。
+            // 点入口节点会让它的孩子冒出来，它们就在右边一点点、本来就在框内——所以画面必须纹丝不动。
+            // ⚠️ **入口从树上现取**（树会被重搭，`t_root` 未必还是那个能点的起点，甚至未必可见）。
             float talentPanBefore = TalentPanXForCheck;
-            var talentRoot = Buttons(this).FirstOrDefault(b => b.Name == "talent_node_t_root")
-                ?? throw new Exception("Talent node button is missing");
+            string talentEntry = _game.Config.Rows("TalentLayout")
+                .First(r => r.TextList("prereq").Count == 0).Text("id");
+            // 入口买不买得着**先看**：`effect=none` 的占位节点刻意买不了（给玩家白花钱等于骗人），
+            // 挂在起点上时整棵树在游戏里都点不开——那是树还没配完，说一声跳过，别把整条冒烟挡在门外。
+            bool entryBuyable = _game.CanBuyTalent(talentEntry, out string whyEntry);
+            var talentRoot = Buttons(this).FirstOrDefault(b => b.Name == "talent_node_" + talentEntry)
+                ?? throw new Exception("Talent node button is missing: " + talentEntry);
             talentRoot.EmitSignal(Button.SignalName.Pressed);
-            if (_game.State.Talents.GetValueOrDefault("t_root") != 1) throw new Exception("Talent UI action failed");
+            if (entryBuyable)
+            {
+                if (_game.State.Talents.GetValueOrDefault(talentEntry) != 1) throw new Exception("Talent UI action failed");
+            }
+            else GD.Print($"SKIP 星图点选：入口「{talentEntry}」买不了（{whyEntry}）——树还没配完");
             if (Math.Abs(TalentPanXForCheck - talentPanBefore) > .01) throw new Exception("Talent view moved for an on-screen node");
-            // 反向：点亮 col 9 的节点，它的孩子（col 10）会冒出来——那已经在框外了，画面应该滑过去。
+            // 反向：点亮最靠右的那个节点，它冒出来时若在框外，画面就该滑过去。
+            // ⚠️ **探针从配置现取**：这里原来钉死 `t_hp_14`，那批长链节点一被删，这条就变成假失败。
+            // 探针还得**沿前置链一起点亮**——被前置挡着的节点根本不会显示，也就无所谓"冒出来"。
+            // 树还小（最右节点本来就在框内）时这条无从触发，打一行 SKIP 说明，不硬造一个越框条件。
             float panBeforeReveal = TalentPanXForCheck;
-            TalentDemo(("t_hp_14", 1));
-            if (TalentPanXForCheck >= panBeforeReveal) throw new Exception("Talent view did not reveal an off-screen node");
+            var layoutRows = _game.Config.Rows("TalentLayout").ToList();
+            int maxCol = layoutRows.Max(r => r.Int("col"));
+            bool overflows = (maxCol + .5f) * TalentMap.CellWidth + TalentMap.NodeSize / 2 + TalentMap.EdgePad > _talentRoot.Size.X;
+            if (overflows)
+            {
+                var chain = new List<(string, int)>();
+                for (string? id = layoutRows.First(r => r.Int("col") == maxCol).Text("id"); id is not null;)
+                {
+                    chain.Add((id, 1));
+                    var prereqs = layoutRows.First(r => r.Text("id") == id).TextList("prereq");
+                    id = prereqs.Count > 0 ? prereqs[0] : null;
+                }
+                TalentDemo(chain.ToArray());
+                if (TalentPanXForCheck >= panBeforeReveal) throw new Exception("Talent view did not reveal an off-screen node");
+            }
+            else GD.Print($"SKIP talent reveal：这棵树最右只到 col {maxCol}，全在框内（等树长出去再验）");
             _intentTab = -1; ShowPage(3); Refresh(); Press("◇");
             var collect = _page.GetChildren().OfType<Button>().First(b => b.Text.StartsWith("移入收取"));
             collect.EmitSignal(Control.SignalName.MouseEntered);
@@ -298,17 +349,23 @@ public partial class Main : Control
             // 普通命中分支要单独验证：伤害占比要低于 12%，这里把血量拉到 400 倍攻击。
 
             double tankHp = Math.Max(1, _game.Attack) * 400;
-            _game.Battle.Enemies.Add(new()
+            var normalTank = new EnemyState
             {
                 Id = _game.Battle.NextEnemyId++, MonsterId = slime.Id, Kind = slime.Kind,
                 X = _game.Battle.PlayerX + 200, Hp = tankHp, MaxHp = tankHp, Atk = 0, AttackTimer = 999,
-            });
+            };
+            _game.Battle.Enemies.Add(normalTank);
             for (int frame = 0; frame < 20 && SfxCount("sfx_hit") == 0; frame++)
             {
                 for (int i = 0; i < 5; i++) _game.Step(_game.Config.Setting("fixed_step"));
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             }
             if (SfxCount("sfx_hit") == 0) throw new Exception("Normal hit SFX never fired");
+            // **靶子用完必须撤掉**——和上面那个重击靶同理，只是它的血量是攻击的 **400 倍**（打不死），
+            // 留着就是一个**永远推不动的路障**：玩家会被它停住，冒烟后面"等一只新刷出来的怪"再也等不到。
+            // 这个漏删一直藏着，因为墙的高度跟**玩家攻击**成正比——攻击低时还能靠多打几刀磨掉，
+            // 用户把修行树铺开、攻击涨上去之后才变成硬墙（2026-10-06 实机踩到）。
+            _game.Battle.Enemies.Remove(normalTank);
             // 灼烧跳伤必须不出命中音。跳伤按固定步长成块结算（每步 DotDps*fixed_step），
             // 而真实帧间隔小于固定步长：拿帧间隔当阈值会低于单步跳伤，判据永不成立，每步都播一次命中音。
             double step = _game.Config.Setting("fixed_step");
@@ -598,7 +655,14 @@ public partial class Main : Control
             double spawnDeadline = _game.Elapsed + 30;
             for (int i = 0; i < 20000 && _battle.FreshSpawns == spawnedBefore && _game.Elapsed < spawnDeadline; i++)
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-            if (_battle.FreshSpawns == spawnedBefore) throw new Exception("No fresh spawn to capture the birth animation");
+            // 诊断信息留着：这一条失败时最要紧的就是"玩家卡在哪、挡路的是谁"，
+            // 光说"没等到新怪"完全看不出原因（这次就是靠它才定位到那个没删的靶子）。
+            if (_battle.FreshSpawns == spawnedBefore)
+                throw new Exception($"No fresh spawn to capture the birth animation"
+                    + $"［格={_game.Battle.Cell}/{_game.Level.Cells} PlayerX={_game.Battle.PlayerX:F0}"
+                    + $" 场上怪={_game.Battle.Enemies.Count}"
+                    + "|" + string.Join(" ", _game.Battle.Enemies.Select(e =>
+                        $"[{e.MonsterId} hp={e.Hp:F0}/{e.MaxHp:F0} x={e.X:F0} atk={e.Atk:F0}]")) + "］");
             // 一帧一张紧着拍：那条曲线头两三帧就走完大半，"缩到很小"只有第一张看得到。
             for (int i = 0; i < 5; i++) { await Capture("-spawn" + i); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
             // 前 4 张对应 4 个页签；第 5 张是 PetPage——它的页签入口已屏蔽（剑灵系统暂缓），
@@ -675,12 +739,20 @@ public partial class Main : Control
             // 另三条门也各走一遍「锁着 → 说明页」，确认四个页签挂的是**各自的**系统而不是同一个。
             for (int tab = 2; tab <= 3; tab++)
             {
+                // 页签跟的是 `Unlocked(system)` = **里程碑 ∪ 修行节点**（下面 GM 那段就是这么理解的：
+                // "先真的全锁上（连修行节点那份推导来源一起撤）"）。所以只撤里程碑**锁不住**修行树上
+                // 挂着那扇门的系统 —— 页签照样开着，这条断言就变成假失败（`t_100026` 接上参悟门之后就是）。
                 _game.State.UnlockedSystems.Remove(TabSystems[tab]!);
+                var gate = _game.Config.Rows("Talent")
+                    .FirstOrDefault(r => Systems.ByEffect.GetValueOrDefault(r.Text("effect")) == TabSystems[tab]);
+                int gateLevel = gate is null ? 0 : _game.State.Talents.GetValueOrDefault(gate.Text("id"));
+                if (gate is not null) _game.State.Talents[gate.Text("id")] = 0;
                 ShowPage(tab); Refresh();
                 if (!_tabs[tab].Disabled) throw new Exception($"Tab {tab} should follow its own system");
                 if (!_tabBadges[tab].Locked || !_lockMask.Locked) throw new Exception($"Tab {tab} did not get locked visuals");
                 if (Buttons(_page).Any()) throw new Exception($"Locked tab {tab} should be copy only");
                 _game.State.UnlockedSystems.Add(TabSystems[tab]!);
+                if (gate is not null) _game.State.Talents[gate.Text("id")] = gateLevel;   // 关掉的那扇门原样还回去
                 ShowPage(tab); Refresh();
                 await AwaitReveal();   // 解锁那一下会先罩住半秒（见 OnSystemUnlocked），等它碎开再看
                 if (_tabs[tab].Disabled || _tabBadges[tab].Locked || _lockMask.Locked) throw new Exception($"Tab {tab} did not come back");
@@ -705,15 +777,287 @@ public partial class Main : Control
             ShowPage(0); Refresh();
             // 星图单独留两张：一张点亮前几层（看清三态、连线、满级金框），一张把悬停说明条调出来。
             // 看完就把这些等级撤掉——后面还有重置相关的断言，别留在状态里。
-            var demo = new (string Id, int Level)[] { ("t_root", 5), ("t_hp", 2), ("t_atk", 5), ("t_auto", 1), ("t_atk_01", 1), ("t_hp_01", 1), ("t_atk_02", 1) };
+            var demo = new (string Id, int Level)[] { ("t_root", 5), ("t_hp", 2), ("t_atk", 5), ("t_auto", 1), ("t_atk_01", 1), ("t_hp_01", 1), ("t_realm", 1) };
             foreach (var (id, level) in demo) _game.State.Talents[id] = level;
             ShowPage(0); Refresh(); await Capture("-talent");
             TalentShowTipForCapture("t_hp"); await Capture("-talent-tip"); TalentHideTipForCapture();
-            // 节点编辑器：截一张，并**真的走一遍保存**——保存只整份重写布局表，写的是同一份数据，
-            // 所以这是条无损的往返验证；"保存被取消/失败"会被下面这条断言抓住。
+            // 节点编辑器：截一张，并**真的走一遍保存**——它整份重写布局与意图两张表、写的是同一份数据，
+            // 所以这是条无损的往返验证。保存被取消/失败、以及"保存动作改动了意图"都会被下面两条断言抓住。
             ToggleTalentEditor(); await Capture("-talent-editor");
+            // ⚠️ 下面两批断言都**从树上现取探针**，不钉死 id。修行树是会被反复重搭的：
+            // 2026-10-06 用户自己删掉一批节点，钉死 `t_end` / `t_hp_03` 的断言当场全红——
+            // 那不是"编辑器坏了"，只是夹具没了。探针现取，这轮重搭就不会再假警报。
+            var tree = TalentEditorNodesForCheck();
+            // ① 意图要能在「打字 → 内存 → 保存 → 仍在」这条路上原样往返。挑一个写了意图的节点。
+            string probe = tree.Select(n => n.Id).FirstOrDefault(id => TalentEditorIntentForCheck(id).Length > 0)
+                ?? throw new Exception("TalentPlan.csv 里一条意图都没有，无从验证往返");
+            if (!TalentEditorSelectForCheck(probe)) throw new Exception("talent editor did not load " + probe);
+            string intentBefore = TalentEditorIntentForCheck(probe);
+            // 打字那条路只有玩家的键盘打得出来（不经过任何按钮回调），所以这里显式走一遍：
+            // 改一个值、断言它进了内存，**再还原**——不还原的话下面的保存会把测试值写进被追踪的表。
+            TalentEditorTypeIntentForCheck(intentBefore + "·改");
+            if (TalentEditorIntentForCheck(probe) != intentBefore + "·改") throw new Exception("意图输入框没有把改动写进内存");
+            TalentEditorTypeIntentForCheck(intentBefore);
+            if (TalentEditorIntentForCheck(probe) != intentBefore) throw new Exception("意图还原失败");
+            await Capture("-talent-editor-intent");
+            // ② 连线状态的金框：候选集合必须与"点下去会被接受"一致。两条**对任何树都成立**的不变量——
+            //    **根节点必然在候选里**（它没有前缀，永不被"已连过/成环"排除，列号又一定在最左），
+            //    以及**候选全在本节点左边或同列**（星图只能向右延伸）。
+            // 探针还要求**前置里没有根**：根必然能当候选（它没有前缀、不会被"已连过/成环"排除，
+            // 列号又一定在最左），但如果探针自己已经把根当前置，根就正当被排除——那是"已连过"，不是算错。
+            var prereqOf = _game.Config.Rows("TalentLayout")
+                .ToDictionary(r => r.Text("id"), r => r.TextList("prereq"));
+            string? linkProbe = tree
+                .Where(n => n.Col > 0 && !prereqOf[n.Id].Contains("t_root"))
+                .Select(n => n.Id).FirstOrDefault();
+            if (linkProbe is null) throw new Exception("树上没有可用来验连线高亮的节点（需要左侧有节点、且前置里没有根）");
+            int linkCol = tree.First(n => n.Id == linkProbe).Col;
+            if (!TalentEditorSelectForCheck(linkProbe)) throw new Exception("talent editor did not load " + linkProbe);
+            TalentEditorBeginLinkForCheck();
+            var candidates = TalentEditorCandidatesForCheck();
+            if (!candidates.Contains("t_root")) throw new Exception("候选里没有根节点——高亮集合算错了");
+            if (candidates.Contains(linkProbe)) throw new Exception("候选里出现了自己");
+            if (!TalentEditorStatus.Contains(candidates.Count.ToString())) throw new Exception("状态栏没报出候选数量：" + TalentEditorStatus);
+            await Capture("-talent-editor-link");
+            // 金框里的东西**点下去真的会生效**——挑一个候选接上，断言它进了前置列表。
+            // （从前这里断言的是"候选全在本节点左边或同列"，那是"只能向右延伸"的产物；
+            //  那条限制已按用户要求去掉，换成这条端到端验证，比原来那条更贴近用户实际关心的事。）
+            string firstCandidate = candidates[0];
+            var candPos = TalentEditorNodesForCheck().First(n => n.Id == firstCandidate);
+            EditorClickCell(candPos.Col, candPos.Row);
+            int linkedCount = TalentEditorNodesForCheck().First(n => n.Id == linkProbe).PrereqCount;
+            if (linkedCount != tree.First(n => n.Id == linkProbe).PrereqCount + 1)
+                throw new Exception($"点了金框里的「{firstCandidate}」，前置却没加上去");
+            TalentEditorReloadForCheck();
+            // ③ 删节点必须**连带删掉内容表那一行**。只删布局的话两表就对不上，加载期直接拒绝整份配置、
+            //    游戏再也起不来，而报错出现在**下一次启动**，看着跟刚才那次删除毫无关系。
+            //    这条路径只在"删完再保存"时才走到，所以这里在**内存里**演一遍：删 → 算一遍会写成什么 →
+            //    断言那一行没了 → 「重新读取」把改动整个丢掉（不落盘，随便删）。
+            if (!TalentEditorDeleteForCheck(probe)) throw new Exception("talent editor could not delete " + probe);
+            var aligned = CsvTable.Parse("Talent.csv", TalentEditorAlignedContentForCheck()).Select(r => r.Text("id")).ToList();
+            if (aligned.Contains(probe)) throw new Exception($"删掉的「{probe}」还留在 Talent.csv 里——保存后工程会起不来");
+            if (aligned.Count != tree.Count - 1) throw new Exception($"对齐后的内容表应有 {tree.Count - 1} 行，实际 {aligned.Count} 行");
+            TalentEditorReloadForCheck();   // 丢弃内存改动，回到磁盘上的那份
+            if (TalentEditorNodesForCheck().Count != tree.Count) throw new Exception("重新读取没有把删掉的节点找回来");
+            // ④ 列表里那个「✕」要真能摘掉一条前置。列表是这轮新写的（条数不限），而**容器里那些行是
+            //    动态生成的按钮**——冒烟全程发的是 `Pressed` 信号，走不到它们，只能直接验接线。
+            TalentEditorSelectForCheck(linkProbe);
+            TalentEditorRemovePrereqForCheck(prereqOf[linkProbe][0]);
+            int left = TalentEditorNodesForCheck().First(n => n.Id == linkProbe).PrereqCount;
+            if (left != prereqOf[linkProbe].Count - 1)
+                throw new Exception($"「✕」没有把前置摘掉（{prereqOf[linkProbe].Count} → {left}）");
+            TalentEditorReloadForCheck();
+            // ⑤ 「设为根节点」只摘前置、**不自动**把旧根接上——留下的那个"两个节点都没前置"的中间态
+            //    正是最容易被后来的人"顺手修一下"改坏的，所以按一次真的按钮把它钉住。
+            TalentEditorSelectForCheck(linkProbe);
+            if (TalentEditorNodesForCheck().First(n => n.Id == linkProbe).PrereqCount == 0)
+                throw new Exception("探针节点没有前置，验不了「设为根节点」");
+            TapIn(_editorRoot, "设为Root节点");
+            int rootPrereqs = TalentEditorNodesForCheck().First(n => n.Id == linkProbe).PrereqCount;
+            if (rootPrereqs != 0) throw new Exception($"「设为根节点」没有摘掉前置（还剩 {rootPrereqs} 条）");
+            if (!TalentEditorStatus.Contains("它现在是根")) throw new Exception("状态栏没有说明这一步做了什么：" + TalentEditorStatus);
+            TalentEditorReloadForCheck();
+            // ⑤′ 处在"已经是根"的节点上时，那个按钮必须**自己把状态写在脸上**。
+            // 光灰着不改字，看到的人只会以为功能不可用——用户实机就是这么误会的。
+            string? alreadyRoot = tree.Where(n => prereqOf[n.Id].Count == 0).Select(n => n.Id).FirstOrDefault();
+            if (alreadyRoot is not null)
+            {
+                TalentEditorSelectForCheck(alreadyRoot);
+                if (!Buttons(_editorRoot).Any(b => b.Text == "已是Root节点"))
+                    throw new Exception("已经是根的节点上，按钮没有把状态写在脸上");
+                TalentEditorReloadForCheck();
+            }
+            // ⑥ 新建节点：**id 由编辑器自动分配**（`t_100001` 起），界面上只有可读名。
+            //    这条把"策划不用管 id"钉住——从前是让人手输，结果就是 1313 / sdfsdf / 124124124 这种名字。
+            (int Col, int Row) free = NextFreeCell();
+            var idsBefore = TalentEditorNodesForCheck().Select(n => n.Id).ToHashSet();
+            string? freshId = TalentEditorCreateForCheck(free.Col, free.Row, "自检临时节点");
+            if (freshId is null) throw new Exception($"在空格子 ({free.Col},{free.Row}) 上新建节点失败");
+            if (!freshId.StartsWith("t_") || !int.TryParse(freshId[2..], out int freshNum) || freshNum < 100001)
+                throw new Exception("自动分配的 id 不像内置 id：" + freshId);
+            if (idsBefore.Contains(freshId)) throw new Exception("自动 id 撞上已有节点：" + freshId);
+            if (TalentEditorLabelForCheck(freshId) != "自检临时节点")
+                throw new Exception("可读名没有生效：" + TalentEditorLabelForCheck(freshId));
+            TalentEditorReloadForCheck();   // 丢掉这个临时节点（不落盘）
+            // ⑦ 复制信息：新建的节点抄一份源节点的内容。**id 是新的、前置为空、内容逐列相同**——
+            //    只有 `name` 例外：重名要避让，否则玩家悬停看到两个同名节点会分不清。
+            string copySource = _game.Config.Rows("Talent").First(r => r.Text("effect") != "none").Text("id");
+            (int Col, int Row) freeForCopy = NextFreeCell();
+            string? copyTarget = TalentEditorCreateForCheck(freeForCopy.Col, freeForCopy.Row, "");
+            if (copyTarget is null) throw new Exception("复制测试：新建目标节点失败");
+            var copySrc = TalentEditorNodesForCheck().First(n => n.Id == copySource);
+            TalentEditorBeginCopyForCheck();
+            // 模式一旦进入就要**说清在干什么**——用户实机反馈"点了界面没变化，不知道成没成"。
+            // 状态文案缩短过一轮，断言跟着对齐——**文案变了断言就得变**，写死长句会自己过期。
+            if (!TalentEditorStatus.Contains("复制源"))
+                throw new Exception("「复制信息」模式没有把状态说清楚：" + TalentEditorStatus);
+            await Capture("-talent-editor-copy");   // 留一张"青玉色框住目标节点"的图，供人工核对
+            EditorClickCell(copySrc.Col, copySrc.Row);
+            var srcRow = TalentEditorAlignedRowForCheck(copySource);
+            var dstRow = TalentEditorAlignedRowForCheck(copyTarget);
+            if (dstRow.Count == 0) throw new Exception("复制之后目标节点还没有内容行");
+            foreach (var (column, value) in srcRow)
+            {
+                if (column is "id" or "name") continue;   // id 是行自己的；name 要避重
+                if (dstRow[column] != value)
+                    throw new Exception($"复制没抄全：{column}「{value}」→「{dstRow[column]}」");
+            }
+            if (dstRow["id"] != copyTarget) throw new Exception("复制把 id 也抄过来了");
+            if (dstRow["name"] == srcRow["name"])
+                throw new Exception("复制出来的正式名与源重名了——玩家会看到两个同名节点");
+            if (TalentEditorNodesForCheck().First(n => n.Id == copyTarget).PrereqCount != 0)
+                throw new Exception("复制不该把前置也抄过来");
+            // ⑧ 真移动：**只改 col/row**，id / 可读名 / 内容行 / 意图全不动——所以存档里那格的等级保住。
+            string moveLabelBefore = TalentEditorLabelForCheck(copyTarget);
+            string moveIntentBefore = TalentEditorIntentForCheck(copyTarget);
+            var moveRowBefore = TalentEditorAlignedRowForCheck(copyTarget);
+            var occupied = TalentEditorNodesForCheck().Where(n => n.Id != copyTarget)
+                .Select(n => (n.Col, n.Row)).ToHashSet();
+            (int Col, int Row) dest = Enumerable.Range(0, 40)
+                .SelectMany(c => Enumerable.Range(0, 5).Select(r => (c, r)))
+                .First(p => !occupied.Contains(p));
+            TalentEditorSelectForCheck(copyTarget);
+            TalentEditorBeginMoveForCheck();
+            EditorClickCell(dest.Col, dest.Row);
+            var moved = TalentEditorNodesForCheck().First(n => n.Id == copyTarget);
+            if (moved.Col != dest.Col || moved.Row != dest.Row)
+                throw new Exception($"没搬过去：还在 ({moved.Col},{moved.Row})");
+            if (TalentEditorLabelForCheck(copyTarget) != moveLabelBefore) throw new Exception("移动动了可读名");
+            if (TalentEditorIntentForCheck(copyTarget) != moveIntentBefore) throw new Exception("移动动了意图");
+            var moveRowAfter = TalentEditorAlignedRowForCheck(copyTarget);
+            foreach (var (column, value) in moveRowBefore)
+                if (moveRowAfter[column] != value) throw new Exception($"移动动了内容列 {column}");
+            // ⑨ **删掉再在同一格新建：不能继承那个已删节点的信息**。
+            //    从前的自动 id 取"最小未用"，刚删掉的号立刻被复用——而内存里属于旧 id 的
+            //    正式名 / 意图 / 复制内容还留着，于是新节点把**已删节点**的信息读了出来
+            //    （用户实机撞到的就是这个：新节点的正式名显示成「铸造 3」）。
+            (int Col, int Row) recycleCell = NextFreeCell();
+            string? doomed = TalentEditorCreateForCheck(recycleCell.Col, recycleCell.Row, "");
+            if (doomed is null) throw new Exception("⑨ 新建失败");
+            var doomedSource = TalentEditorNodesForCheck().First(n => n.Id == copySource);
+            TalentEditorBeginCopyForCheck();
+            EditorClickCell(doomedSource.Col, doomedSource.Row);   // 让它带上「铸造 N」这种正式名
+            string doomedName = TalentEditorAlignedRowForCheck(doomed)["name"];
+            TalentEditorDeleteForCheck(doomed);
+            string? reborn = TalentEditorCreateForCheck(recycleCell.Col, recycleCell.Row, "");
+            if (reborn is null) throw new Exception("⑨ 删除后重建失败");
+            if (reborn == doomed) throw new Exception("新建复用了刚删掉的 id——会继承旧节点的信息");
+            string rebornName = TalentEditorAlignedRowForCheck(reborn)["name"];
+            if (rebornName == doomedName)
+                throw new Exception($"新建的节点继承了已删节点的正式名：{rebornName}");
+            // ⑩ **复制不带意图**。意图是"要 AI 做的改动"（**待办**）、不是这个节点的说明：
+            //    一起抄走会让「某某分支起点」这类描述到处扩散、信息乱掉，
+            //    更会让 AI 照一个**不属于这个节点**的意图去改它（实机踩过：内容抄了 B、意图留了 A，
+            //    AI 就会把 B 改回 A）。**空 = 没有待办 = AI 不去动它**，这才是我们要的不变量。
+            string? intentSource = TalentEditorNodesForCheck().Select(n => n.Id)
+                .FirstOrDefault(nid => TalentEditorIntentForCheck(nid).Trim().Length > 0);
+            if (intentSource is not null)
+            {
+                (int Col, int Row) copyCell = NextFreeCell();
+                string? copyOf = TalentEditorCreateForCheck(copyCell.Col, copyCell.Row, "");
+                if (copyOf is null) throw new Exception("⑩ 新建失败");
+                var intentSrcPos = TalentEditorNodesForCheck().First(n => n.Id == intentSource);
+                TalentEditorSelectForCheck(copyOf);
+                TalentEditorBeginCopyForCheck();
+                EditorClickCell(intentSrcPos.Col, intentSrcPos.Row);
+                if (TalentEditorIntentForCheck(copyOf).Trim().Length != 0)
+                    throw new Exception($"复制把意图也抄过来了：「{TalentEditorIntentForCheck(copyOf)}」");
+                if (TalentEditorAlignedRowForCheck(copyOf)["effect"] != TalentEditorAlignedRowForCheck(intentSource)["effect"])
+                    throw new Exception("复制没抄到内容");
+                TalentEditorReloadForCheck();
+            }
+            else GD.Print("SKIP 复制不带意图：树上没有一个带意图的节点，这条验不了");
+            // ⑪ 三种"等你在画布上点一下"的模式（加前置 / 复制信息 / 移到某格）**必须互斥**，
+            //    而且**再点一次同一个按钮要能取消**——不然进错了模式只能硬着头皮点完。
+            //    状态栏在两种情况下说的话不同，正好当观测点。
+            TalentEditorSelectForCheck(linkProbe);
+            TalentEditorBeginCopyForCheck();
+            if (!TalentEditorStatus.Contains("复制源")) throw new Exception("开了复制模式，状态栏没说：" + TalentEditorStatus);
+            TalentEditorBeginMoveForCheck();
+            if (!TalentEditorStatus.Contains("搬走"))
+                throw new Exception("开了另一个模式，前一个没有自动关掉：" + TalentEditorStatus);
+            TalentEditorBeginMoveForCheck();
+            if (!TalentEditorStatus.Contains("已取消"))
+                throw new Exception("再点一次同一个按钮没有取消：" + TalentEditorStatus);
+            if (!TalentEditorSelectForCheck(linkProbe)) throw new Exception("⑪ 选中失败");
+            // ⑫ **货币与每级消耗能在编辑器里直接改**（不必再去动 CSV / 找 AI——用户原话：效率太低）。
+            //    这两格也归编辑器，与"复制信息"走同一条"待写"通道。
+            // 自己建一个节点来验——上一步那个早就被「重新读取」丢掉了（它从没保存过）。
+            (int Col, int Row) billCell = NextFreeCell();
+            string? billNode = TalentEditorCreateForCheck(billCell.Col, billCell.Row, "");
+            if (billNode is null) throw new Exception("⑫ 新建失败");
+            TalentEditorSelectForCheck(billNode);
+            TalentEditorSetCurrencyForCheck("core");
+            string editedCurrency = TalentEditorAlignedRowForCheck(billNode)["cost_currency"];
+            if (editedCurrency != "core") throw new Exception("改货币没写进待写的那一行：" + editedCurrency);
+            int costMax = int.Parse(TalentEditorAlignedRowForCheck(billNode)["max_level"]);
+            string goodCost = string.Join("|", Enumerable.Range(1, costMax).Select(i => i.ToString()));
+            TalentEditorSetCostForCheck(goodCost);
+            if (TalentEditorAlignedRowForCheck(billNode)["cost"] != goodCost)
+                throw new Exception("改每级消耗没写进去：" + TalentEditorAlignedRowForCheck(billNode)["cost"]);
+            // **项数与 `max_level` 对不上时不许写**：写坏了加载期会拒绝整份配置，
+            // 而那是个"下次启动工程起不来"的错——编辑器必须当场拦住。
+            TalentEditorSetCostForCheck(goodCost + "|9");
+            if (TalentEditorAlignedRowForCheck(billNode)["cost"] != goodCost)
+                throw new Exception("项数不对的时候不该写进去");
+            // ⑬ 点了货币之后，面板上那个 `●` **必须当场跟过去**——而且**不换选中项**也得跟上。
+            //    它是"当前状态的读数"，塞进"选中项变了才刷新"那个分支里就会一直显示过期的值
+            //    （实机反馈："选了灵核，货币状态没跟着变"，画布上的菱形标记同理）。
+            TalentEditorSetCurrencyForCheck("core");
+            if (TalentEditorMarkedCurrencyForCheck() != "core")
+                throw new Exception("选了灵核之后 `●` 没跟过去：" + TalentEditorMarkedCurrencyForCheck());
+            TalentEditorSetCurrencyForCheck("gold");
+            if (TalentEditorMarkedCurrencyForCheck() != "gold")
+                throw new Exception("再选回灵石之后 `●` 也没跟过去：" + TalentEditorMarkedCurrencyForCheck());
+            // ⑭ **最大等级 / 效果 / 每级量**也能在编辑器里改，而且**该自动的必须自动**——
+            //    "价目项数等于最大等级"和"开关类只能 1 级"都是加载期会拒整份配置的硬规则，
+            //    不自动压一下的话，用户改完一保存就是"下次启动工程起不来"。
+            TalentEditorSetMaxLevelForCheck("3");
+            var lvRow = TalentEditorAlignedRowForCheck(billNode);
+            if (lvRow["max_level"] != "3") throw new Exception("改最大等级没写进去：" + lvRow["max_level"]);
+            if (lvRow["cost"].Split('|').Length != 3)
+                throw new Exception("改了等级，价目没跟着补齐：" + lvRow["cost"]);
+            TalentEditorSetEffectForCheck("forge_system");
+            var switchRow = TalentEditorAlignedRowForCheck(billNode);
+            if (switchRow["max_level"] != "1")
+                throw new Exception("选到开关类没自动压成 1 级：" + switchRow["max_level"]);
+            if (switchRow["cost"].Split('|').Length != 1)
+                throw new Exception("开关类的价目没跟着收成 1 档：" + switchRow["cost"]);
+            if (double.Parse(switchRow["effect_per_level"]) <= 0)
+                throw new Exception("开关类的每级效果量没自动设成 >0（那会让它买了不生效）");
+            // ⑮ 分区能收拢，而且**收拢之后下面那块的标题必须跟着上提**——
+            //    这是布局重排唯一会错的地方（留空洞、或者叠在一起），而**截图上看不出来**：
+            //    画面上"它在哪儿"永远像是合理的，只有比 y 才抓得到。
+            if (TalentEditorSectionCountForCheck < 3) throw new Exception("分区个数不对");
+            float titleBefore = TalentEditorSectionYForCheck(1);
+            float belowBefore = TalentEditorSectionYForCheck(2);
+            TalentEditorToggleSectionForCheck(1);
+            if (TalentEditorSectionYForCheck(2) >= belowBefore)
+                throw new Exception($"收拢了上面的分区，下面那块没上提：{belowBefore} → {TalentEditorSectionYForCheck(2)}");
+            if (TalentEditorSectionYForCheck(1) != titleBefore) throw new Exception("收拢把标题自己也挪了");
+            TalentEditorToggleSectionForCheck(1);
+            if (Math.Abs(TalentEditorSectionYForCheck(2) - belowBefore) > .01)
+                throw new Exception("再展开之后位置没还原（收拢展开一趟就漂了）");
+            // ⑯ 分区**声明的**高度必须和它**实际**需要的一样高。声明值偏小不会当场出问题
+            //    （`SectionHeight` 会兜住），但面板总高就没人算得准了——而总高是硬的（见 ⑰）。
+            //    六个分区里有四个的声明值曾经不够（差 5~50px），这正是"截图上一块块都是字、实际互相叠"的来源。
+            foreach (var (title, need, declared) in TalentEditorSectionFitForCheck())
+                if (need > declared + .5f)
+                    throw new Exception($"编辑器「{title}」声明的 {declared:F0}px 装不下它的行（需要 {need:F0}px）：把声明值改过来");
+            // ⑰ 行与行不许叠。控件的**实际**高度由 Godot 说了算（按钮在 21 号字下是 45，不是建时写的 40），
+            //    行距写小了就压在一起。这一条和 ⑯ 是配套的：⑯ 管"分区够不够高"，这条管"分区内部排得对不对"。
+            foreach (string overlap in TalentEditorRowOverlapsForCheck())
+                throw new Exception("编辑器分区里有行压在一起：" + overlap);
+            // ⑱ 整块面板必须在屏幕里。编辑器没有滚动条——出了屏就是真的看不见（这个 bug 犯过两次：
+            //    底栏钉在 y=1030 压住 HUD；分区高度普遍不够时栈顶冲到 1149）。
+            if (TalentEditorPanelBottomForCheck > EditorPanelBottomLimit)
+                throw new Exception($"编辑器面板出了屏：底边 {TalentEditorPanelBottomForCheck:F0} > {EditorPanelBottomLimit:F0}"
+                    + "（加分区 / 加行 / 把文案改长之前，先按 EditorSectionGap 的说明算一遍总高）");
+            TalentEditorReloadForCheck();
+            TalentEditorReloadForCheck();   // 丢掉这一轮的全部临时改动
             TalentEditorSaveForCheck();
             if (!TalentEditorStatus.StartsWith("已保存")) throw new Exception("Talent editor save failed: " + TalentEditorStatus);
+            if (TalentEditorIntentForCheck(probe) != intentBefore) throw new Exception("意图被保存动作改动了");
             ToggleTalentEditor();
             foreach (var (id, _) in demo) _game.State.Talents.Remove(id);
             ShowPage(0); Refresh();
@@ -738,12 +1082,51 @@ public partial class Main : Control
             Tap("血量−"); Tap("攻击＋");
             if (_game.MonsterHpScale != 1 || _game.MonsterAtkScale != 2) throw new Exception("GM monster scale did not restore");
             Tap("攻击−");
-            // 主角无敌：点一下要真的不再掉血（死亡会重置冷却、让伤害统计断档）。
+            // 主角无敌：点一下要真的不再掉血（死亡会清增益并重置冷却，让伤害统计断档）。
             Tap("无敌：关");
             if (!_game.PlayerInvincible) throw new Exception("GM invincibility did not turn on");
-            _game.Battle.PlayerHp = 1;
-            for (int i = 0; i < 40; i++) { _game.Step(.05); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
-            if (_game.Battle.PlayerHp != 1 || _game.Battle.RespawnTimer > 0) throw new Exception("GM invincibility did not hold");
+            // ⚠️ 判据是"**掉不掉血**"，不是"血量变不变"。原先这里是"把血设成 1、跑 2 秒、断言还是 1"，
+            // 但 **`EnterLevel` 会把血拉满**（通关与复活都走它），增益回血也会涨——于是那条断言测的其实是
+            // "这一局有没有通关/复活"。主线那一局在自然跑（`_Process` 的固定步循环按**真实时间**推进），
+            // 无窗口跑得短、窗口化跑得久，窗口化下真会打完一关 ⇒ 只在截图那次误报（`hp=70` 正是满血）。
+            //
+            // 所以换成**受控盘面**，而且只按模拟时钟推（不等 ProcessFrame，真实时间掺不进来）：
+            // 关掉刷怪，只贴上贴脸的近战怪，看血掉不掉。
+            var immune = new GameSession(_game.Config, seed: 7)
+            { BasicAttackEnabled = false, PlayerInvincible = _game.PlayerInvincible };   // 开关取自上面那次真实点击
+            for (int cell = 0; cell < immune.Level.Cells; cell++) immune.Battle.Spawns[cell] = new() { Passed = true };
+            // 摆在玩家脚边、攻击计时归零 ⇒ **第一步就出手**；攻击力给足，关掉无敌时必死。
+            EnemyState Biter()
+            {
+                var slime = _game.Config.Monsters["slime"];
+                return new EnemyState
+                {
+                    Id = immune.Battle.NextEnemyId++, MonsterId = slime.Id, Kind = slime.Kind,
+                    X = immune.Battle.PlayerX, Hp = 1e6, MaxHp = 1e6, Atk = 999, AttackTimer = 0,
+                };
+            }
+            immune.State.Skills.Clear();
+            immune.Battle.Enemies.Clear();
+            var biter = Biter();
+            immune.Battle.Enemies.Add(biter);
+            immune.Battle.PlayerHp = 1;                       // 只剩 1 点，随便挨一下就死
+            immune.Step(.05);
+            // 先证明这一下**真的打在无敌上**：怪出手后 `AttackTimer` 会被重装成间隔。
+            // 没有这一条，"没掉血"可能只是根本没打起来——那断言就是空过的。
+            if (biter.AttackTimer <= 0) throw new Exception("the biter never attacked");
+            if (immune.Battle.PlayerHp != 1 || immune.Battle.RespawnTimer > 0) throw new Exception("GM invincibility did not hold on the first hit");
+            for (int i = 0; i < 40; i++) immune.Step(.05);     // 再推 2 秒：无敌是**一直**在挡，不是只挡第一下
+            if (immune.Battle.PlayerHp != 1 || immune.Battle.RespawnTimer > 0)
+                throw new Exception($"GM invincibility did not hold［hp={immune.Battle.PlayerHp:F2}"
+                    + $" 复活={immune.Battle.RespawnTimer:F2} 场上怪={immune.Battle.Enemies.Count}］");
+            // 对照组：**同一盘面**关掉无敌，这群怪就该把血打下去——否则"没掉血"还是空过的。
+            // 放 6 只第一步一起出手：闪避是**逐次**判定的（基础 2%），一两只可能恰好被躲掉，六只不会。
+            immune.PlayerInvincible = false;
+            immune.Battle.Enemies.Clear();
+            for (int i = 0; i < 6; i++) immune.Battle.Enemies.Add(Biter());
+            immune.Battle.PlayerHp = 1;
+            immune.Step(.05);
+            if (immune.Battle.PlayerHp == 1) throw new Exception("control: with invincibility off the biters still did not hurt the player");
             Tap("无敌：开");
             if (_game.PlayerInvincible) throw new Exception("GM invincibility did not turn off");
             _game.Battle.PlayerHp = _game.MaxHp;

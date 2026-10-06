@@ -15,25 +15,23 @@ public sealed partial class GameSession
     public int TalentLevel(string id) => State.Talents.GetValueOrDefault(id);
 
     /// <summary>
-    /// 该节点的前置清单。<c>NeedMax</c> 为真表示那条前置必须**满级**才算数，而不是点过即可
-    /// （用来卡后期节奏；`prereq_state` 整列留空时全是 false）。
+    /// 该节点的前置清单。**任意一条点亮即可开放**，所以只返回 id——
+    /// 曾经还有一档"这条前置必须满级"（`prereq_state` 列），已连同那一列一起删掉。
     /// </summary>
-    public List<(string Id, bool NeedMax)> TalentPrereqs(string id)
-    {
-        var row = Config.Row("TalentLayout", id);
-        var ids = row.TextList("prereq");
-        var states = row.TextList("prereq_state");
-        // `prereq_state` 允许整列留空 = 全部按 active。绝大多数节点都是这样，写满只会让表变吵，
-        // 还会把真正要求满级的那几行淹没在里面。
-        return ids.Select((p, i) => (p, states.Count > i && states[i] == "max")).ToList();
-    }
+    public List<string> TalentPrereqs(string id) => Config.Row("TalentLayout", id).TextList("prereq");
 
     /// <summary>
-    /// 节点该不该出现在星图上。**要求前置全部点亮**（不是"任意一条"）——
-    /// 星图是收敛的：一个节点挂着两条前置时，玩家该读作"这两条都得走通"，而不是"随便走一条"。
+    /// 节点该不该出现在星图上：**任意一条前置点亮就算开放**（不是"全部"）。
+    ///
+    /// ⚠️ **根节点要单独兜住**：它的前置是空集，而 `Any` 对空集返回 false——
+    /// 照直写会让整张星图**开局连根节点都看不见**，玩家没有任何地方可点。
     /// </summary>
-    public bool TalentVisible(string id) =>
-        TalentLevel(id) > 0 || TalentPrereqs(id).All(p => TalentLevel(p.Id) >= 1);
+    public bool TalentVisible(string id)
+    {
+        if (TalentLevel(id) > 0) return true;
+        var prereqs = TalentPrereqs(id);
+        return prereqs.Count == 0 || prereqs.Any(p => TalentLevel(p) >= 1);
+    }
 
     /// <summary>把该节点从 <paramref name="level"/> 点到下一级要花的钱（`cost` 列表的第 level 项）。</summary>
     public double TalentCost(string id, int level) => Config.Row("Talent", id).NumberList("cost")[level - 1];
@@ -47,14 +45,8 @@ public sealed partial class GameSession
         var r = Config.Row("Talent", id);
         int level = TalentLevel(id), max = r.Int("max_level");
         if (r.Text("effect") == "none") { reason = "该节点还没有配置效果。"; return false; }
-        if (!TalentVisible(id)) { reason = "前置节点尚未点亮。"; return false; }
+        if (!TalentVisible(id)) { reason = "前置节点尚未点亮（任一点亮一个即可）。"; return false; }
         if (level >= max) { reason = "已达最高等级。"; return false; }
-        foreach (var (pid, needMax) in TalentPrereqs(id))
-        {
-            var up = Config.Row("Talent", pid);
-            if (needMax && TalentLevel(pid) < up.Int("max_level"))
-            { reason = $"需要前置「{up.Text("name")}」满级。"; return false; }
-        }
         string currency = r.Text("cost_currency");
         double cost = TalentCost(id, level + 1);
         if (State.Amount(currency) < cost)

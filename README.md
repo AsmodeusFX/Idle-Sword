@@ -1,4 +1,4 @@
-# Idle-Sword · 土豆天尊
+# Idle-Sword · 土豆修仙
 
 Windows / Godot .NET / C# 横版修仙增量放置原型。
 
