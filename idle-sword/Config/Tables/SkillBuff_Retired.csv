@@ -7,3 +7,4 @@ r_b_stun,雷引麻痹,stun,enemy,1,0,0,0,0
 r_b_vulnerable,破云易伤,vulnerable,enemy,3,0.2,0,0,0
 r_b_slow_lotus,青莲束缚,slow,enemy,1.5,0.4,0,0,0
 r_b_slow_frost,霜华冰封,slow,enemy,2,0.65,0,0,0
+r_b_lifesteal,血炼剑意,lifesteal,self,5,0.15,0,0,0

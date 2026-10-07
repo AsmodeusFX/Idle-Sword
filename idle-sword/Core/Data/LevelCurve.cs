@@ -91,12 +91,67 @@ public static class LevelCurve
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════════
+    //  覆盖登记表：模型对每一种取值**算不算**，明写在这里
+    // ══════════════════════════════════════════════════════════════════════════════
+    //  为什么要有它：模型只按名字去找它要算的那几种增益，所以**新增一种影响 DPS 的 kind 会被静默忽略**——
+    //  那是系统性低估，而 `--check` 对"模型变没变"完全不敏感（`combat.md` §12.2 明确它改造前后都是 394）。
+    //  有了这张表，"没算"就成了一条**显式决定**而不是遗漏：词表里多一个取值却没人登记，`Compute` 当场抛；
+    //  反过来，登记为「不计」的取值被代码算到了，也会抛（见 `CountedBuff`）。**两边都要对得上**。
+    //
+    //  取值必须以 `算` 或 `不计` 开头——那是判据，后面的话是给人读的理由。
+    private static readonly Dictionary<string, string> KindFate = new()
+    {
+        ["dot"] = "算：天降火海的等效命中（Hits 里按 buff.kind 折算跳数）",
+        ["slow"] = "不计：目标侧控场，不改玩家的 DPS",
+        ["chill"] = "不计：同上（它的移速与 slow 同源）",
+        ["stun"] = "不计：目标侧控场",
+        ["vulnerable"] = "不计：目标条件——要不要进模型取决于「目标处在什么状态」的建模口径（combat.md §12.4 第 3 条）",
+        ["haste"] = "算：普攻与法术两条频率轴（SpeedBonus）",
+        ["crit_reduce"] = "算：暴击期望（CritRate）",
+        ["shield"] = "算：环绕飞剑（GuardBlade 按 shield 找那一式）",
+        ["regen"] = "不计：续航，不改输出",
+        ["lifesteal"] = "不计：续航，不改输出",
+        ["mirror"] = "算：法术链的复制系数（Mirror）",
+    };
+    private static readonly Dictionary<string, string> EffectTypeFate = new()
+    {
+        ["attack"] = "算：技能链（Chain）",
+        ["auto_attack"] = "算：环绕飞剑（GuardBlade 读时间轴上那条效果）",
+        ["shorten_cooldown"] = "不计：只改频率，而且它的下限已经并进 skill_cdr 那条护栏",
+        ["mirror_cast"] = "不计：它的量记在 `mirror` 那个 kind 上（一份量只算一次）",
+    };
+
+    private static string Fate(Dictionary<string, string> table, string what, string key) =>
+        table.TryGetValue(key, out string? fate) ? fate
+        : throw new InvalidOperationException(
+            $"模型没有登记 {what} '{key}' 的归宿——新增取值时要在 `LevelCurve` 的覆盖登记表里说清它**算不算**"
+            + "（漏一个就是静默低估，而 --check 对此不敏感）");
+
+    /// <summary>词表里的每一种取值都必须在覆盖登记表里有归宿，且登记表里不许留词表已经没有的取值。</summary>
+    public static void CheckCoverage(IReadOnlyList<string> buffKinds, IReadOnlyList<string> effectTypes)
+    {
+        foreach (string kind in buffKinds) Fate(KindFate, "Buff kind", kind);
+        foreach (string type in effectTypes) Fate(EffectTypeFate, "effect_type", type);
+        var stale = KindFate.Keys.Where(k => !buffKinds.Contains(k))
+            .Concat(EffectTypeFate.Keys.Where(k => !effectTypes.Contains(k))).ToList();
+        if (stale.Count > 0)
+            throw new InvalidOperationException($"覆盖登记表里有词表已经不存在的取值：{string.Join(", ", stale)}（表会烂，跟 headers.json 那一课一样）");
+    }
+    /// <summary>用配置当前的词表跑一遍覆盖检查（`Compute` 开头会调它）。</summary>
+    public static void CheckCoverage() => CheckCoverage(SkillTable.BuffKinds, SkillTable.EffectTypes);
+
+    /// <summary>登记表说这一种 kind **模型要算**吗？没登记就抛。</summary>
+    private static bool CountedKind(string kind) => Fate(KindFate, "Buff kind", kind).StartsWith("算");
+
     /// <summary>
     /// 跑一遍模型。<paramref name="source"/> 与 `GameConfig.Load` 同一形状：给文件名、返回表内容。
     /// 配置有问题时**抛异常**（工具要的就是响亮失败）；游戏侧请用 <see cref="TryCompute"/>。
     /// </summary>
     public static Model Compute(Func<string, string> source)
     {
+        // 先确认"模型对每种取值算不算"这件事本身是完整的——见上面的覆盖登记表。
+        CheckCoverage();
         List<CsvRow> Load(string file) => CsvTable.Parse(file, source(file));
 
         // 技能三层走**与游戏侧同一个解析器**（`SkillTable.Parse`）：模型与模拟读同一份口径，
@@ -249,9 +304,15 @@ public static class LevelCurve
             if (s.Trajectory == "sky_drop")
             {
                 var buff = effect?.Buff;
+                // 天降火海：落地不结算，只有火海在跳 —— 直伤按跳数，灼烧按"着火秒数 × 灼烧系数"折算成等效命中。
                 if (buff is { Kind: "dot" })
-                    // 天降火海：落地不结算，只有火海在跳 —— 直伤按跳数，灼烧按"着火秒数 × 灼烧系数"折算成等效命中。
+                {
+                    // ⚠️ 先问覆盖登记表：`dot` 若被登记成「不计」，这里就成了"登记说不管、代码却在算"。
+                    // 那种分叉必须当场炸——它正是"模型静默漏算/多算一个乘区"的入口。
+                    if (!CountedKind("dot")) throw new InvalidOperationException(
+                        $"覆盖登记表把 'dot' 记成「{Fate(KindFate, "Buff kind", "dot")}」，但 `Hits` 在按它折算火海命中——两者必须一致");
                     return Math.Round(buff.Duration / tick) * PerTick + buff.Duration * PerTick * buff.Value;
+                }
                 return s.ProjectileCount * PerBlade;
             }
             if (s.Trajectory == "line_pierce") return wave;
@@ -262,14 +323,18 @@ public static class LevelCurve
         // 三个增益都是乘区：加速作用于普攻与法术（两条轴各算各的）、暴击作用于全链，影分身只复制法术、不复制普攻。
         // **按自身增益的 kind 找**（不再按 `secondary` 字符串猜）：一个 kind 只属于一个增益类法术，
         // 找不到就是"这个乘区没有载体"，返回 null 让各调用方回落到中性值。
-        SkillDef? BuffSkill(string kind) => skills.FirstOrDefault(s =>
-            s.Kind == "buff" && s.Buffs.Count > 0 && s.Buffs[0].Kind == kind);
+        // ⚠️ 只许取**登记表说"要算"**的那些 kind——登记为"不计"的走到这里就是接线错了。
+        SkillDef? CountedBuff(string kind)
+        {
+            if (!CountedKind(kind)) throw new InvalidOperationException($"'{kind}' 在覆盖登记表里是「不计入模型」，但代码在算它——两者必须一致");
+            return skills.FirstOrDefault(s => s.Kind == "buff" && s.Buffs.Count > 0 && s.Buffs[0].Kind == kind);
+        }
         double BuffCooldown(SkillDef s, int order) => Math.Max(
             s.Duration * settings["buff_cooldown_floor_ratio"],
             s.Cooldown * (1 - settings["buff_cooldown_per_level"] * (Lerp(RankStart, RankEnd, order) - 1)));
         double BuffUptime(SkillDef? s, int order) =>
             s is null || !Unlocked(s, order) ? 0 : Math.Min(1, s.Buffs[0].Duration / BuffCooldown(s, order));
-        var haste = BuffSkill("haste"); var critBuff = BuffSkill("crit_reduce"); var mirror = BuffSkill("mirror");
+        var haste = CountedBuff("haste"); var critBuff = CountedBuff("crit_reduce"); var mirror = CountedBuff("mirror");
 
         // ── 频率：**普攻与法术是两条独立的轴**（见 docs/design/combat.md）──
         // 普攻吃 `attack_speed`、法术吃 `skill_cdr`，两者都不能进伤害乘区。
@@ -354,7 +419,7 @@ public static class LevelCurve
         /// </summary>
         double GuardBlade(int order)
         {
-            var shield = BuffSkill("shield");
+            var shield = CountedBuff("shield");
             if (shield is null || !Unlocked(shield, order)) return 0;
             // 威力与间隔**读机制自己的行**：护盾增益的时间轴上挂的那条效果（威力 ÷ 间隔）。
             // 从前这两项散在 `game_settings` 里（`guard_blade_power` / `guard_interval`），

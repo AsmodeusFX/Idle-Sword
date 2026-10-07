@@ -216,7 +216,7 @@ Skill 本身不含任何形态、范围、状态的取值——那些全在 Effe
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | id | string | 稳定唯一 ID |
-| name | string | 中文显示名称（派生效果会印给玩家，如「环绕飞剑」） |
+| name | string | **人读的标签，运行时不消费**（与 `TalentLayout.label` 同类）。唯一一处例外是「派生效果」会把它印给玩家（如「环绕飞剑」）——其余效果它只用于让读配置的人看懂这一行在做什么 |
 | effect_type | enum | `attack` / `auto_attack` / `shorten_cooldown` / `mirror_cast`。见下方「四种 `effect_type`」 |
 | condition | enum（可空） | 命中时的条件型倍率（DMG3 的 Build 乘区）：空 / `target_hp_below`（斩杀）/ `target_has_state`（利用状态）。见下方「`condition`」 |
 | condition_value | number | 条件的阈值或比例：**空 `condition` 时必须为 0，声明了 `condition` 就必须为正**（0 就是一行死配置） |
@@ -339,7 +339,7 @@ Skill 本身不含任何形态、范围、状态的取值——那些全在 Effe
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | id | string | 稳定唯一 ID |
-| name | string | 中文显示名称 |
+| name | string | **人读的标签，运行时不消费**（与 `TalentLayout.label` 同类）——给玩家看的文案一律走 `kind`（见 `SkillText.BuffText`），这一列只为了让读配置的人看懂这一行是什么 |
 | kind | enum | 11 种时间化效果。**前 5 种作用于敌人**：`dot` / `slow` / `chill` / `stun` / `vulnerable`；**后 6 种作用于自身**：`haste` / `crit_reduce` / `shield` / `regen` / `lifesteal` / `mirror`。`target` 必须与 `kind` 匹配（加载期拦） |
 | target | enum | `self` / `enemy`；必须与 `kind` 的方向一致——配反了是"看起来能配、实际挂错人"，**不报错、只在战斗里表现出来** |
 | duration | number | 生命周期秒数（大于 0） |
@@ -475,6 +475,13 @@ Skill 本身不含任何形态、范围、状态的取值——那些全在 Effe
 
 > ⚠️ **自检用同一套解析器读通这三张退役表**：退役库与在役表共用 `SkillTable.Parse`，
 > 防止它的结构悄悄与在役表分叉（同 schema 是这里唯一的契约，靠一遍真实解析来钉住，而不是靠人肉对列）。
+
+**两个"当前无在役载体"的取值在这里有活的样例行**（库本来就是零件箱，样例行不必被哪个技能引用）：
+
+| 样例行 | 是什么 | 为什么留着 |
+| --- | --- | --- |
+| `r_b_lifesteal`（血炼剑意） | `lifesteal` / self / 5s / 15% | 退役的「万剑归心」改成护盾之后，这个 kind 就只剩代码了。自检里有一条把 `Hit` 末尾那个消费点走通（挂上吸血 → 打出伤害 → 气血按比例回升） |
+| `r_e_flat`（平值招式样例） | `attack` / `skill_flat = 25` | `SkillFlat` 是 **DMG1 里唯一不随境界缩放的项**，用之前必须想清楚（见 `docs/design/combat.md` §2 的陷阱）；这一行就是那个警告的活样本 |
 
 ## Talent.csv（修行星图 · **内容**表）
 

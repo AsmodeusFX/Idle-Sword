@@ -186,6 +186,12 @@ Check("退役配置库：那些机制仍然能被新结构表达", () => {
     Assert(kept.Skills["skill_12"].Secondary == "vulnerable", "易伤仍是可表达的增益类型");
     Assert(kept.Skills["skill_15"].Secondary == "execute", "诛邪剑灵仍带斩杀");
     Assert(kept.Skills.Values.Count(s => s.Kind == "summon") == 4, "四个退役召唤仍在库里");
+    // 两个**当前无在役载体**的取值也要在库里有活的样本行：它们是"这个机制在新结构下表达得出来"的凭证，
+    // 也是 `lifesteal` / `skill_flat` 这两个取值的唯一配置样例（没有技能引用它们——库本来就是零件箱）。
+    Assert(kept.Buffs.TryGetValue("r_b_lifesteal", out var drain) && drain is { Kind: "lifesteal", Target: "self" },
+        "退役库里有吸血那份增益的样例行");
+    Assert(kept.Effects.TryGetValue("r_e_flat", out var flat) && flat.SkillFlat > 0,
+        "退役库里有带非零 skill_flat 的样例行（它同时是「平值不随境界缩放」那条警告的活样本）");
 });
 Check("new and moved skills carry the intended effects", () => {
     // 天剑：改为**横向贯穿**（line_pierce），带斩杀；不锁层（空 hits = both）。
@@ -2180,7 +2186,7 @@ Check("multi 折进多弹编排：多发各锁一敌", () => {
     g.Step(.05);
     Assert(g.Effects.Count(e => e.Kind == "projectile" && !e.Hostile) >= 3, "多发一起出手，各锁一敌");
 });
-Check("retired shield / regen effects stay covered", () => {
+Check("retired shield / regen / lifesteal effects stay covered", () => {
     // 护心剑罡 / 归元护法 已搬进退役配置，shield / regen 当前无技能使用，故用改过的配置保住消费路径的覆盖。
     // 从前这里还顺手把 `power` 抬到 1.3——那是为了证明"威力非 1 的防御增益不会变成乘区"，
     // 而**那件事现在由结构保证**：窗的倍率是 Buff 上独立的一列，没声明窗时必须为 0（加载期拦），
@@ -2202,6 +2208,24 @@ Check("retired shield / regen effects stay covered", () => {
     double low = healing.Battle.PlayerHp;
     Step(healing, 1);
     Assert(healing.Battle.PlayerHp > low, $"regen restored hp: {low:0} -> {healing.Battle.PlayerHp:0}");
+    // 吸血：身上挂着吸血时，**打出去的伤害**按比例回到气血上（`Hit` 末尾那一步的消费点）。
+    // 从前 `lifesteal` 既没有载体也没有测试（退役的万剑归心改成护盾之后就这样了），这条把它钉住。
+    var draining = SalvoOn(BuffCfg("lifesteal", "0.5"), "skill_04", 200);
+    draining.State.Skills["skill_01"] = 1;               // 再来一式能打人的（靶场默认只学了增益）
+    draining.Battle.Cooldowns.Clear(); draining.Effects.Clear();
+    Assert(draining.ForceRelease("skill_04"), "先把吸血挂上");
+    Assert(draining.LifestealFactor > 0, "the lifesteal branch set a factor");
+    // ⚠️ 增益施放时会回一次 5% 气血（所有增益类共用的老规则），**这里要把它抹掉**再量，
+    // 否则下面"血量涨了"会被那 5% 满足，吸血有没有生效就验不出来。
+    draining.Battle.PlayerHp = draining.MaxHp * .5;
+    double drained = draining.Battle.PlayerHp;
+    double foeHp = draining.Battle.Enemies[0].Hp;
+    draining.Battle.Cooldowns.Clear();
+    Assert(draining.ForceRelease("skill_01"), "御剑术出手");
+    Step(draining, .5);
+    Assert(draining.Battle.Enemies[0].Hp < foeHp, "先得真的打出伤害，才有得吸");
+    Assert(draining.Battle.PlayerHp > drained,
+        $"lifesteal healed from the damage dealt: {drained:0} -> {draining.Battle.PlayerHp:0}");
 });
 Check("GM grant covers every configured currency without touching the first-kill ledger", () => {
     var g = New();
@@ -2438,6 +2462,19 @@ Check("曲线模型与 fightattr 对账：改了主轴常量而不同步锚点�
     Assert(Threw(() => LevelCurve.Compute(f => f == "fightattr.csv"
         ? Cell(source[f], "basic_power", "base_value", "0.5") : source[f])),
         "把 basic_power 减半会让『裸开局 3 刀』的锚点校验失败");
+});
+Check("期望模型对每种 Buff kind / effect_type 都有归宿登记", () => {
+    // 模型只按名字去找它要算的那几种增益，所以"新增一种影响 DPS 的自增益 kind"曾经会被**静默忽略**。
+    // 那是系统性低估，而 `--check` 对"模型变没变"完全不敏感（`combat.md` §12.2 明确它改造前后都是 394）。
+    // 现在词表与登记表必须**一一对应**：漏一个当场抛；登记表里留一个词表已经没有的取值也抛（表会烂）。
+    LevelCurve.CheckCoverage();                       // 现行词表必须完整（`Compute` 开头也会调它）
+    bool Threw(Action a) { try { a(); } catch (InvalidOperationException) { return true; } return false; }
+    Assert(Threw(() => LevelCurve.CheckCoverage(["haste", "bogus_kind"], SkillTable.EffectTypes)),
+        "词表里多了一个没登记的 Buff kind，要响亮失败");
+    Assert(Threw(() => LevelCurve.CheckCoverage(SkillTable.BuffKinds, ["attack", "bogus_type"])),
+        "词表里多了一个没登记的 effect_type，要响亮失败");
+    Assert(Threw(() => LevelCurve.CheckCoverage(["haste", "crit_reduce"], SkillTable.EffectTypes)),
+        "登记表里有词表已经没有的 kind，也要失败");
 });
 Check("共享伤害倍率窗：按来源相乘、威力含等级成长，且期望模型确实算上了它", () => {
     // 窗是 DMG3 的 **Build 乘区**，所以多个窗**相乘**而不是互相覆盖（从前是"最后一个写入者胜"，
