@@ -19,6 +19,42 @@ public static class UiKit
             ContentMarginLeft = 14, ContentMarginRight = 14, ContentMarginTop = pad, ContentMarginBottom = pad };
     }
     public static void Place(Control node, float x, float y, float w, float h) { node.Position = new(x, y); node.Size = new(w, h); }
+    /// <summary>
+    /// 给自动换行的说明文字**封顶行数**，多出来的走省略号。
+    ///
+    /// 为什么必须封：`Label` 装不下就自己长高，而 `Control` **只会长、不会缩**——
+    /// 只要有一条长文案经过，这一格就永久变高，下面几块被整体顶出去，而且**再也回不来**。
+    /// 截图上是"某次操作之后布局就歪了"，很难倒查。封顶 + 省略号，好过布局随上一条消息的长短乱跳。
+    /// </summary>
+    public static Label Capped(Label label, int lines)
+    {
+        label.MaxLinesVisible = lines;
+        label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        return label;
+    }
+
+    /// <summary>
+    /// 一行说明：**自动换行 + 封顶行数**，一次性建好。
+    ///
+    /// ⚠️ 用它，不要写 `Capped(Wrapped(…))`——`Wrapped` 是**先定尺寸再返回**的，那时还没封顶，
+    /// 长文案的两行最小高已经把 `Size.Y` 顶到 49；而 `Control` **只长不缩**，封顶之后它不会自己回去
+    /// （结果就是这一行比声明的矮不了，压住下一行——自检的重叠断言抓到过两次）。
+    /// 所以顺序必须是：**先把换行与封顶都设上，再 `Place`**。
+    /// </summary>
+    public static Label WrappedCapped(Control parent, string text, float x, float y, float w, float h,
+        int lines, int size = 22, Color? color = null)
+    {
+        var label = new Label
+        {
+            Text = text, MouseFilter = Control.MouseFilterEnum.Ignore,
+            VerticalAlignment = VerticalAlignment.Center, AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            MaxLinesVisible = lines, TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+        };
+        label.AddThemeFontSizeOverride("font_size", size);
+        label.AddThemeColorOverride("font_color", color ?? Text);
+        Place(label, x, y, w, h); parent.AddChild(label);
+        return label;
+    }
     public static Label Label(Control parent, string text, float x, float y, float w, float h, int size = 22, Color? color = null)
     {
         var label = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore, VerticalAlignment = VerticalAlignment.Center };
@@ -57,10 +93,15 @@ public static class UiKit
         // 点击音在 action 之前：失败的按钮会连播"点击 + 否决"，符合先点再判的听感。
         Place(button, x, y, w, h); parent.AddChild(button); button.Pressed += () => { Sfx.Click(); action(); }; return button;
     }
-    public static Panel PanelAt(Control parent, float x, float y, float w, float h)
+    /// <summary>
+    /// 一块底板。`color` 默认是 `Panel`——**绝大多数调用点不用传**，传的只有编辑器画布那一处：
+    /// 它底下垫的就是节点方块的填充色（同样是 `Panel`），两者同色时节点只能靠描边才分得出来。
+    /// 不给 `Panel` 常量本身换值：它还当着按钮 normal 底与星图节点，一改就是全工程一起变。
+    /// </summary>
+    public static Panel PanelAt(Control parent, float x, float y, float w, float h, Color? color = null)
     {
         var panel = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
-        panel.AddThemeStyleboxOverride("panel", Box(Panel)); Place(panel, x, y, w, h); parent.AddChild(panel); return panel;
+        panel.AddThemeStyleboxOverride("panel", Box(color ?? Panel)); Place(panel, x, y, w, h); parent.AddChild(panel); return panel;
     }
     /// <summary>
     /// 把一整棵子树的鼠标事件放行。悬停说明条**必须**调它——说明条浮在节点上方，

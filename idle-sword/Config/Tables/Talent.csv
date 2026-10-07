@@ -2,12 +2,12 @@ id,name,max_level,cost_currency,cost,effect,effect_per_level,icon
 t_root,开智,3,gold,3|6|9,atk_flat,1,attack
 t_hp,培土,5,gold,4|8|12|16|20,hp_flat,10,defense
 t_atk,拔节,5,gold,6|12|18|24|30,atk_flat,3,attack
-t_drop,掉落,1,gold,5,drop_flat,1,utility
+t_drop,掉落,3,gold,5|10|20,drop_flat,1,utility
 t_auto,生根,1,core,1,auto_basic,1,utility
 t_ranged,剑气,1,core,1,ranged_basic,1,special
 t_realm,法术,1,core,1,realm_system,1,special
 t_forge,铸造,1,core,1,forge_system,1,utility
-t_atk_01,攻击 01,1,gold,5,atk_flat,1,attack
+t_atk_01,攻击 01,3,gold,5|10|20,atk_flat,1,attack
 t_hp_01,培土 5 5,5,gold,4|8|12|16|20,hp_flat,10,defense
 t_100001,拔节 2,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100002,拔节 4,5,gold,6|12|18|24|30,atk_flat,3,attack
@@ -39,7 +39,7 @@ t_100027,拔节 2 4 2 2,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100028,拔节 2 2 6,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100029,拔节 2 4 2 3,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100030,拔节 2 2 2,5,gold,6|12|18|24|30,atk_flat,3,attack
-t_100031,t_100031,1,core,1,atk,20,utility
+t_100031,特殊,1,core,1,atk,0.2,utility
 t_100032,拔节 2 2 5,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100033,拔节 2 2 3,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100034,培土 5 2 2 2,5,gold,4|8|12|16|20,hp_flat,10,defense
@@ -50,4 +50,4 @@ t_100038,培土 5 2 2 3,5,gold,4|8|12|16|20,hp_flat,10,defense
 t_100039,培土 5 2 2 4,5,gold,4|8|12|16|20,hp_flat,10,defense
 t_100040,培土 5 2 2 5,5,gold,4|8|12|16|20,hp_flat,10,defense
 t_100041,培土 5 2 2 7,5,gold,4|8|12|16|20,hp_flat,10,defense
-t_100042,t_100042,1,core,1,hp,20,utility
+t_100042,特殊,1,core,1,hp,0.2,utility

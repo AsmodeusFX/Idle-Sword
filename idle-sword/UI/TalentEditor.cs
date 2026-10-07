@@ -99,81 +99,36 @@ public partial class Main
     private LineEdit _editorId = null!;
     private Label _editorStatus = null!, _editorInfo = null!;
     // 「意图」那栏的提示句**并进了标题**（面板塞不下第三行），所以没有独立的 hint 控件。
-    private Label _editorContent = null!, _editorIntentLabel = null!;
+    private Label _editorIntentLabel = null!;
     private LineEdit _editorIntent = null!;
     private Button _editorCreate = null!, _editorLink = null!, _editorClear = null!, _editorMakeRoot = null!;
     private Button _editorCopy = null!, _editorMove = null!, _editorDelete = null!;
     private Label _editorNameHint = null!, _editorFormalHint = null!;
-    private Label _editorEffectLabel = null!, _editorCurrencyLabel = null!, _editorCostHint = null!, _editorLevelHint = null!;
+    private Label _editorEffectLabel = null!, _editorCurrencyLabel = null!, _editorCostLabel = null!;
+    private Label _editorCostHint = null!, _editorLevelHint = null!;
     private Label _editorPerLevelLabel = null!, _editorMaxLevelLabel = null!, _editorFooter = null!;
     /// <summary>效果下拉里的 id 表（与条目**下标一一对应**）。条目文案取 `TalentText.ShortLabel`。</summary>
     private readonly List<string> _editorEffectIds = [];
     private OptionButton _editorEffect = null!;
     /// <summary>回填效果下拉时置位——理由同 <see cref="_editorFillingCurrency"/>。</summary>
     private bool _editorFillingEffect;
+    private Label _editorIconLabel = null!;
+    private OptionButton _editorIcon = null!;
+    /// <summary>图标下拉的 id 表（与条目**下标一一对应**）。取值就是 `GameConfig` 的 `icon` 白名单。</summary>
+    private readonly List<string> _editorIconIds = [];
+    /// <summary>回填图标下拉时置位——理由同 <see cref="_editorFillingCurrency"/>。</summary>
+    private bool _editorFillingIcon;
 
-    // ── 右侧面板的分区与重排 ──
-    /// <summary>分区标题按钮**请求**的高。按钮的真实高由 Godot 说了算（字号行高 + 内边距 + 边框），
-    /// 这个值只当"低于它就不给"的下限——布局一律读 `Header.Size.Y`，不读常量。</summary>
-    private const float EditorSectionHeader = 30f;
-    /// <summary>
-    /// 分区间距。**由"六个分区全展开时栈高仍留得下余量"倒推**：
-    /// 面板顶 150 + Σ(标题 31×6 + 内容 701) + 5×间距 ≤ 1080（屏底）⇒ 间距 ≤ 11.6，取 5。
-    /// **要加分区、加行或把文案改长，先回这条式子算一遍**——面板底边是硬的，
-    /// 这个 bug 已经犯过两次（底栏钉在 y=1030；以及分区高度普遍不够高、栈顶冲到 1149）。
-    /// 现在 `LayoutEditorPanel` 会把"行撑不下"自动算进分区高度（下限），所以再多也只会顶出屏幕、
-    /// 不会互相叠字；而**自检断言会当场报出来**，不会拖到截图里才发现。
-    /// </summary>
-    private const float EditorSectionGap = 5f;
+    // ── 右侧面板：排版机制在 `UI/SectionList.cs`（与关卡编辑器共用一份）──
     /// <summary>面板第一个分区标题的 y。</summary>
     private const float EditorPanelTop = 150f;
+    /// <summary>右侧面板在**屏幕**坐标里的左沿与宽度。</summary>
+    private const float EditorPanelX = 1202f, EditorPanelWidth = 696f;
+    /// <summary>分区在面板内的左沿（`SectionList` 内部会再加一次它自己的 `PadX`）。</summary>
+    private const float EditorPanelPadX = 8f;
 
-    /// <summary>
-    /// 给自动换行的说明文字**封顶行数**，多出来的走省略号。
-    ///
-    /// 为什么必须封：`Label` 装不下就自己长高，而 `Control` **只会长、不会缩**——
-    /// 只要有一条长文案经过，这一格就永久变高（状态那一格量到过 90，声明才 56），
-    /// 下面几块被整体顶出去，而且**再也回不来**。截图上是"某次操作之后布局就歪了"，很难倒查。
-    /// 封顶 + 省略号，好过面板高度随上一条消息的长短乱跳、也好过被下一块盖掉半句话。
-    /// </summary>
-    private static Label Capped(Label label, int lines)
-    {
-        label.MaxLinesVisible = lines;
-        label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        return label;
-    }
-    /// <summary>面板的左沿（建控件时与布局过程共用）。</summary>
-    private float _editorPanelX;
-
-    /// <summary>
-    /// 面板里的一个分区：可点的标题 + 一块底板 + 若干行控件（各带**相对分区顶**的偏移）+ 展开时的高度。
-    /// 收起时高度不占，下面几块自动上提——这是面板"装得下"的关键（内容比一屏多）。
-    /// </summary>
-    private sealed class EditorSection
-    {
-        public string Title = "";
-        public Button Header = null!;
-        public Panel Back = null!;
-        public bool Collapsed;
-        public float Height;
-        public readonly List<(Control Control, float Dy, RowWhen When)> Rows = [];
-    }
-    /// <summary>一行控件在什么时候该出现。行的 `Visible` **只由布局过程写**，它按这个判断。</summary>
-    private enum RowWhen
-    {
-        /// <summary>选中了**节点**——内容 / 前置 / 操作 / 交接这些都只对节点有意义，默认走它。</summary>
-        Acting,
-        /// <summary>选中了节点**或**空格子：可读名那一行两种情形下都要在（新建时它是"起个名字"）。</summary>
-        Any,
-        /// <summary>只在"选中空格子、准备新建"时出现（「在此格新建」那个按钮）。</summary>
-        Creating,
-        /// <summary>与选中无关，常显（底栏说明）。</summary>
-        Always,
-        /// <summary>**有字才出现**。给"提示"那一块用：没有消息时整块收起来，别在顶上留一个空盘子。</summary>
-        Filled,
-    }
-    private readonly List<EditorSection> _editorSections = [];
-    /// <summary>当前选中的是节点 / 是空格子。行控件的可见性由布局过程按它们算。</summary>
+    private SectionList _editorPanel = null!;
+    /// <summary>当前选中的是节点 / 是空格子。行控件的可见性由排版过程按它们算。</summary>
     private bool _editorActing, _editorCreating;
     /// <summary>货币的 id 表（与下拉菜单的**下标一一对应**）——种类从 `item.csv` 现取，不写死。</summary>
     private readonly List<string> _editorCurrencyIds = [];
@@ -232,35 +187,23 @@ public partial class Main
         };
         UiKit.Place(_editorCanvas, EditorOrigin.X, EditorOrigin.Y, 1150, 880);
         // 给画布加一块**底板 + 描边**：不然看不出"哪块是可以拖拽/点选的操作区"（用户反馈）。
-        // 底板垫在画布**之前**（先加的先画），与右侧分区同一套样式。
-        UiKit.PanelAt(_editorRoot, EditorOrigin.X - 10, EditorOrigin.Y - 10, 1170, 900);
+        // 底板垫在画布**之前**（先加的先画）。
+        // ⚠️ 用 `Ink` 而不是默认的 `Panel`：节点方块的填充就是 `Panel`，同色时方块只剩描边认得出（实机反馈）。
+        // 这样三层色阶拉开——背幕（更暗的自定义色）< 画布底 `Ink` < 节点 `Panel`。
+        UiKit.PanelAt(_editorRoot, EditorOrigin.X - 10, EditorOrigin.Y - 10, 1170, 900, UiKit.Ink);
         _editorRoot.AddChild(_editorCanvas);
 
-        // ── 右侧面板：六个**可收拢**的分区 ──
-        // 面板沿用绝对定位（这个工程都这么写），所以"收拢"靠一个小的重排过程 `LayoutEditorPanel()`：
-        // 收起的分区不占高度，下面几块自动上提。**不改成容器嵌套**——混两套只会更难读。
-        // 每个控件的 y 在下面建的时候给 0，真位置一律由布局过程算（**唯一一处写 y 的地方**）。
-        float px = 1210;
-        _editorPanelX = px;
-
-        // 建一个分区：一块底板 + 一个可点的标题。返回它，随后用 `Row` 把控件挂进去。
-        EditorSection Section(string title, float height)
-        {
-            var back = UiKit.PanelAt(_editorRoot, px - 8, 0, 696, height + EditorSectionHeader);
-            var header = UiKit.Button(_editorRoot, title, px, 0, 680, EditorSectionHeader, null!, pad: 0);
-            // 标题按钮的**最小高度** = 字号行高 + 上下内边距 + 边框，而 `Control.set_size` 会把尺寸夹到不小于最小尺寸——
-            // 默认那套（21 号字 + 8 内边距）量出来是 **45**，不是常量里的 30：六个分区光标题就吃掉 270px，
-            // 面板被顶到屏幕外面（实测底边 1221 > 1080）。所以要真矮，字号与内边距得一起压，
-            // 光设 `CustomMinimumSize` 没用（那是**下限**，压不下去）。
-            header.AddThemeFontSizeOverride("font_size", 18);
-            header.Alignment = HorizontalAlignment.Left;
-            var section = new EditorSection { Title = title, Header = header, Back = back, Height = height };
-            header.Pressed += () => ToggleEditorSection(section);
-            _editorSections.Add(section);
-            return section;
-        }
-        void Row(EditorSection section, Control control, float dy, RowWhen when = RowWhen.Acting) =>
-            section.Rows.Add((control, dy, when));
+        // ── 右侧面板：六个**可收拢**的分区，装在一个滚动容器里 ──
+        // 排版机制（收拢、留白、装不下就滚、钉底脚注）在 `UI/SectionList.cs`，与关卡编辑器共用一份。
+        // 分区与行的坐标全部**相对面板左上角**（`EditorPanelPadX` = 屏幕上的 1210）。
+        _editorPanel = new SectionList(_editorRoot, EditorPanelX, EditorPanelTop, EditorPanelWidth,
+            "保存即生效：结构/复制/名字/效果/价目都由编辑器写盘，要让节点有用就写意图给 AI。");
+        float px = EditorPanelPadX;
+        Control inner = _editorPanel.Inner;
+        // 下面那一大段沿用 `Section(...)` / `Row(...)` 的写法，只是转发到共用组件上。
+        SectionList.Section Section(string title, float height) => _editorPanel.Add(title, height);
+        void Row(SectionList.Section section, Control control, float dy, RowWhen when = RowWhen.Acting) =>
+            SectionList.Row(section, control, dy, when);
 
         // ① 提示：状态消息**独占一块**，不再与下面的行挤在一起（文案本身也缩短了）。
         // 高度按**两行**声明：状态文案一律要能两行内说完（20 号字 × 680 宽 ≈ 每行 34 个字），
@@ -268,47 +211,71 @@ public partial class Main
         var promptSection = Section("提示", 56);
         // 19 号字（不是 20）：两行的**最小**高度 = 2×行高 + 3 ≈ 55，正好卡进 56 的声明值里。
         // 用 20 号字量出来是 59，声明值就得跟着改，而面板总高本来就紧。
-        _editorStatus = Capped(UiKit.Wrapped(_editorRoot, "", px, 0, 680, 56, 19, UiKit.Muted), 2);
+        _editorStatus = UiKit.Capped(UiKit.Wrapped(inner, "", px, 0, 680, 56, 19, UiKit.Muted), 2);
         Row(promptSection, _editorStatus, 0, RowWhen.Filled);
 
-        // ② 选中节点：可读名 / 正式名 / id·位置 / 前置摘要。
+        // ② 选中节点：可读名 / 正式名 / 图标 / id·位置 / 前置摘要。
         // 行距按"上一行的底 + 6"算：这里原先给的是 60 / 94，而可读名那行本身有 56 高、LineEdit 有 38，
         // 94 < 60+38 ⇒ **第 2、3 行压在一起**（截图上是叠字）。控件的高度不是声明值说了算的，
         // 所以行距得让开实际高度——自检里有一条专门量这个。
-        var nodeSection = Section("选中节点", 144);
-        _editorInfo = Capped(UiKit.Wrapped(_editorRoot, "", px, 0, 680, 56, 19, UiKit.Text), 2);
+        var nodeSection = Section("选中节点", 188);
+        _editorInfo = UiKit.Capped(UiKit.Wrapped(inner, "", px, 0, 680, 56, 19, UiKit.Text), 2);
         Row(nodeSection, _editorInfo, 0);
         // 这一格是**可读名**：选中节点时是它的 label，选中空格子时是"给新节点起的名字"，
         // 后者旁边才出现「在此格新建」。**id 不在这儿**——它由编辑器自动分配，界面上不暴露。
         _editorId = new LineEdit { PlaceholderText = "可读名（只给编辑器看）" };
         _editorId.AddThemeFontSizeOverride("font_size", 20);
-        UiKit.Place(_editorId, px, 0, 300, 38); _editorRoot.AddChild(_editorId);
+        UiKit.Place(_editorId, px, 0, 300, 38); inner.AddChild(_editorId);
         _editorId.TextChanged += EditorNameChanged;
         Row(nodeSection, _editorId, 62, RowWhen.Any);
-        _editorNameHint = UiKit.Label(_editorRoot, "只给编辑器看", px + 316, 0, 364, 38, 18, UiKit.Muted);
+        _editorNameHint = UiKit.Label(inner, "只给编辑器看", px + 316, 0, 364, 38, 18, UiKit.Muted);
         Row(nodeSection, _editorNameHint, 62);
-        _editorCreate = UiKit.Button(_editorRoot, "在此格新建", px + 316, 0, 200, 38, EditorCreateNode);
+        _editorCreate = UiKit.Button(inner, "在此格新建", px + 316, 0, 200, 38, EditorCreateNode);
         Row(nodeSection, _editorCreate, 62, RowWhen.Creating);
         _editorFormalName = new LineEdit { PlaceholderText = "正式名（玩家看到的）" };
         _editorFormalName.AddThemeFontSizeOverride("font_size", 20);
-        UiKit.Place(_editorFormalName, px, 0, 300, 38); _editorRoot.AddChild(_editorFormalName);
+        UiKit.Place(_editorFormalName, px, 0, 300, 38); inner.AddChild(_editorFormalName);
         _editorFormalName.TextChanged += EditorFormalNameChanged;
         Row(nodeSection, _editorFormalName, 106);
-        _editorFormalHint = UiKit.Label(_editorRoot, "玩家在说明条上看到的就是它", px + 316, 0, 364, 38, 18, UiKit.Muted);
+        _editorFormalHint = UiKit.Label(inner, "玩家在说明条上看到的就是它", px + 316, 0, 364, 38, 18, UiKit.Muted);
         Row(nodeSection, _editorFormalHint, 106);
+        // 图标：**只在这四个里选**（`GameConfig` 的 `icon` 白名单就是这四个），条目带缩略图。
+        // 做成下拉而不是"素材选择库"：Godot 的 `EditorResourcePicker` 是**编辑器专用**控件，运行时游戏用不了；
+        // 而 `FileDialog` 会让用户挑到任意文件、写出白名单外的值——加载期直接拒整份配置（工程起不来）。
+        _editorIconLabel = UiKit.Label(inner, "图标", px, 0, 120, 38, 19, UiKit.Muted);
+        Row(nodeSection, _editorIconLabel, 150);
+        _editorIcon = new OptionButton();
+        _editorIcon.AddThemeFontSizeOverride("font_size", 19);
+        // 节点图标本身是 60px 的图，**直接塞进下拉会把按钮撑到 72 高**（按钮最小高 = 图高 + 内边距）。
+        // `icon_max_width` 这个主题常量既限制画出来的大小、也把它计入最小高的那部分限制住——
+        // 不然光这一行就会顶掉小半个分区。它是 **theme constant**，不是 C# 属性（没有 `IconMaxWidth`）。
+        _editorIcon.AddThemeConstantOverride("icon_max_width", 22);
+        UiKit.Place(_editorIcon, px + 130, 0, 300, 38); inner.AddChild(_editorIcon);
+        foreach (string iconId in IconChoiceIds())
+        {
+            _editorIconIds.Add(iconId);
+            _editorIcon.AddItem(TalentText.IconLabel(iconId));
+            // 图标取不到就**不带图**（`Texture` 找不到时返回 null，星图那边也是这么兜的）。
+            _editorIcon.SetItemIcon(_editorIconIds.Count - 1, _battle.Texture("node_" + iconId));
+        }
+        _editorIcon.ItemSelected += index =>
+        {
+            if (_editorFillingIcon) return;
+            if (index >= 0 && index < _editorIconIds.Count) EditorSetIcon(_editorIconIds[(int)index]);
+        };
+        Row(nodeSection, _editorIcon, 150);
 
         // ③ 内容：改这几格是最常做的微调，每次都去改 CSV 或找 AI 效率太低（用户原话）。
         // 写完与"复制信息"走同一条"待写"通道，只覆盖被明确要求写的格子。
-        // 高度按实测声明（行距 46 = LineEdit 38 + 8；末行是两行的内容摘要，19 号字约 55 高）——
-        // 声明值现在只是下限，但写成真实值才能让"面板总高"可算。
-        var contentSection = Section("内容", 239);
-        _editorEffectLabel = UiKit.Label(_editorRoot, "效果", px, 0, 120, 38, 19, UiKit.Muted);
+        // 高度按实测声明（行距 46 = LineEdit 38 + 8）——声明值只是下限，但写成真实值才对得上自检。
+        var contentSection = Section("内容", 176);
+        _editorEffectLabel = UiKit.Label(inner, "效果", px, 0, 120, 38, 19, UiKit.Muted);
         Row(contentSection, _editorEffectLabel, 0);
         // **效果也用下拉**（同货币）：12 项已经占两行，以后效果只会更多。
         // 条目文案取 `TalentText.ShortLabel`——与玩家侧那句长文案**同一处维护**，不在编辑器里另写一套。
         _editorEffect = new OptionButton();
         _editorEffect.AddThemeFontSizeOverride("font_size", 19);
-        UiKit.Place(_editorEffect, px + 126, 0, 554, 38); _editorRoot.AddChild(_editorEffect);
+        UiKit.Place(_editorEffect, px + 126, 0, 554, 38); inner.AddChild(_editorEffect);
         foreach (string effectId in EffectChoiceIds())
         {
             _editorEffectIds.Add(effectId);
@@ -321,28 +288,28 @@ public partial class Main
         };
         Row(contentSection, _editorEffect, 0);
         // 两个数值框**各配一个标题**（之前只有占位文字，看不出是什么）。
-        _editorPerLevelLabel = UiKit.Label(_editorRoot, "每级效果量", px, 0, 124, 38, 19, UiKit.Muted);
+        _editorPerLevelLabel = UiKit.Label(inner, "每级效果量", px, 0, 124, 38, 19, UiKit.Muted);
         Row(contentSection, _editorPerLevelLabel, 46);
         _editorPerLevel = new LineEdit();
         _editorPerLevel.AddThemeFontSizeOverride("font_size", 19);
-        UiKit.Place(_editorPerLevel, px + 130, 0, 150, 38); _editorRoot.AddChild(_editorPerLevel);
+        UiKit.Place(_editorPerLevel, px + 130, 0, 150, 38); inner.AddChild(_editorPerLevel);
         _editorPerLevel.TextChanged += EditorPerLevelChanged;
         Row(contentSection, _editorPerLevel, 46);
-        _editorMaxLevelLabel = UiKit.Label(_editorRoot, "最大等级", px + 296, 0, 110, 38, 19, UiKit.Muted);
+        _editorMaxLevelLabel = UiKit.Label(inner, "最大等级", px + 296, 0, 110, 38, 19, UiKit.Muted);
         Row(contentSection, _editorMaxLevelLabel, 46);
         _editorMaxLevel = new LineEdit();
         _editorMaxLevel.AddThemeFontSizeOverride("font_size", 19);
-        UiKit.Place(_editorMaxLevel, px + 410, 0, 110, 38); _editorRoot.AddChild(_editorMaxLevel);
+        UiKit.Place(_editorMaxLevel, px + 410, 0, 110, 38); inner.AddChild(_editorMaxLevel);
         _editorMaxLevel.TextChanged += EditorMaxLevelChanged;
         Row(contentSection, _editorMaxLevel, 46);
-        _editorLevelHint = UiKit.Label(_editorRoot, "", px + 528, 0, 152, 38, 17, UiKit.Muted);
+        _editorLevelHint = UiKit.Label(inner, "", px + 528, 0, 152, 38, 17, UiKit.Muted);
         Row(contentSection, _editorLevelHint, 46);
         // 货币按 `item.csv` 里 `kind=currency` **现取**，不写死 gold/core：加货币不用改这里，也不会漏。
-        _editorCurrencyLabel = UiKit.Label(_editorRoot, "货币", px, 0, 120, 38, 19, UiKit.Muted);
+        _editorCurrencyLabel = UiKit.Label(inner, "货币", px, 0, 120, 38, 19, UiKit.Muted);
         Row(contentSection, _editorCurrencyLabel, 92);
         _editorCurrency = new OptionButton();
         _editorCurrency.AddThemeFontSizeOverride("font_size", 19);
-        UiKit.Place(_editorCurrency, px + 126, 0, 554, 38); _editorRoot.AddChild(_editorCurrency);
+        UiKit.Place(_editorCurrency, px + 126, 0, 554, 38); inner.AddChild(_editorCurrency);
         foreach (var cur in _game.Config.Rows("item").Where(r => r.Text("kind") == "currency"))
         {
             _editorCurrencyIds.Add(cur.Text("id"));
@@ -354,21 +321,21 @@ public partial class Main
             if (index >= 0 && index < _editorCurrencyIds.Count) EditorSetCurrency(_editorCurrencyIds[(int)index]);
         };
         Row(contentSection, _editorCurrency, 92);
+        // 每级消耗**也有标题**（原先只有占位文字，实机反馈看不懂那两个框是什么）。
+        _editorCostLabel = UiKit.Label(inner, "货币消耗", px, 0, 124, 38, 19, UiKit.Muted);
+        Row(contentSection, _editorCostLabel, 138);
         _editorCost = new LineEdit { PlaceholderText = "每级消耗，用 | 分隔" };
         _editorCost.AddThemeFontSizeOverride("font_size", 19);
-        UiKit.Place(_editorCost, px, 0, 420, 38); _editorRoot.AddChild(_editorCost);
+        UiKit.Place(_editorCost, px + 130, 0, 340, 38); inner.AddChild(_editorCost);
         _editorCost.TextChanged += EditorCostChanged;
         Row(contentSection, _editorCost, 138);
-        _editorCostHint = UiKit.Label(_editorRoot, "", px + 430, 0, 250, 38, 17, UiKit.Muted);
+        _editorCostHint = UiKit.Label(inner, "", px + 480, 0, 200, 38, 17, UiKit.Muted);
         Row(contentSection, _editorCostHint, 138);
-        // 这个节点**当前**是什么样子（名字 / 效果 / 属性 / 价目 / 图标）——放它自己那一块里，不再与别处混。
-        _editorContent = Capped(UiKit.Wrapped(_editorRoot, "", px, 0, 680, 44, 19, UiKit.Text), 2);
-        Row(contentSection, _editorContent, 184);
 
         // ④ 前置列表：**条数不限**，所以是滚动容器而不是固定的几个槽位。
         var prereqSection = Section("前置（任一点亮即可）", 90);
         var scroll = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
-        UiKit.Place(scroll, px, 0, 680, 90); _editorRoot.AddChild(scroll);
+        UiKit.Place(scroll, px, 0, 680, 90); inner.AddChild(scroll);
         _editorPrereqList = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         scroll.AddChild(_editorPrereqList);
         Row(prereqSection, scroll, 0);
@@ -379,7 +346,7 @@ public partial class Main
         var actSection = Section("节点操作", 71);
         Button Act(string text, float ax, Action action)
         {
-            var b = UiKit.Button(_editorRoot, text, ax, 0, 220, 32, action, pad: 2);
+            var b = UiKit.Button(inner, text, ax, 0, 220, 32, action, pad: 2);
             b.AddThemeFontSizeOverride("font_size", 18);
             return b;
         }
@@ -397,20 +364,15 @@ public partial class Main
         // 长度控制在**一行内**：超了会顶着标签宽度溢出到面板外面（截图上量到过）。
         // 也别写 `**`：这是普通 Label，不解析 markdown，星号会原样显示出来。
         var aiSection = Section("交接给 AI", 66);
-        _editorIntentLabel = UiKit.Label(_editorRoot,
+        _editorIntentLabel = UiKit.Label(inner,
             "功能意图（要 AI 做的改动 · 做完就清空；空 = 没有待办，AI 不动它）", px, 0, 680, 22, 18, UiKit.Muted);
         Row(aiSection, _editorIntentLabel, 0);
         _editorIntent = new LineEdit { PlaceholderText = "例：攻击 +2 ／ 解锁铸造系统 ／ 章节门 · 破土" };
         _editorIntent.AddThemeFontSizeOverride("font_size", 20);
-        UiKit.Place(_editorIntent, px, 0, 680, 40); _editorRoot.AddChild(_editorIntent);
+        UiKit.Place(_editorIntent, px, 0, 680, 40); inner.AddChild(_editorIntent);
         Row(aiSection, _editorIntent, 26);
-        // 底栏这句是**整个面板的脚注**，不是"交接给 AI"那一块的行——所以不挂进分区。
-        // 挂进去的话，它是 `Always` 行，会让那块在没选中节点时也撑开、底下留一大段空白；
-        // 而不挂进去，六个分区就能一起收起来，只剩这一行常驻。
-        // 它原先钉在 y=1030（压着游戏 HUD，实机反馈过），**一行写完**：占的是 28px 的框，两行就会撑出去。
-        _editorFooter = Capped(UiKit.Wrapped(_editorRoot,
-            "保存即生效：结构/复制/名字/效果/价目都由编辑器写盘，要让节点有用就写意图给 AI。",
-            px, 0, 680, 28, 17, UiKit.Muted), 1);
+        // 底栏那句脚注由 `SectionList` 建并钉在面板底部（见它的构造参数）——它不进分区、也不进视口：
+        // 挂进分区会让那块在没选中节点时也撑开、底下留一大段空白；挂进视口则会随内容滚走。
         LayoutEditorPanel();
         _editorIntent.TextChanged += EditorIntentChanged;
         EditorReload();
@@ -509,6 +471,16 @@ public partial class Main
         cells[column] = value;
     }
 
+    /// <summary>改这个节点的图标（玩家星图上那块图形）。走同一条"待写"通道，只覆盖这一格。</summary>
+    private void EditorSetIcon(string iconId)
+    {
+        if (_editorSelected is not { } sel) return;
+        EditorSetContentCell(sel.Id, "icon", iconId);
+        _editorStatus.Text = $"「{NodeLabel(sel.Id)}」的图标改成「{TalentText.IconLabel(iconId)}」。"
+            + "画布上不画图标，星图上才是这个形状。";
+        EditorRefreshUi();
+    }
+
     /// <summary>改这个节点花哪种货币。灵核节点在画布上带**菱形标记**，所以一改图上立刻看得出来。</summary>
     private void EditorSetCurrency(string currencyId)
     {
@@ -595,22 +567,45 @@ public partial class Main
         _editorCanvas.QueueRedraw();
     }
 
+    /// <summary>
+    /// **按百分比理解的效果**：这两个在 `Talent.csv` 里存的是**分数**（`0.2` = +20%），
+    /// 因为它们并进 `1 + …` 乘区（见 `GameSession.MaxHp` / `Attack`）。
+    /// 而固定值那三个（`atk_flat` / `hp_flat` / `drop_flat`）是乘区外直接相加的绝对量。
+    ///
+    /// 编辑器对这两支**按百分数收、按百分数显示**：用户填 20 就是 +20%。
+    /// 从前是原样读写分数，于是"填 20"被当成 **20 倍**（+2000%）——差两个数量级，
+    /// 而加载期只要求 ≥0，不会替你判断，属于**静默放大**那类错。
+    /// 展示侧本来就是 `:P0`（见 `TalentText`），这里只是把编辑侧对齐到同一个口径。
+    /// </summary>
+    private static readonly string[] PercentEffects = ["atk", "hp"];
+
+    private static bool IsPercentEffect(string effectId) => PercentEffects.Contains(effectId);
+
+    /// <summary>把存盘的分数换算成输入框里的百分数（0.2 → 20）。不是数值字符串时原样返回。</summary>
+    private static string PerLevelToBox(string effectId, string stored)
+        => IsPercentEffect(effectId) && double.TryParse(stored, out double v) ? (v * 100).ToString("0.####") : stored;
+
     /// <summary>改每级效果量。开关类必须大于 0——填 0 是"买了不生效且不报错"的典型静默失效。</summary>
     private void EditorPerLevelChanged(string text)
     {
         if (_editorFillingLevels || _editorSelected is not { } sel) return;
+        string effect = PendingContentRow(sel.Id).GetValueOrDefault("effect", "none");
+        bool percent = IsPercentEffect(effect);
         if (!double.TryParse(text.Trim(), out double per) || per < 0)
         {
             _editorLevelHint.Text = "要 ≥0 的数";
             return;
         }
-        if (GameConfig.SwitchEffects.Contains(PendingContentRow(sel.Id).GetValueOrDefault("effect", "none")) && per <= 0)
+        if (GameConfig.SwitchEffects.Contains(effect) && per <= 0)
         {
             _editorLevelHint.Text = "开关类的每级效果量要大于 0";
             return;
         }
-        EditorSetContentCell(sel.Id, "effect_per_level", per.ToString("0.##"));
-        _editorLevelHint.Text = $"每级 {per:0.##}";
+        // 百分比效果：输入的是**百分数**，落盘要换成分数。用 `0.####` 而不是 `0.##`——
+        // 百分数下 0.1% 这类小值换成 0.001，两位小数会被截成 0。
+        double stored = percent ? per / 100 : per;
+        EditorSetContentCell(sel.Id, "effect_per_level", stored.ToString(percent ? "0.####" : "0.##"));
+        _editorLevelHint.Text = percent ? $"每级 +{per:0.##}%" : $"每级 +{per:0.##}";
         _editorCanvas.QueueRedraw();
     }
 
@@ -660,22 +655,6 @@ public partial class Main
     private void MarkIntentLabel(string intent) =>
         _editorIntentLabel.AddThemeColorOverride("font_color", intent.Trim().Length == 0 ? UiKit.Gold : UiKit.Muted);
 
-    /// <summary>
-    /// 该 id 在 `Talent.csv` 里的**现状**，从磁盘现读——与 <see cref="EditorReload"/> 重读布局同一口径：
-    /// 人在外面改了内容，切回这一屏就该看到最新的。缺行和占位（`effect=none`）都要显眼。
-    /// </summary>
-    private string DescribeContentForEditor(string id)
-    {
-        // **读"即将写下去的那一行"**，不是磁盘上的原样——否则复制信息 / 改正式名之后这一栏纹丝不动，
-        // 用户根本看不出刚才那一下干了什么（实机反馈：点了「复制信息」"界面没变化"）。
-        var r = PendingContentRow(id);
-        if (r.Count == 0) return $"⚠ Talent.csv 里还没有「{id}」——保存会给它补一行免费占位。";
-        if (r["effect"] == "none")
-            return $"{r["name"]}｜尚未配置效果（占位 · 免费）\nicon={r["icon"]}";
-        return $"{r["name"]}｜effect={r["effect"]} +{r["effect_per_level"]}/级\n"
-            + $"max {r["max_level"]} · {r["cost_currency"]} {r["cost"]} · icon={r["icon"]}";
-    }
-
     private void EditorRefreshUi()
     {
         var sel = _editorSelected;
@@ -711,7 +690,9 @@ public partial class Main
             _editorCost.Text = pending.GetValueOrDefault("cost", "");
             _editorFillingCost = false;
             _editorFillingLevels = true;
-            _editorPerLevel.Text = pending.GetValueOrDefault("effect_per_level", "");
+            // 百分比效果的两支按百分数显示（`0.2` 读成 `20`）——与写入口径对称，见 `PercentEffects`。
+            _editorPerLevel.Text = PerLevelToBox(pending.GetValueOrDefault("effect", "none"),
+                pending.GetValueOrDefault("effect_per_level", ""));
             _editorMaxLevel.Text = pending.GetValueOrDefault("max_level", "");
             _editorFillingLevels = false;
         }
@@ -722,7 +703,10 @@ public partial class Main
             // 这一栏就在显示过期状态、骗人（实机反馈过一次："选了灵核，货币状态没跟着变"）。
             var pending = PendingContentRow(sel.Id);
             _editorCostHint.Text = $"共 {pending.GetValueOrDefault("max_level", "1")} 级";
-            _editorLevelHint.Text = "";
+            // 百分比效果**常显单位**：不然"框里那个 20 到底是 20% 还是 20 倍"只能靠猜。
+            // 这一格只有 152px 宽（约 9 个字），所以说不了长句——只说口径。
+            // 其余效果这里清空（它是校验消息的落点，不能留上一条选择留下的字）。
+            _editorLevelHint.Text = IsPercentEffect(pending.GetValueOrDefault("effect", "none")) ? "（百分数）" : "";
             // 效果与货币都改由**下拉的选中项**表达状态（不再是 `●` 标记）。回填时要挡住信号——
             // `Selected` 的 setter 会发出 `ItemSelected`，不挡的话会被当成"用户选了"。
             _editorFillingEffect = true;
@@ -735,10 +719,14 @@ public partial class Main
             int currencyIndex = _editorCurrencyIds.IndexOf(pending.GetValueOrDefault("cost_currency", ""));
             _editorCurrency.Selected = currencyIndex >= 0 ? currencyIndex : 0;
             _editorFillingCurrency = false;
+            // 图标同理：它是"当前状态的读数"，回填时挡住信号（`Selected` 的 setter 会发 `ItemSelected`）。
+            _editorFillingIcon = true;
+            int iconIndex = _editorIconIds.IndexOf(pending.GetValueOrDefault("icon", "utility"));
+            _editorIcon.Selected = iconIndex >= 0 ? iconIndex : 0;
+            _editorFillingIcon = false;
         }
         if (sel is not null)
         {
-            _editorContent.Text = DescribeContentForEditor(sel.Id);
             // 回填时抑制 `TextChanged`：写回去的是同一个值，幂等，但会白跑一次重绘。
             _editorFillingIntent = true;
             _editorIntent.Text = _editorIntents.GetValueOrDefault(sel.Id, "");
@@ -1027,82 +1015,24 @@ public partial class Main
     private void ClearModes() => _editorAwaitingLink = _editorAwaitingCopy = _editorAwaitingMove = false;
 
     /// <summary>
-    /// 重排右侧面板：按顺序给每个分区定位，收起的分区**不占高度**，于是下面几块自动上提。
-    ///
-    /// **这是唯一一处写行控件 y 的地方**（建的时候一律给 0）——两处都写迟早会分叉。
-    /// 同理，行控件的 `Visible` 也只在这里写：`Always` 的行（提示 / 底栏）与是否选中节点无关，
-    /// 其余行跟 `_editorActing` 走。`EditorRefreshUi` 只负责更新 `_editorActing` 与各控件的**内容**。
+    /// 重排右侧面板。实现在 `SectionList.Layout`（与关卡编辑器共用）——
+    /// 这里只把**本编辑器的状态**喂进去：`Always` 的行（提示 / 脚注）与是否选中节点无关，
+    /// 其余行跟"选中了节点 / 选中了空格子"走。`EditorRefreshUi` 只负责更新这两个状态与各控件的**内容**。
     /// </summary>
-    private void LayoutEditorPanel()
-    {
-        float y = EditorPanelTop;
-        foreach (var section in _editorSections)
-        {
-            // 标记跟着"看得见内容没有"走：没选中节点时块是空的，画 ▾ 会让人以为里面藏着东西。
-            bool empty = SectionHeight(section) <= 0;
-            section.Header.Text = (section.Collapsed || empty ? "▸ " : "▾ ") + section.Title;
-            section.Header.Position = new Vector2(section.Header.Position.X, y);
-            float height = section.Collapsed ? 0 : SectionHeight(section);
-            // 标题与行都按**标题按钮自己的**高度排，不用常量 `EditorSectionHeader`：
-            // 按钮也会被 Godot 夹到最小尺寸（21 号字体约 45），拿常量累加会让标题压住自己的底板。
-            float header = section.Header.Size.Y;
-            section.Back.Position = new Vector2(section.Back.Position.X, y);
-            section.Back.Size = new Vector2(section.Back.Size.X, height + header);
-            foreach (var (control, dy, when) in section.Rows)
-            {
-                control.Position = new Vector2(control.Position.X, y + header + dy);
-                control.Visible = !section.Collapsed && RowVisible(when, control);
-            }
-            y += header + height + EditorSectionGap;
-        }
-        // 面板脚注跟在最后一个分区后面——它是全局面板的东西，不属于任何一块。
-        _editorFooter.Position = new Vector2(_editorFooter.Position.X, y);
-        _editorPanelBottom = y + _editorFooter.Size.Y;
-    }
-    /// <summary>分区栈 + 脚注的底边，由 `LayoutEditorPanel` 每次重排时写。</summary>
-    private float _editorPanelBottom;
-
-    /// <summary>
-    /// 分区**实际**占多高：声明高度只是**下限**，真正说了算的是"行里最靠下的那条底边"。
-    ///
-    /// 为什么不能直接用声明值：行的控件高度是 Godot 说了算的（`Control.set_size` 会把尺寸夹到不小于最小尺寸，
-    /// 按钮在 21 号字体下就是夹到 45），而且自动换行的说明文字会随文案长短长高——声明值一旦小于实际，
-    /// 行就撑出底板之外，**下一个分区的底板再盖上来**，画面上是半行字。
-    /// 那个 bug 已经犯过：六个分区里有四个的声明高度不够（差 5~50px），而截图单看是看不出来的。
-    ///
-    /// 这样"装不下"最多让面板整体变长（下限由自检断言守住），不会再出现互相叠字。
-    /// </summary>
-    private float SectionHeight(EditorSection section)
-    {
-        float height = 0;
-        foreach (var (control, dy, when) in section.Rows)
-            if (RowVisible(when, control)) height = Math.Max(height, dy + control.Size.Y);
-        // 一行都不显示（还没选中节点）就**不占高度**：一排空壳子排下来，看起来像界面没加载完。
-        // 声明高度只在"这个块确实有内容"时才当下限用——它表达的是**展开时**该有多高。
-        return height <= 0 ? 0 : Math.Max(height, section.Height);
-    }
-
-    /// <summary>一行在什么时候该出现。`Visible` 与"算不算进分区高度"都读它——**只有这一处判断**。</summary>
-    private bool RowVisible(RowWhen when, Control control) => when switch
-    {
-        RowWhen.Always => true,
-        RowWhen.Filled => control is Label { Text.Length: > 0 },
-        RowWhen.Creating => _editorCreating,
-        RowWhen.Any => _editorActing || _editorCreating,
-        _ => _editorActing,
-    };
-
-    /// <summary>点分区标题：收起 / 展开，然后重排（下面的分区跟着上提或让位）。</summary>
-    private void ToggleEditorSection(EditorSection section)
-    {
-        section.Collapsed = !section.Collapsed;
-        LayoutEditorPanel();
-    }
+    private void LayoutEditorPanel() => _editorPanel.Layout(new SectionState(_editorActing, _editorCreating));
 
     /// <summary>效果下拉的条目：数值类 + 开关类；**解锁类从 `Systems.ByEffect` 现取**（与加载期校验同一处）。</summary>
     private static string[] EffectChoiceIds() =>
         ["none", "atk", "hp", "atk_flat", "hp_flat", "drop_flat",
             "auto_basic", "ranged_basic", "auto_intent", .. Systems.ByEffect.Keys];
+
+    /// <summary>
+    /// 图标下拉的条目。**必须与 `GameConfig` 里 `icon` 的白名单同源**——加载期是按那张表校验的，
+    /// 这里多一个就会写出"下次启动工程起不来"的配置。界面上按 `node_<icon>` 去 `visuals.json` 取图。
+    /// （要加图标得三处一起动：`GameConfig` 白名单 + `tools/SpriteGen` + `visuals.json`，
+    /// 这也是"做成下拉而不是素材选择库"的原因：下拉天然写不出白名单外的值。）
+    /// </summary>
+    private static string[] IconChoiceIds() => ["attack", "defense", "utility", "special"];
 
     /// <summary>进入连线状态：接下来点到的那个节点会被**追加**成一条前置（条数不限，所以没有"第几槽"）。</summary>
     private void EditorBeginLink()
@@ -1366,6 +1296,12 @@ public partial class Main
             if (_editorNames.TryGetValue(n.Id, out string? formalName) && formalName.Trim().Length == 0)
                 return $"{Ref(n)} 的**正式名**不能为空——玩家会在悬停说明条上看到它。";
             if (n.Row < 0 || n.Row >= gridRows) return $"{Ref(n)} 的行号 {n.Row} 越界（网格是 {gridRows} 行）。";
+            // 图标现在也归编辑器写了，所以它也要跟着这条纪律走：**加载期会拒的值不许写出去**。
+            // 下拉天然只产出白名单值，这条是给"以后有人往里塞别的东西"留的保险。
+            string icon = _editorCopied.TryGetValue(n.Id, out var iconCells) && iconCells.TryGetValue("icon", out string? v)
+                ? v : _game.Config.Row("Talent", n.Id).Text("icon");
+            if (icon.Length > 0 && !IconChoiceIds().Contains(icon))
+                return $"{Ref(n)} 的图标「{icon}」不在白名单里（只能选 {string.Join(" / ", IconChoiceIds())}）——写出去下次启动就加载不了。";
             foreach (var p in n.Prereqs)
             {
                 var up = _editorNodes.FirstOrDefault(x => x.Id == p);
@@ -1451,57 +1387,32 @@ public partial class Main
     /// <summary>自检 / 截图用：选一个效果（等价于在下拉里选）。</summary>
     public void TalentEditorSetEffectForCheck(string effectId) => EditorSetEffect(effectId);
 
+    /// <summary>整块面板在屏幕上**允许占到的底边**（`SectionList` 那套的常量）。</summary>
+    public const float EditorPanelBottomLimit = SectionList.BottomLimit;
+
+    // 下面四条自检钩子转发到 `SectionList`——排版机制搬走了，断言的名字与口径**保持不变**，
+    // 所以 `Main.cs` 的冒烟一行都不用改（这是这次重构的安全网）。
+
     /// <summary>自检用：右侧面板有几个分区。</summary>
-    public int TalentEditorSectionCountForCheck => _editorSections.Count;
+    public int TalentEditorSectionCountForCheck => _editorPanel.Count;
 
     /// <summary>自检用：第 index 个分区**标题**当前的 y（验收拢之后下面那块上提了）。</summary>
-    public float TalentEditorSectionYForCheck(int index) => _editorSections[index].Header.Position.Y;
+    public float TalentEditorSectionYForCheck(int index) => _editorPanel.SectionY(index);
 
-    /// <summary>面板（六个分区全展开时）的底边**允许到哪儿**。屏高 1080 留 16 的余量：
-    /// 编辑器是整屏覆盖的工具，出了屏就等于内容看不见了，而它没有滚动条。</summary>
-    public const float EditorPanelBottomLimit = 1080f - 16f;
+    /// <summary>自检用：滚动内容层（分区栈）的总高与视口高度。</summary>
+    public (float Content, float Viewport) TalentEditorPanelScrollForCheck => _editorPanel.ScrollSize;
 
-    /// <summary>自检用：面板（含脚注）的**底边**（设计坐标）。见 <see cref="EditorPanelBottomLimit"/>。</summary>
-    public float TalentEditorPanelBottomForCheck => _editorPanelBottom;
+    /// <summary>自检用：面板**脚注**的底边（屏幕坐标）。它钉在视口下方，必须留在屏内。</summary>
+    public float TalentEditorFooterBottomForCheck => _editorPanel.FooterBottom;
 
-    /// <summary>自检用：每个分区**真正需要**的高度（= 各行里最靠下的那条底边）与**声明的**高度。
-    /// 声明值只是下限（`SectionHeight` 会兜住），但**两者必须一致**：声明值偏小说明数字已经没人维护了，
-    /// 面板总高就成了算命——而总高是硬的（见 <see cref="EditorPanelBottomLimit"/>）。</summary>
-    public IEnumerable<(string Title, float Need, float Declared)> TalentEditorSectionFitForCheck()
-    {
-        foreach (var s in _editorSections)
-        {
-            var visible = s.Rows.Where(r => RowVisible(r.When, r.Control)).ToList();
-            yield return (s.Title, visible.Count == 0 ? 0 : visible.Max(r => r.Dy + r.Control.Size.Y), s.Height);
-        }
-    }
+    /// <summary>自检用：每个分区**真正需要**的高度与**声明的**高度（两边都不含留白）。</summary>
+    public IEnumerable<(string Title, float Need, float Declared)> TalentEditorSectionFitForCheck() => _editorPanel.Fit();
 
-    /// <summary>自检用：分区里**行与行压在一起**的地方（空 = 没有）。
-    /// 同一个 dy 上的行是并排的（一行里放"标签 + 输入框"），不算压；不同 dy 的行如果在竖向上交叠、
-    /// 横向也占同一段，就是真的叠字——根因是行距比控件的**实际**高度小（控件的高度由 Godot 夹出来，
-    /// 不是建的时候写的那个数：按钮在 21 号字下是 45，不是 40）。</summary>
-    public IEnumerable<string> TalentEditorRowOverlapsForCheck()
-    {
-        foreach (var s in _editorSections.Where(s => !s.Collapsed))
-        {
-            // 行矩形：y 用行自己的 dy（**不是**控件当前位置——位置是相对分区顶的，比不了），x/宽用控件的。
-            var rows = s.Rows.Where(r => RowVisible(r.When, r.Control))
-                .Select(r => new Rect2(r.Control.Position.X, r.Dy, r.Control.Size.X, r.Control.Size.Y))
-                .OrderBy(r => r.Position.Y).ToList();
-            for (int i = 1; i < rows.Count; i++)
-            {
-                var above = rows[i - 1];
-                var below = rows[i];
-                if (below.Position.Y < above.End.Y - .5f
-                    && below.Position.X < above.End.X - .5f && above.Position.X < below.End.X - .5f)
-                    yield return $"{s.Title}：「{above.Position.X:F0}」那一行 {above.Position.Y:F0}~{above.End.Y:F0} 压住了 "
-                        + $"{below.Position.Y:F0}~{below.End.Y:F0}（行距要给得开）";
-            }
-        }
-    }
+    /// <summary>自检用：分区里**行与行压在一起**的地方（空 = 没有）。</summary>
+    public IEnumerable<string> TalentEditorRowOverlapsForCheck() => _editorPanel.RowOverlaps();
 
     /// <summary>自检 / 截图用：收起 / 展开第 index 个分区（等价于点它的标题）。</summary>
-    public void TalentEditorToggleSectionForCheck(int index) => ToggleEditorSection(_editorSections[index]);
+    public void TalentEditorToggleSectionForCheck(int index) => _editorPanel.ToggleForCheck(index);
 
     /// <summary>自检用：往「最大等级」框里打字（同样要显式发信号，见 `TalentEditorSetCostForCheck`）。</summary>
     public void TalentEditorSetMaxLevelForCheck(string text)
@@ -1531,6 +1442,27 @@ public partial class Main
         _editorCost.Text = text;
         _editorCost.EmitSignal(LineEdit.SignalName.TextChanged, text);
     }
+
+    /// <summary>自检用：往「每级效果量」框里打字（同样要显式发信号，理由见 `TalentEditorSetCostForCheck`）。</summary>
+    public void TalentEditorSetPerLevelForCheck(string text)
+    {
+        _editorFillingLevels = false;
+        _editorPerLevel.Text = text;
+        _editorPerLevel.EmitSignal(LineEdit.SignalName.TextChanged, text);
+    }
+
+    /// <summary>自检用：**框里现在显示的是什么**。百分比效果按百分数显示，所以它同时验了回填那一侧的换算。</summary>
+    public string TalentEditorPerLevelForCheck() => _editorPerLevel.Text;
+
+    /// <summary>自检用：图标下拉里当前选中的是哪一个（等价于"看面板上标的图标"）。</summary>
+    public string TalentEditorIconForCheck()
+    {
+        int index = (int)_editorIcon.Selected;
+        return index >= 0 && index < _editorIconIds.Count ? _editorIconIds[index] : "";
+    }
+
+    /// <summary>自检 / 截图用：选一个图标（等价于在下拉里选）。</summary>
+    public void TalentEditorSetIconForCheck(string iconId) => EditorSetIcon(iconId);
 
     /// <summary>
     /// 自检 / 截图用：当前连线状态下**会被描成金框**的候选 id。
@@ -1612,7 +1544,7 @@ public partial class Main
             string content = BuildAlignedContent(out int added, out int removed);
             // 三张表走同一次事务：两边 id 一旦对不上，加载期会**直接拒绝整份配置**，
             // 所以不允许留下"布局写成功了、内容没跟上"这种半成品。
-            WriteAllOrNothing(
+            EditorFiles.WriteAllOrNothing(
                 (ProjectSettings.GlobalizePath(PlanPath), BuildPlanText()),
                 (ProjectSettings.GlobalizePath(LayoutPath), "id,col,row,prereq,label\n" + CsvTable.Write(rows)),
                 (ProjectSettings.GlobalizePath(ContentPath), content));
@@ -1700,39 +1632,6 @@ public partial class Main
         return header.Select(h => values.GetValueOrDefault(h, "")).ToArray();
     }
 
-    /// <summary>
-    /// 多文件一起保存：任一失败，就把已经写过的按快照回滚。
-    /// 单文件的 <see cref="WriteAtomic"/> 保证不了跨文件一致，而"布局与内容两边 id 对不上"
-    /// 是加载期**直接拒绝整份配置**的错——不能让半成品落在磁盘上。
-    /// 备份允许文件不存在（侧车第一次跑时就是这种情形）。
-    /// </summary>
-    private static void WriteAllOrNothing(params (string Path, string Text)[] files)
-    {
-        var backup = files.Select(f => (f.Path, Old: File.Exists(f.Path) ? File.ReadAllText(f.Path) : null)).ToList();
-        try { foreach (var (path, text) in files) WriteAtomic(path, text); }
-        catch
-        {
-            foreach (var (path, old) in backup)
-            {
-                try
-                {
-                    if (old is null) { if (File.Exists(path)) File.Delete(path); }
-                    else WriteAtomic(path, old);
-                }
-                catch { /* 回滚本身失败就只能留下原始异常，别再盖掉它 */ }
-            }
-            throw;
-        }
-    }
-
     /// <summary>画布上的单行摘要：超出就截断。格宽固定，长句会糊到隔壁格子上。</summary>
     private static string Truncate(string text, int max) => text.Length <= max ? text : text[..max] + "…";
-
-    /// <summary>先写 `.tmp` 再原子替换，最后留一份 `.bak`——中途失败不会把源表写坏。</summary>
-    private static void WriteAtomic(string path, string text)
-    {
-        string tmp = path + ".tmp";
-        File.WriteAllText(tmp, text, new System.Text.UTF8Encoding(false));
-        File.Move(tmp, path, overwrite: true);
-    }
 }

@@ -1,6 +1,16 @@
 ﻿# 数值刻度与 TTK 规划（草案，待确认）
 
-> 状态：**主轴刻度已落地**（见第 8.1 节），第 9 节列着仍未接入的外挂系统。本文定刻度、口径与推导方法；**数值本身由 `tools/BalanceCurve` 生成，不要手改 `level.csv`**。
+> 状态：**主轴刻度已落地**（见第 8.1 节），第 9 节列着仍未接入的外挂系统。本文定刻度、口径与推导方法。
+>
+> ⚠️ **2026-10-07 起，`level.csv` 那七个倍率列归关卡编辑器（`UI/LevelEditor.cs`）**——用户拍板"编辑器为准、
+> 模型降级成建议"。所以 `tools/BalanceCurve` 现在**默认只算建议、不写盘**（要整条重算得显式传 `--write`），
+> 编辑器里会逐列显示"模型建议值 + 偏差"并支持一键采纳。模型公式两边**共用同一份**
+> （`idle-sword/Core/Data/LevelCurve.cs`，工具用 `<Compile Include>` 链接）。
+>
+> 🚨 **顺带发现：这份表早就与模型脱节了。** 搬运时拿原版工具对跑验证，两边一致地报出
+> **100 行里 394 个格子与公式不符**：`normal_hp(100)` 文件是 **2212.9**、模型算 **15750.5**（差 7 倍）。
+> 也就是说 `--check` 一直是红的、而没人跑它。**做数值批次时要先处理这一条**：要么按模型重算，要么明确承认
+> 手调曲线就是当前设计（编辑器里的"建议 vs 实际"表就是给这个判断用的）。
 >
 > **做数值计算前先读这一份。** 任何技能、怪物、关卡、天赋、武器的数值调整，都应当先回来看第 3–6 节的推导口径，不要直接改单个数字；改完按第 8.2 节重算。
 >
@@ -389,7 +399,7 @@ normal_hp(order) = SU(order) / 标准怪基础HP(30)
 | 7 | 一个剑诀都没学时，裂隙停步射程**回落到普攻射程** | 同上，`AttackRange` |
 | 8 | 武器 `base_atk` 12/45/160 → **4/8/14**（临时） | [Equip.csv](../../idle-sword/Config/Tables/Equip.csv) |
 | 9 | `wave_5` 换成 `slime + tank + mage` | [wave_unit.csv](../../idle-sword/Config/Tables/wave_unit.csv) |
-| 10 | 100 关的 `normal_hp` / `normal_atk` / `elite_hp` / `elite_atk` / `boss_hp` / `boss_atk` / `rift_hp` 按第 4.1 节公式重算 | [level.csv](../../idle-sword/Config/Tables/level.csv)，由 `tools/BalanceCurve` 生成 |
+| 10 | 100 关的 `normal_hp` / `normal_atk` / `elite_hp` / `elite_atk` / `boss_hp` / `boss_atk` / `rift_hp` 按第 4.1 节公式重算 | [level.csv](../../idle-sword/Config/Tables/level.csv)。⚠️ 这七个倍率列**2026-10-07 起归关卡编辑器**：`tools/BalanceCurve` 默认只算建议、不写盘 |
 | 11 | **境界编制重排**：元婴三式下移到金丹（御雷真诀补 `stun`），元婴换成天剑 / 大庚剑阵 / 醉仙望月步（醉仙从筑基上移），筑基加入跟随召唤剑侍 | [SwordSkill.csv](../../idle-sword/Config/Tables/SwordSkill.csv)，编制与理由见 [skill_realms.md](skill_realms.md) |
 | 12 | 青莲剑阵 / 霜华剑域 / 焚天剑阵 归档 | [SwordSkill_Retired.csv](../../idle-sword/Config/Tables/SwordSkill_Retired.csv) |
 | 13 | `SwordUpgrade.csv` 随编制重排：删掉归档三技能的 12 行、补上新技能的 12 行，仍是 60 行 | [SwordUpgrade.csv](../../idle-sword/Config/Tables/SwordUpgrade.csv) |
@@ -414,8 +424,10 @@ normal_hp(order) = SU(order) / 标准怪基础HP(30)
 > 第 25、26 条按"**E1 不变**"重算了两式的 `power`，但 `苍穹剑陨` 的周期取 14 秒、`power` 取两位小数，链上的贡献是 11.96×6÷14 = **5.1257**，与旧的 5.12 差 **0.1%**——`normal_hp(100)` 因此从 440.11 微涨到 **440.12**，`level.csv` 照惯例重新生成。两个技能的**单次价值**因此都不需要进数值复核名单。
 
 ```bash
-dotnet run --project tools/BalanceCurve -- idle-sword/Config/Tables            # 重算并写回
-dotnet run --project tools/BalanceCurve -- --check idle-sword/Config/Tables    # 只校验，不一致就非零退出
+dotnet run --project tools/BalanceCurve -- idle-sword/Config/Tables            # 默认：打印模型曲线 + 与文件的偏差，不写盘
+dotnet run --project tools/BalanceCurve -- idle-sword/Config/Tables --write    # 按模型整条重算并写回
+dotnet run --project tools/BalanceCurve -- idle-sword/Config/Tables --check    # 只比对，不一致就非零退出
+dotnet run --project tools/BalanceCurve -- idle-sword/Config/Tables --sample   # 打印 §4.4 的采样表
 ```
 
 工具里的常量就是本文第 4.3 节的假设，两边必须一起改；它还会核对 `monster.csv` 的 `elite.hp` / `boss.hp` 是否等于 10 SU / 75 SU。

@@ -61,4 +61,18 @@ public static class TalentText
         "intent_system" => "参悟门",
         _ => effect,
     };
+
+    /// <summary>
+    /// 节点**图标**的中文名，给编辑器的图标下拉用（与 <see cref="ShortLabel"/> 同一条理由：
+    /// 文案只在一处维护，缺了不会报错、只会显示成 id）。
+    /// 取值必须与 `GameConfig` 里 `icon` 的白名单一致——界面按 `node_&lt;icon&gt;` 去 `visuals.json` 取图。
+    /// </summary>
+    public static string IconLabel(string icon) => icon switch
+    {
+        "attack" => "攻",
+        "defense" => "守",
+        "utility" => "用",
+        "special" => "特",
+        _ => icon,
+    };
 }

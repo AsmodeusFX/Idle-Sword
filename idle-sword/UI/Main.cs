@@ -177,6 +177,8 @@ public partial class Main : Control
         // 摆在前面的话，打开编辑器还能看到"初版试炼 / 每关首杀灵核"浮在面板底下，
         // 而面板稍微长一点就会和它叠字。这层顺序一改，编辑器就是干净的独占画面。
         BuildTalentEditor();
+        // 关卡编辑器同理：整屏覆盖的开发期工具，建在底部 HUD 之后、不进 `_hudNodes`。
+        BuildLevelEditor();
         // 过场要收起来的 HUD。**故意不含标题**——开场挂着游戏名是想要的。
         // **星图与锁那三层（`_talentRoot` / `_lockMask` / `_lockFx`）刻意不在这里**：它们把守的矩形是
         // 同一块，而且星图的可见性本来就跟着"修行锁没锁"走——交给 `RefreshHudLayers` 一处算，
@@ -1025,7 +1027,35 @@ public partial class Main : Control
                 throw new Exception("开关类的价目没跟着收成 1 档：" + switchRow["cost"]);
             if (double.Parse(switchRow["effect_per_level"]) <= 0)
                 throw new Exception("开关类的每级效果量没自动设成 >0（那会让它买了不生效）");
-            // ⑮ 分区能收拢，而且**收拢之后下面那块的标题必须跟着上提**——
+            // ⑮ 百分比效果：**框里填的是百分数**，落盘要换成分数。
+            //    这一条是这次改动的核心——从前是原样读写分数，于是"填 20"被当成 20 倍（+2000%），
+            //    而加载期只要求 ≥0，不会替任何人判断，属于**静默放大**那类错。
+            TalentEditorSetEffectForCheck("hp");
+            TalentEditorSetPerLevelForCheck("20");
+            string storedPer = TalentEditorAlignedRowForCheck(billNode)["effect_per_level"];
+            if (storedPer != "0.2")
+                throw new Exception($"百分比效果填 20 应当存成 0.2（= +20%），实际存了 {storedPer}");
+            //    反过来也要成立：换一个选中项再换回来，框里必须**重新显示成 20**（不是 0.2）。
+            string? otherNode = TalentEditorNodesForCheck().Select(n => n.Id).First(id => id != billNode);
+            TalentEditorSelectForCheck(otherNode);
+            TalentEditorSelectForCheck(billNode);
+            if (TalentEditorPerLevelForCheck() != "20")
+                throw new Exception("百分比效果回填时应当显示百分数 20，实际是 " + TalentEditorPerLevelForCheck());
+            //    固定值那几支**不换算**——同一套读写走下来必须还是原样（否则就是"改一处、另一处跟着变"）。
+            TalentEditorSetEffectForCheck("hp_flat");
+            TalentEditorSetPerLevelForCheck("10");
+            if (TalentEditorAlignedRowForCheck(billNode)["effect_per_level"] != "10")
+                throw new Exception("固定值效果不该被换算：" + TalentEditorAlignedRowForCheck(billNode)["effect_per_level"]);
+            // ⑯ 图标下拉：选一下必须写进待写的那一行，而且**不换选中项**也要跟手——
+            //    与 ⑬ 货币那条同一个形状：它是"当前状态的读数"，不是用户正在打的字。
+            if (TalentEditorIconForCheck() != "utility")
+                throw new Exception("新建节点的默认图标应当是 utility，实际是 " + TalentEditorIconForCheck());
+            TalentEditorSetIconForCheck("attack");
+            if (TalentEditorAlignedRowForCheck(billNode)["icon"] != "attack")
+                throw new Exception("改图标没写进待写的那一行：" + TalentEditorAlignedRowForCheck(billNode)["icon"]);
+            if (TalentEditorIconForCheck() != "attack")
+                throw new Exception("选了图标之后下拉自己没跟过去：" + TalentEditorIconForCheck());
+            // ⑰ 分区能收拢，而且**收拢之后下面那块的标题必须跟着上提**——
             //    这是布局重排唯一会错的地方（留空洞、或者叠在一起），而**截图上看不出来**：
             //    画面上"它在哪儿"永远像是合理的，只有比 y 才抓得到。
             if (TalentEditorSectionCountForCheck < 3) throw new Exception("分区个数不对");
@@ -1038,21 +1068,25 @@ public partial class Main : Control
             TalentEditorToggleSectionForCheck(1);
             if (Math.Abs(TalentEditorSectionYForCheck(2) - belowBefore) > .01)
                 throw new Exception("再展开之后位置没还原（收拢展开一趟就漂了）");
-            // ⑯ 分区**声明的**高度必须和它**实际**需要的一样高。声明值偏小不会当场出问题
-            //    （`SectionHeight` 会兜住），但面板总高就没人算得准了——而总高是硬的（见 ⑰）。
-            //    六个分区里有四个的声明值曾经不够（差 5~50px），这正是"截图上一块块都是字、实际互相叠"的来源。
+            // ⑱ 分区**声明的**高度必须和它**实际**需要的一样高。声明值偏小不会当场出问题
+            //    （`SectionHeight` 会兜住），但面板总高就没人算得准了。两边都**不含上下留白**，
+            //    是同类比同类；留白由 `SectionHeight` 统一加上。
             foreach (var (title, need, declared) in TalentEditorSectionFitForCheck())
                 if (need > declared + .5f)
                     throw new Exception($"编辑器「{title}」声明的 {declared:F0}px 装不下它的行（需要 {need:F0}px）：把声明值改过来");
-            // ⑰ 行与行不许叠。控件的**实际**高度由 Godot 说了算（按钮在 21 号字下是 45，不是建时写的 40），
-            //    行距写小了就压在一起。这一条和 ⑯ 是配套的：⑯ 管"分区够不够高"，这条管"分区内部排得对不对"。
+            // ⑲ 行与行不许叠。控件的**实际**高度由 Godot 说了算（按钮在 21 号字下是 45，不是建时写的 40），
+            //    行距写小了就压在一起。这一条和 ⑱ 是配套的：⑱ 管"分区够不够高"，这条管"分区内部排得对不对"。
             foreach (string overlap in TalentEditorRowOverlapsForCheck())
                 throw new Exception("编辑器分区里有行压在一起：" + overlap);
-            // ⑱ 整块面板必须在屏幕里。编辑器没有滚动条——出了屏就是真的看不见（这个 bug 犯过两次：
-            //    底栏钉在 y=1030 压住 HUD；分区高度普遍不够时栈顶冲到 1149）。
-            if (TalentEditorPanelBottomForCheck > EditorPanelBottomLimit)
-                throw new Exception($"编辑器面板出了屏：底边 {TalentEditorPanelBottomForCheck:F0} > {EditorPanelBottomLimit:F0}"
-                    + "（加分区 / 加行 / 把文案改长之前，先按 EditorSectionGap 的说明算一遍总高）");
+            // ⑳ 面板现在是**滚动**的，所以"出屏"不再是错——错的是别的：视口高度必须是正的
+            //    （否则一条都看不见），而且分区栈的总高必须真的写进了内容层（否则滚不到底、尾部被裁）。
+            var (panelContent, panelViewport) = TalentEditorPanelScrollForCheck;
+            if (panelViewport <= 0) throw new Exception($"编辑器面板的滚动视口高度是 {panelViewport:F0}：一条都看不见了");
+            if (panelContent + .5f < TalentEditorSectionYForCheck(TalentEditorSectionCountForCheck - 1))
+                throw new Exception($"编辑器面板的滚动内容层比最后一个分区还矮（内容 {panelContent:F0}）：尾部会被裁掉、又滚不到");
+            // 脚注钉在视口下方，它必须还在屏内——那句话是"保存后还要不要别的步骤"的答案，不能被切掉。
+            if (TalentEditorFooterBottomForCheck > EditorPanelBottomLimit)
+                throw new Exception($"编辑器脚注出了屏：底边 {TalentEditorFooterBottomForCheck:F0} > {EditorPanelBottomLimit:F0}");
             TalentEditorReloadForCheck();
             TalentEditorReloadForCheck();   // 丢掉这一轮的全部临时改动
             TalentEditorSaveForCheck();
@@ -1061,12 +1095,32 @@ public partial class Main : Control
             ToggleTalentEditor();
             foreach (var (id, _) in demo) _game.State.Talents.Remove(id);
             ShowPage(0); Refresh();
+            // ── 关卡编辑器 ──（与节点编辑器同一条纪律：探针从配置现取、破坏性动作演练完就丢弃）
+            await LevelEditorSmoke(Capture);
+
             _intentTab = 0; ShowPage(3); Refresh(); await Capture("-intent");
             ShowPage(0); Refresh(); await Capture("");
             // GM 面板：发放后续步骤所需资源（既覆盖 GM→GameSession 接线，也避免界面直接改写钱包），
             // 并顺带按一下波次加成的 ＋ / −，把那条接线也走一遍。
             Tap("GM");
             if (_gmRoot is null || !_gmRoot.Visible) throw new Exception("GM panel did not open");
+            // ㉑ 面板的**分区规矩**：每个按钮都必须落在某一块大区底板之内。
+            //    这条是"以后拓展对应内容都要放在指定区域里"的可执行形式——加东西时忘了放进区、
+            //    或者坐标算歪把控件摞到区外面，这里当场报红，而不是等下次有人看图才看出来。
+            //    （面板里唯一不在区内的按钮是「关闭」——它是整块面板的标题栏，不属于任何一区。）
+            var gmAreas = GmAreaRectsForCheck().ToList();
+            if (gmAreas.Count < 2) throw new Exception($"GM 面板应当有 2 块大区，实际 {gmAreas.Count}");
+            foreach (var button in GmButtonsForCheck())
+            {
+                if (button.Text == "关闭") continue;
+                var rect = new Rect2(button.Position, button.Size);
+                if (!gmAreas.Any(a => a.Encloses(rect)))
+                    throw new Exception($"GM 面板的「{button.Text}」不在任何一块大区里"
+                        + $"（位置 {rect.Position} 尺寸 {rect.Size}）——按 GmPanel 顶部那条判据把它放进对应区域");
+            }
+            // ㉒ 面板得留在屏内：它是浮动的、没有滚动条，出了屏就是那一块真的看不见。
+            if (GmPanelBottomForCheck() > 1080 - 16)
+                throw new Exception($"GM 面板出了屏：底边 {GmPanelBottomForCheck():F0} > {1080 - 16}");
             await Capture("-gm");
             Tap("每种货币");
             if (_game.State.Amount("gold") < 10000 || _game.State.Amount("core") < 10000) throw new Exception("GM UI action failed");
