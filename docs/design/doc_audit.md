@@ -149,7 +149,7 @@
 
 ## E. 核验通过（不必改，列出来免得下次重查）
 
-- **19 张可加载表的实际表头与 `docs/data/fields.md` 的字段字典逐列一致**，无漏写/多写（含 `monster.csv` 12 列、`level.csv` 16 列、`SwordSkill.csv` 37 列、`Talent.csv` 7 列等）。
+- **19 张可加载表的实际表头与 `docs/data/fields.md` 的字段字典逐列一致**，无漏写/多写（含 `monster.csv` 12 列、`level.csv` 16 列、`SwordSkill.csv` **39** 列、`Talent.csv` 7 列等）。
 - 最近几轮的改动**在代码/配置里都已落地**：小额刻度、`boss_melee`、前三关 `cells=5`、`wave_10`、`melee_range/melee_stop_range`、`starting_gold=0`（且加载期已放行）、七种 `atk_flat/hp_flat/drop_flat/auto_basic/ranged_basic/*_system`、`PlayerState.UnlockedSystems` + `Core/State/Systems.cs`、`UI/Locks.cs`、`UI/Respawn.cs`、页签「法术」。
 - `AGENTS.md` 与根 `README.md` 的**命令与路径有效**：`tests/IdleSword.Checks.csproj`、`idle-sword/Idle-Sword.csproj`、`Idle-Sword.sln`、`tools/{SoundGen,SpriteGen,BalanceCurve,PackWindows}` 都在；AGENTS.md 要求先读的三份文档都在；Godot 版本串与 `project.godot` 一致。
 - `core_rules.md:58`（近战 150/120 → 远程 950/640）、`:60`（点击攻击共用冷却键）、`:61`（生根解锁自动攻击）、`:96-97`（`Systems.ByEffect` 与加载期强制登记）**与实现一致**。
@@ -244,4 +244,24 @@
 | --- | --- |
 | **A3**（`monsters.md` 整篇旧刻度） | §一 七原型表按 `monster.csv` 重填（标准怪 30 / 精英 300 / BOSS 2250），补了 `boss_melee` 鼠妖只有第 1 关用的说明；§三 波次混编从 6 条补到 **11 条**，`level.csv` 的三段映射改成实际的（第 1–2 关教学专用、第 3–50 关六循环 `{wave_3,7,8,9,1,2}`、第 51–100 关三循环 `{wave_4,5,6}`），强度梯度改成"只有 `wave_4/5/6` 带梯度、其余八条一律 1.00/1.00"；§四 补了"11 个模板共用 10 套图"（`boss_melee` 复用 `boss`）；§五第 4 条的可见窗口 2190 → **1920** |
 | **A9** 的一半 | 同一次改 `monsters.md` 时把 §三 的数量那一段按 `wave_growth` / `wave_accel` 与各波 `count_max` 重算了（原来那句"第 80 关不再触顶"与实际相反：`wave_1`/`wave_9` 的 13 只约第 84 关起封顶、`wave_4` 的 14 只约第 89 关起） |
+
+---
+
+## 已经在这一轮修掉的（2026-10-08，技能三层结构那一轮）
+
+这一轮把 15 个技能从一张 39 列的 `SwordSkill.csv` 拆成五张表（`SkillEffect` / `SkillBuff` /
+`SkillBuffTimeline` / `SkillBuffTrigger`），**数值与行为逐位未变**。字段字典与配置规划随之重写，
+下面这些旧的「文档 vs 配置」对不上的条目因此一并消失：
+
+| 条目 | 怎么修的 |
+| --- | --- |
+| **A6 的 power 部分** | `sword_skills.md` 五境界表里 7 个技能的 `power` 是旧值（万剑决 0.98 / 天剑 9.00 / 焚天剑诀 3.07 / 寒冰龙卷 2.93 / 苍穹剑陨 23.92 / 斩鬼神 106.77 / 诛仙剑阵 37.00），已按 `SwordSkill.csv` 逐一对齐成 1.19 / 5.24 / 2.52 / 2.51 / 29.4 / 279 / 41.1 |
+| **A11 的 `SwordSkill.csv` 列数** | 上面 E 节第 152 行把它记成 **37 列**，实际是 **39 列**（`gather` / `band` 加入后没跟；`fields.md` 的逐列字典本来就是 39 个字段，写错的是这份审计）。已改对；拆表之后在役的 `SwordSkill.csv` 是 **17 列** |
+| **A11 的旧技能名** | `fields.md` 里「薯皮」「天陨」「身外身」三个旧名已改成 **剑罡护体 / 苍穹剑陨 / 剑二十三**（招式名一律用修仙本名） |
+| **新发现：模型的判据漏改** | `LevelCurve.DamageWindow` 一直拿 `power == 1` 当"写不写窗"的判据，而模拟侧（`CastBuff`）用的是显式标记 `damage_window`——`combat.md` §12.1 第 2 条要求两者分开，**模拟侧改了、模型侧漏了**。当前两边结论恰好相同（净影响 0），已趁这次拆表改成同口径 |
+| **新发现：界面上的死分支** | `BattleView` 给 `skill_15` 画「斩杀」标签的分支要求 `ExecuteThreshold > 0`，而诛仙剑阵从来不配斩杀——**永远画不出来**。已删（它是既没有载体、也没有测试覆盖的死代码） |
+| **新发现：`Shape` 印假数字** | `sky_drop` 的摘要无条件印「高差 N」，`skill_18` 的 `spawn_jitter = 0` 时印出「高差 0」；另外 `band > 0` 时 `spread` 完全不参与计算却仍会印「间距」。已改成只在实际参与计算时才印 |
+
+> ⚠️ **本轮**修好了 `sword_skills.md` 的 `power` 值，但**没有**动 A5（`skill_realms.md` 的筑基档整段
+> 用旧技能名）与 A7（`skill_values.md` 的口径仍是旧锚 `3.5`）——那两条与本轮无关，仍在清单上。
 
