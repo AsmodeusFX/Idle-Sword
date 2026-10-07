@@ -133,30 +133,30 @@ public partial class Main
         float row, left = GmLeft + GmCtrlX;
         row = Row("资源");
         UiKit.Button(_gmRoot, "每种货币 +10000", left, row, 260, GmRowHeight, () => { _game.GrantAllCurrencies(); Refresh(); })
-            .TooltipText = "item.csv 中每种货币各 +10000，新增货币自动纳入。";
+            .Tip("item.csv 中每种货币各 +10000，新增货币自动纳入。");
         NextRow();
         // 「解锁」单独一行：它是**开玩法开关**，不是发东西；而且这一行正是以后加解锁 / 开关类命令的落点
         // （现在只有一个按钮是刻意的，不是没排满）。
         row = Row("解锁");
         UiKit.Button(_gmRoot, "一键解锁", left, row, 140, GmRowHeight, () => { _game.UnlockAllSystems(); Refresh(); })
-            .TooltipText = "解锁全部系统（修行 / 境界 / 铸造 / 参悟 / 剑灵），与正常玩法走的是同一个解锁集合。";
+            .Tip("解锁全部系统（修行 / 境界 / 铸造 / 参悟 / 剑灵），与正常玩法走的是同一个解锁集合。");
         NextRow();
         // 怪物倍率：乘在关卡 / 波次倍率之后，**改完立刻作用于场上的怪**（不必等下一波）。
         // 按钮文字带上名字（"血量−" / "血量＋"），否则烟雾测试里 `Tap("＋")` 会撞上另外两行——
         // 它取的是全树第一个前缀匹配。
         row = Row("怪物倍率");
         UiKit.Button(_gmRoot, "血量−", left, row, 100, GmRowHeight, () => { _game.MonsterHpScale = StepScale(_game.MonsterHpScale, -1); RefreshGm(); })
-            .TooltipText = "怪物血量的额外倍率（1 = 不额外缩放）。乘在关卡与波次倍率之后。";
+            .Tip("怪物血量的额外倍率（1 = 不额外缩放）。乘在关卡与波次倍率之后。");
         _monsterHpValue = UiKit.Label(_gmRoot, "", left + 110, row, 240, GmRowHeight, 24);
         UiKit.Button(_gmRoot, "血量＋", left + 360, row, 100, GmRowHeight, () => { _game.MonsterHpScale = StepScale(_game.MonsterHpScale, 1); RefreshGm(); })
-            .TooltipText = "怪物血量的额外倍率（1 = 不额外缩放）。改完立刻作用于场上的怪，不会等下一波。";
+            .Tip("怪物血量的额外倍率（1 = 不额外缩放）。改完立刻作用于场上的怪，不会等下一波。");
         NextRow();
         row = Row("");
         UiKit.Button(_gmRoot, "攻击−", left, row, 100, GmRowHeight, () => { _game.MonsterAtkScale = StepScale(_game.MonsterAtkScale, -1); RefreshGm(); })
-            .TooltipText = "怪物攻击的额外倍率（1 = 不额外缩放）。";
+            .Tip("怪物攻击的额外倍率（1 = 不额外缩放）。");
         _monsterAtkValue = UiKit.Label(_gmRoot, "", left + 110, row, 240, GmRowHeight, 24);
         UiKit.Button(_gmRoot, "攻击＋", left + 360, row, 100, GmRowHeight, () => { _game.MonsterAtkScale = StepScale(_game.MonsterAtkScale, 1); RefreshGm(); })
-            .TooltipText = "怪物攻击的额外倍率（1 = 不额外缩放）。改完立刻作用于场上的怪。";
+            .Tip("怪物攻击的额外倍率（1 = 不额外缩放）。改完立刻作用于场上的怪。");
         NextRow();
         // 主角这一行放两个**玩家侧开关**：无敌与普攻形态。原来它们各占"标题一行 + 按钮一行"，
         // 竖向太浪费；而两者的性质一致（都是改主角自己），并排一行读起来也更顺。
@@ -169,7 +169,7 @@ public partial class Main
             _invincibleButton.Text = InvincibleText;
             RefreshGm();
         });
-        _invincibleButton.TooltipText = "不掉血、不死亡。死亡会清增益并重置冷却，让伤害统计断档——挂一局量数字前先打开它。";
+        _invincibleButton.Tip("不掉血、不死亡。死亡会清增益并重置冷却，让伤害统计断档——挂一局量数字前先打开它。");
         // 普攻形态：翻转修行树上的「剑气」解锁，用来对照近战与远程两种形态。
         // **它改的就是玩法状态本身**（不是另开一个会话开关）：所以两边行为一定一致，没有"调试态与真实态不同"的坑。
         _meleeButton = UiKit.Button(_gmRoot, MeleeText, left + 190, row, 180, GmRowHeight, () =>
@@ -177,15 +177,15 @@ public partial class Main
             _game.DebugToggleRangedBasic();
             RefreshGm();
         });
-        _meleeButton.TooltipText = "翻转「剑气」节点：近战 = 射程 150 / 停步 120 / 挥剑斩击；远程 = 射程 950 / 停步 640 / 平射飞剑。";
+        _meleeButton.Tip("翻转「剑气」节点：近战 = 射程 150 / 停步 120 / 挥剑斩击；远程 = 射程 950 / 停步 640 / 平射飞剑。");
         NextRow();
         // 波次数量：只影响**之后**刷出的波次与前行的下一格，已经在场的怪不动。
         row = Row("波次数量");
         UiKit.Button(_gmRoot, "波次−", left, row, 100, GmRowHeight, () => { _game.WaveBonus--; RefreshGm(); })
-            .TooltipText = "每波额外少刷几只（下限 0）。";
+            .Tip("每波额外少刷几只（下限 0）。");
         _waveBonusValue = UiKit.Label(_gmRoot, "", left + 110, row, 240, GmRowHeight, 24);
         UiKit.Button(_gmRoot, "波次＋", left + 360, row, 100, GmRowHeight, () => { _game.WaveBonus++; RefreshGm(); })
-            .TooltipText = "每波额外多刷几只，种类从普通怪里随机挑。上限 20。";
+            .Tip("每波额外多刷几只，种类从普通怪里随机挑。上限 20。");
         NextRow();
         EndArea(commands);
 
@@ -196,21 +196,21 @@ public partial class Main
         // 修行星图的节点编辑器（开发期工具）。它**只写 TalentLayout.csv**，内容表仍手工维护；
         // 保存前按与加载期同一套规则自查，不合格就拒绝保存、不碰任何文件。
         UiKit.Button(_gmRoot, "节点编辑器", left, row, 180, GmRowHeight, () => { CloseGm(); ToggleTalentEditor(); })
-            .TooltipText = "编辑修行星图的格子与前置连线。只写布局表；新建节点会给内容表补一行骨架。";
+            .Tip("编辑修行星图的格子与前置连线。只写布局表；新建节点会给内容表补一行骨架。");
         // 第二个编辑器（以后再来的按同一条规矩加在这一行/下面），落在「编辑器」这个小分区里。
         UiKit.Button(_gmRoot, "关卡编辑器", left + 190, row, 180, GmRowHeight, () => { CloseGm(); ToggleLevelEditor(); })
-            .TooltipText = "看关卡长度 / 强度倍率曲线 / 波次与首领，并显示模型建议值。";
+            .Tip("看关卡长度 / 强度倍率曲线 / 波次与首领，并显示模型建议值。");
         NextRow();
         row = Row("特殊功能");
         UiKit.Button(_gmRoot, "伤害统计", left, row, 145, GmRowHeight, () => { CloseGm(); OpenDamage(); })
-            .TooltipText = "按技能看累计伤害 / 每秒伤害，用来核对数值平衡。";
+            .Tip("按技能看累计伤害 / 每秒伤害，用来核对数值平衡。");
         // 技能预览**从主界面搬进 GM**：它原来占着中间那条横带的一个位置，而那条横带整条撤掉了。
         // 按钮文字跟着状态走，进这里也能退出来。
         _previewToggle = UiKit.Button(_gmRoot, "", left + 155, row, 145, GmRowHeight, () => { CloseGm(); TogglePreview(); });
-        _previewToggle.TooltipText = "用独立会话逐个播放 15 个法术，不写存档；预览期间主线挂机暂停。再点一次退出。";
+        _previewToggle.Tip("用独立会话逐个播放 15 个法术，不写存档；预览期间主线挂机暂停。再点一次退出。");
         // 第三个入口：看角色属性——fightattr 全表（基础 / 养成后 / 当前生效）+ 当前临时状态。
         UiKit.Button(_gmRoot, "属性面板", left + 310, row, 145, GmRowHeight, () => { CloseGm(); OpenAttributes(); })
-            .TooltipText = "看每个属性的基础值、养成后的最终值，以及叠上临时状态后当前真正生效的量。";
+            .Tip("看每个属性的基础值、养成后的最终值，以及叠上临时状态后当前真正生效的量。");
         NextRow();
         EndArea(tools);
 

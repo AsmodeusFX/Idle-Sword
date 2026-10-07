@@ -45,11 +45,21 @@ public sealed partial class GameSession
         return Math.Clamp(total, min, max);
     }
     private bool _persist;
-    private double _buffTime;
-    private double _buffPower = 1;
+    /// <summary>
+    /// **共享伤害倍率窗**：`power != 1` 的增益类法术在生效期内把所有伤害乘上它的威力。
+    /// 它是 **DMG3 的 Build 乘区**，所以**按来源分别记、相乘**（Build = `Π`）。
+    ///
+    /// 从前它是一对单值（`_buffPower` + `_buffTime`），写入用**赋值**——两个窗同时在役时，
+    /// 后放的那个会把先放的那个**静默取消**，而"谁赢"完全取决于施放顺序。那既不符合 Build 乘区的定义，
+    /// 也让期望模型没法预测（模型只能按"每个窗各自生效"去解）。改成按来源记之后，
+    /// 口径与模型都是"相乘"，且任何一个窗到期只影响它自己。
+    ///
+    /// 键是法术 id，值是（威力，到期剩余秒数）。与其它短时状态同生命周期：跨关卡 / 死亡 / 切预览一并清除。
+    /// </summary>
+    private readonly Dictionary<string, (double Power, double Until)> _windows = [];
     // 玩家增益（护盾/回血/吸血）：跨关卡与死亡清除，不随存档持久化。
     private double _shield, _shieldUntil, _regenUntil, _regenRate, _lifestealUntil, _lifestealFactor;
-    // 攻速与暴击增益：各自持有计时器与参数，互不覆盖（_buffTime/_buffPower 是共享的伤害倍率，与之无关）。
+    // 攻速与暴击增益：各自持有计时器与参数，互不覆盖（伤害倍率窗是 `_windows`，与之无关）。
     // `_hasteFactor` 是"出手快如疾风"那类增益给的加速倍数（1 + secondary_value）——
     // 它**同时**算进普攻攻速与法术冷却缩减两样，见 `AttackSpeed` / `SkillCdr`。
     private double _hasteUntil, _hasteFactor = 1;
@@ -151,6 +161,26 @@ public sealed partial class GameSession
     /// 不受它影响，否则"关掉自动"会连"点也点不动"——那是两件事。</summary>
     public bool BasicAttackEnabled { get; set; } = true;
 
+    /// <summary>
+    /// **沙盒模式：世界静止，只有战斗结算在跑。**
+    ///
+    /// `Step` 里跳过 移动 / 激活格子 / 刷怪 / 死亡 / 通关 / 触发存档；冷却流逝、施法、
+    /// 效果推进、命中结算、状态计时**照常**——所以技能照样放得出来、打得到靶子。
+    ///
+    /// 用途是"固定靶场"（GM 技能预览）：场上只有自己摆的靶子，玩家站在原地，
+    /// 15 个技能面对完全相同的对照条件。
+    ///
+    /// **为什么要有这个开关，而不是让调用方在外面打补丁**：调用方要冻结世界，
+    /// 就得自己对抗 `Step` 里的每一个推进源（移动的停步判定、`ActivateCell` 建刷怪点、
+    /// `TickSpawns` 补怪……），而这些东西会随正规玩法改动而变——技能预览就这么被击穿过一次
+    /// （近战停步 120 而靶子钉在 520 ⇒ 角色一路前进 ⇒ 走进新格就刷怪）。
+    /// 显式模式之下，"世界不动"是会话自己的保证，不由调用方维护。
+    ///
+    /// 会话态、**不落盘**，与 `BasicAttackEnabled` / `PlayerInvincible` / `WaveBonus` / `MonsterHpScale`
+    /// 同性质（调试与工具用）。
+    /// </summary>
+    public bool SandboxMode { get; set; }
+
     public GameSession(GameConfig config, PlayerState? state = null, int? seed = null)
     {
         Config = config; State = state ?? new(); _random = seed is null ? new Random() : new Random(seed.Value);
@@ -196,16 +226,31 @@ public sealed partial class GameSession
                 : Config.Skills.ContainsKey(key) ? SkillCdr : AttackSpeed);
             Battle.Cooldowns[key] = Math.Max(0, Battle.Cooldowns[key] - dt * factor);
         }
-        _buffTime = Math.Max(0, _buffTime - dt);
+        // 伤害倍率窗各自走自己的表：到期的摘掉，**只影响它自己**（见 `_windows` 的说明）。
+        foreach (string id in _windows.Keys.ToArray())
+        {
+            var window = _windows[id];
+            if (window.Until - dt > 0) _windows[id] = (window.Power, window.Until - dt);
+            else _windows.Remove(id);
+        }
         TickPlayerBuffs(dt);
-        ActivateCell();
-        Moving = !Battle.Enemies.Any(e => e.Hp > 0 && e.Kind != "rift" && Math.Abs(e.X - Battle.PlayerX) <= StopRange);
-        // 裂隙解锁后停步，但前提是已经打得到它。裂隙位于格内 1450+360 处，而 BOSS 格
-        // 阵亡重生点在格首 80：两者相距 1730，远超任一法术射程（950）。若解锁瞬间直接冻结，
-        // 玩家会停在射程外空转，挂机永久中断（取决于最后一个非裂隙敌人倒下时玩家站在哪，
-        // 故表现为「有概率」）。因此射程外解锁时必须继续沿格推进。
-        if (Battle.Cell == Level.Cells - 1 && RiftUnlocked)
-            Moving = !InRange(Battle.Enemies.FirstOrDefault(e => e.Hp > 0 && e.Kind == "rift"), AttackRange);
+        // ── 沙盒模式：**世界静止，只有战斗结算在跑** ──────────────────────────────
+        // 下方整段（移动 / 激活格子 / 刷怪）跳过。它是技能预览那种"固定靶场"的唯一正确做法：
+        // 从前靠 UI 侧打补丁（关普攻 + 把当前格标 `Passed` + 每步重钉靶子），
+        // 被"近战停步 120 而靶子钉在 520"这种**正规改动的连带影响**击穿过一次——
+        // 角色一路前进、走进新格就激活新刷怪点、当拍刷怪。显式模式才对后续改动免疫。
+        if (!SandboxMode)
+        {
+            ActivateCell();
+            Moving = !Battle.Enemies.Any(e => e.Hp > 0 && e.Kind != "rift" && Math.Abs(e.X - Battle.PlayerX) <= StopRange);
+            // 裂隙解锁后停步，但前提是已经打得到它。裂隙位于格内 1450+360 处，而 BOSS 格
+            // 阵亡重生点在格首 80：两者相距 1730，远超任一法术射程（950）。若解锁瞬间直接冻结，
+            // 玩家会停在射程外空转，挂机永久中断（取决于最后一个非裂隙敌人倒下时玩家站在哪，
+            // 故表现为「有概率」）。因此射程外解锁时必须继续沿格推进。
+            if (Battle.Cell == Level.Cells - 1 && RiftUnlocked)
+                Moving = !InRange(Battle.Enemies.FirstOrDefault(e => e.Hp > 0 && e.Kind == "rift"), AttackRange);
+        }
+        else Moving = false;
         if (Moving)
         {
             // 推进上限：**够得着的边界**，不是一堵写死的墙。
@@ -225,7 +270,7 @@ public sealed partial class GameSession
             Battle.PlayerX = Math.Min(limit, Battle.PlayerX + Attr("move_speed") * dt);
             ActivateCell();
         }
-        TickSpawns(dt);
+        if (!SandboxMode) TickSpawns(dt);
         TickEnemies(dt);
         TickBasicAttack();
         CastSkills();
@@ -233,6 +278,8 @@ public sealed partial class GameSession
         TickEffects(dt);
         Battle.Enemies.RemoveAll(e => e.Hp <= 0);
         // 同帧击杀与死亡：奖励已结算；优先执行复活，传送留到存活后。
+        // 沙盒里死亡与通关一律不结算——靶场不该因为一次试验性爆发而"打穿关卡"。
+        if (SandboxMode) { _persist = false; return; }
         if (Battle.PlayerHp <= 0) Die();
         else if (Battle.PortalDestroyed && RiftUnlocked) CompleteLevel();
         FinishStep();
@@ -253,7 +300,8 @@ public sealed partial class GameSession
         if (_regenUntil > 0 && Battle.PlayerHp > 0) Battle.PlayerHp = Math.Min(MaxHp, Battle.PlayerHp + MaxHp * _regenRate * dt);
     }
     // 表现层读取的增益剩余时间：只读，不参与任何战斗判定，界面据此绘制各增益光环。
-    public double BuffRemaining => _buffTime;
+    /// <summary>伤害倍率窗还剩多久（取所有在役窗里最长的那个）。</summary>
+    public double BuffRemaining => _windows.Count == 0 ? 0 : _windows.Values.Max(w => w.Until);
     public double ShieldRemaining => _shieldUntil;
     public double RegenRemaining => _regenUntil;
     public double LifestealRemaining => _lifestealUntil;
@@ -264,9 +312,18 @@ public sealed partial class GameSession
     // 同一个口径的"**值**"（上面那批只有剩余时间）——GM 的「属性面板」要看"这一条现在是多少"。
     // 一律 `生效期外给中性值`（乘区给 1、加法给 0、绝对值给 0），于是面板不必自己判断
     // "这一条到底在不在生效"，直接把值摆出来就行。
-    /// <summary>共享伤害倍率窗的倍率（`power != 1` 的增益类法术写入）。**它乘的是结算伤害、不是攻击属性**——
-    /// 属性面板的动态列据它算"当前真正打出去多少"，别误读成"攻击被改成了这个数"。</summary>
-    public double BuffPower => _buffTime > 0 ? _buffPower : 1;
+    /// <summary>共享伤害倍率窗的**乘积**（DMG3 的 Build 乘区：`power != 1` 的增益类法术各自写一格）。
+    /// **它乘的是结算伤害、不是攻击属性**——属性面板的动态列据它算"当前真正打出去多少"，
+    /// 别误读成"攻击被改成了这个数"。</summary>
+    public double BuffPower
+    {
+        get
+        {
+            double product = 1;
+            foreach (var window in _windows.Values) product *= window.Power;
+            return product;
+        }
+    }
     /// <summary>护盾当前吸收池（还剩多少能吸）。</summary>
     public double ShieldAmount => _shieldUntil > 0 ? _shield : 0;
     /// <summary>每秒回血比例（占气血上限）。</summary>
@@ -315,7 +372,8 @@ public sealed partial class GameSession
     /// <summary>清除玩家短时增益（伤害倍率/护盾/回血/吸血/攻速/暴击）。关卡切换、死亡重生与技能预览切换时调用。</summary>
     public void ClearBuffs()
     {
-        _buffTime = 0; _shield = 0; _shieldUntil = 0; _regenUntil = 0; _regenRate = 0; _lifestealUntil = 0; _lifestealFactor = 0;
+        _windows.Clear();
+        _shield = 0; _shieldUntil = 0; _regenUntil = 0; _regenRate = 0; _lifestealUntil = 0; _lifestealFactor = 0;
         _hasteUntil = 0; _hasteFactor = 1; _critBonusUntil = 0; _critBonus = 0; _critReduceUntil = 0; _critReduce = 0;
         _mirrorUntil = 0; _mirrorRatio = 0; _mirrorSkill = "";
         _shieldSkill = ""; _guardCooldown = 0;
@@ -820,7 +878,15 @@ public sealed partial class GameSession
         // 伤害倍率只在配置里 power != 1 时占用：纯功能向的增益（仙风云体术/醉仙望月步）不该把正在
         // 生效的伤害倍率重置掉。判断用配置的基础 power 而不是算上等级与参悟之后的 power——
         // 否则技能一升级，倍率就会被激活，等于偷偷取消了这条规则。
-        if (skill.Power != 1) { _buffPower = power; _buffTime = skill.Duration; }
+        // 伤害倍率窗按**来源**记一格（Build 乘区 = Π，多个窗相乘而不是互相覆盖）。
+        // 窗的寿命取 `duration`（**不是** `secondary_duration`）：那是"增益本身持续多久"，
+        // 与 `secondary_value` 那类效果量的寿命是两件事，期望模型按同一条口径解。
+        //
+        // ⚠️ 判据是**显式标记** `SwordSkill.damage_window`，**不是** `power != 1`。
+        // 拿 `power` 当判据会踩一个真踩过的坑：`power` 同时是被**技能等级与参悟**成长的量，
+        // 于是"给一个纯防御增益点一级参悟"就会静默把它变成全队伤害乘区（剑罡护体就是这么来的：
+        // 它的 `power = 1.5` 是重做成"护盾 + 环绕飞剑"时漏改的遗留值，而描述里从没提过增伤）。
+        if (skill.DamageWindow) _windows[skill.Id] = (power, skill.Duration);
         Battle.PlayerHp = Math.Min(MaxHp, Battle.PlayerHp + MaxHp * .05);
         switch (skill.Secondary)
         {
@@ -846,9 +912,9 @@ public sealed partial class GameSession
     /// 暴击后的"缩短一个随机技能的冷却"：只从已习得且**当前冷却 &gt; 0** 的非增益技能里抽
     /// （抽到冷却为 0 的技能等于白给；抽到增益会让攻速覆盖率自涨，见下）。没有候选就什么都不做。
     ///
-    /// ⚠️ 它按**秒**扣，与 `skill_cdr` 的 `÷(1 + cdr)` 是**两条不同的路**：除法形式永远不会把冷却压成 0，
-    /// 而按秒扣可以。所以配置里的 `secondary_extra`（醉仙望月步 = 1 秒）必须**小于它能砸到的最短冷却**
-    /// （当前最短是御剑术的 1.2 秒），否则会出现"冷却被扣成 0 → 法术连发"。
+    /// ⚠️ 它按**秒**扣，与 `skill_cdr` 的 `÷(1 + cdr)` 是两条实现，所以**必须服从同一条上限**：
+    /// 扣减后的冷却不得低于 `该法术冷却 ÷ (1 + skill_cdr 上限)`（见函数末尾）。少了这一步，
+    /// "暴击 → 缩冷却 → 更多次出手 → 更多暴击"会把法术冷却一路吃到接近 0，而面板上看不出来。
     /// 这一条写在 `docs/design/combat.md` 的频率一节，改数值前先回去看一眼。
     /// </summary>
     private void CritShortenCooldown()
@@ -864,7 +930,14 @@ public sealed partial class GameSession
             .Select(kv => kv.Key).ToArray();
         if (cooling.Length == 0) return;
         string pick = cooling[_random.Next(cooling.Length)];
-        Battle.Cooldowns[pick] = Math.Max(0, Battle.Cooldowns[pick] - _critReduce);
+        // **按秒扣也要服从同一条上限**：冷却缩减的全部路径都必须落在 `cooldown ÷ (1 + skill_cdr)` 这个
+        // 频率模型里，否则"把冷却扣到接近 0"就是一条绕过频率轴的暗路（而玩家在面板上完全看不到它）。
+        // 下限取**该法术自身冷却 ÷ (1 + skill_cdr 的上限)** —— 也就是"CDR 拉满时能压到多低"。
+        // 注意它**只会让冷却变短、绝不会让它变长**：已经在落地过程中低于下限的冷却原样不动
+        // （那种"低"是时间流逝的结果，不是缩减的结果）。
+        double live = Battle.Cooldowns[pick];
+        double floor = Config.Skills[pick].Cooldown / (1 + Bounds("skill_cdr").Max);
+        Battle.Cooldowns[pick] = live <= floor ? live : Math.Max(floor, live - _critReduce);
     }
     private void LaunchSkill(SkillDef skill, EnemyState target, double dmg1, int index, double lane = 0, bool mirrored = false, double spawnX = 0)
     {
@@ -913,7 +986,8 @@ public sealed partial class GameSession
         if (critical && attackerSnapshot && inherits is null && index == 0 && skill != "" && !mirrored) CritShortenCooldown();
         // 暴击倍率与共享倍率窗跟着快照走：派生结算直接继承，不重算、也不与当下生效的增益串味。
         double critDamage = inherits?.CritDamage ?? Attr("crit_damage");
-        double buffWindow = inherits?.BuffPower ?? (attackerSnapshot && _buffTime > 0 ? _buffPower : 1);
+        // 出手快照取的是**这一刻的窗乘积**；派生结算（继承）直接沿用那一发的快照，不重读当下的窗。
+        double buffWindow = inherits?.BuffPower ?? (attackerSnapshot ? BuffPower : 1);
         // 生命期分两种：普通弹道沿用硬编码 4 秒——召唤弹传 2、剑灵弹只传 0.5，
         // 若把 duration 当通用寿命会缩短剑灵弹丸、使其飞不到目标；自定义飞行形态才用 duration（本列对该形态即飞行/下坠时长）。
         // 自定义形态还要加上起飞前停留（hold）：停留与飞行各自计时，落地/命中的时刻才会随错时而变化。

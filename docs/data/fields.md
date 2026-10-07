@@ -130,6 +130,7 @@
 | range | number | 目标选择距离（逻辑坐标） |
 | power | number | **SkillRate**：伤害/效果倍率。DMG1 = `最终攻击 × power × (1 + 技能等级成长 + 参悟) + skill_flat` |
 | skill_flat | number | DMG1 里的**固定伤害项**。⚠️ **当前全表为 0 = 尚未投放**，用之前先读 [../design/combat.md](../design/combat.md) §2 的陷阱说明——它不随境界缩放，攻击力上了量级就会静默失效 |
+| damage_window | bool | 这一式（**只有 `kind = buff` 才有意义**）是否写一格**共享伤害倍率窗**：生效期内把所有伤害乘上它的 `power`。**当前全表为 0**（死配置，见本节末尾）。加载期两条校验：非 buff 声明它 → 拒；声明了却 `power = 1` → 拒（那格窗乘 1，等于没声明） |
 | duration | number | 持续时间秒数；定点技能为延迟；自定义飞行形态下为飞行／下坠时长 |
 | max_level | integer | 最大等级 |
 | cost | number | 基础升级成本；具体成长规则见下方 |
@@ -218,7 +219,20 @@
 - `haste`：攻击速度提高，`secondary_value` 是**冷却流逝加快**的比例（当前 `skill_04` 填 `0.25` = 流逝 ×1.25，等效冷却缩短 20%；早期曾填 `3` = ×4），`secondary_duration` 是持续秒数。**只加速输出类法术与剑灵的冷却，不加速增益类法术**——否则 15s 冷却 / 6s 持续的增益会在持续期内转好，变成 100% 常驻。文案统一写「冷却流逝 +X%」，别和「冷却缩短」混用，两个口径差 4 倍。
 - `crit_reduce`：暴击率**绝对**提高（0.3 = +30 个百分点），`secondary_extra` 是每次暴击缩短的冷却秒数。缩短目标只从"已习得、当前冷却 > 0、且**不是增益类**"的技能里随机抽取，没有候选就什么都不做；并且**每次施法最多触发一次**（由该次施法的第一支弹丸负责）——暴击是逐弹丸摇的，多发齐射一轮 3～5 支，若每支都触发，触发密度会被放大数倍，增益的冷却也会被不断吃掉。
 
-另外：配置里 `power = 1` 的增益法术**不占用伤害倍率窗口**（`_buffPower`/`_buffTime`），这样纯功能向的增益不会把正在生效的伤害重置掉。判断用的是配置的基础 `power`，不是算上等级与参悟之后的倍率。
+另外：增益类法术**只在声明了 `damage_window = 1` 时**才写一格伤害倍率窗（`GameSession._windows`）——纯功能向的增益（仙风云体术 / 醉仙望月步 / 剑罡护体）因此不会平白占掉一格。
+
+> ⚠️ **判据必须是显式标记，不能是 `power != 1`。**
+> 本工程真踩过这个坑：`剑罡护体` 重做成"护盾 + 环绕飞剑"时，描述改掉了、`power = 1.5` 漏改，
+> 于是它静默变成了**全游戏最大的伤害乘区**（满级 ×8.47、覆盖 80%），而描述里一个字都没提增伤、
+> 界面上也看不到——因为伤害统计按"谁打出的那一笔"归因，那扇窗的放大全散进了别人的行里。
+> 更麻烦的是 `power` 同时是**被技能等级与参悟成长的量**，所以"给它点一级参悟"就能把窗再次打开。
+> 现在判据是 `damage_window`，`power` 只当威力用，两者不再互相牵连。见 [../design/combat.md](../design/combat.md) §12。
+>
+> **窗是 DMG3 的 Build 乘区，按来源各记一格、相乘**（`PlayerState` 的 `CombatEffect.BuffPower` 是它的出手快照）。
+> 从前它是单值 + 赋值，两个窗同时在役时后放的会**静默取消**先放的。
+> 窗的寿命取 `duration`（不是 `secondary_duration`）。期望模型按同一条口径解（`LevelCurve.DamageWindow`）。
+> **当前 15 个在役法术没有一个声明它**（历史载体是退役表里的「护心剑罡」），属于**死配置**——
+> 代码与自检用内存改配置保住这条路径的覆盖，与 `pierce` / `summon` / `vulnerable` 是同一套办法。
 
 ### 影分身（`secondary = mirror`，19 剑二十三）
 
@@ -467,7 +481,7 @@ AI 不得改写。留这个口子是因为它常牵连「必须在 `Systems.ByEf
 | id | string | 稳定唯一 ID |
 | name | string | 中文显示名称 |
 | tier | integer | 参悟页0～3 |
-| skill_id | reference | 参悟引用SwordSkill.id，剑灵引用PetSkill.id |
+| skill_id | reference | 参悟引用SwordSkill.id，剑灵引用PetSkill.id。⚠️ **增益类法术不该配 `damage_percent`**：`power` 对增益**只有声明了伤害倍率窗**（`SwordSkill.damage_window`）才产生作用，配了也无效——那样 12 行（仙云 / 醉仙 / 剑罡护体 × 4 类）**曾经照样在参悟页上卖**，玩家花货币买不到任何东西，已于 2026-10-07 删除（参悟行数 60 → **48**）。要扩展成"增益自己的强度轴"（护盾量 / 攻速比例 / 暴击）时见 [sword_intent.md](../design/sword_intent.md) |
 | currency_id | reference | 消耗item.id |
 | max_level | integer | 最大等级 |
 | cost | number | 基础升级成本；具体成长规则见下方 |

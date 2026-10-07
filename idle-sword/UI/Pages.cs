@@ -5,32 +5,34 @@ namespace IdleSword.UI;
 
 public partial class Main
 {
-    /// <summary>技能预览页：15 个法术各一个按钮，逐个对照表现与数值。</summary>
-    private void PreviewPage()
+    /// <summary>
+    /// 技能悬停提示的全文。**玩家能拿到的全部口径就在这里**，所以三块都要有：
+    /// ① 名字 + 等级；② 描述；③ **关键参数**（当前值 → 下一级）；④ 升级到底强化了什么。
+    ///
+    /// `rate` / `nextRate` 只算**威力倍率**（含技能等级与参悟），实际伤害由 `SkillText.Params` 乘上
+    /// 当前面板攻击力——这样提示里显示的是"按你现在这个练度能打多少"，而不是一个抽象倍率。
+    ///
+    /// ⚠️ **没习得（`rank = 0`）时按"习得后（1 级）"显示**，不能按 0 级算：`1 + 0.15×(0−1)` = 0.85，
+    /// 那会给出一个**负成长**的读数（"当前 Lv.0 → 威力 ×0.85"），比不显示还糟。
+    /// </summary>
+    private string SkillTip(SkillDef skill)
     {
-        var ids = PreviewSkillIds;
-        var skill = _game.Config.Skills[PreviewSkillId];
-        UiKit.Label(_page, "技能预览", 20, 0, 220, 36, 26, UiKit.Gold);
-        UiKit.Label(_page, PreviewSummary(skill), 210, 2, 1180, 34, 19, UiKit.Jade);
-        UiKit.Button(_page, "◀ 上一个", 1310, 0, 175, 36, () => { SelectPreviewSkill(_previewSkill - 1); ShowPage(_selectedTab); Refresh(); });
-        UiKit.Button(_page, "下一个 ▶", 1495, 0, 175, 36, () => { SelectPreviewSkill(_previewSkill + 1); ShowPage(_selectedTab); Refresh(); });
-        UiKit.Button(_page, "退出预览", 1680, 0, 180, 36, TogglePreview);
-        int i = 0;
-        foreach (string id in ids)
-        {
-            var row = _game.Config.Skills[id]; int index = i++;
-            // **竖着排**：一列一个境界（第 1 列小妖、第 2 列妖将……），列内按技能书顺序自上而下。
-            // `ids` 已按境界排好且每境恰好 3 个（见 core_rules.md 的「5 个境界，每境 3 个技能」），
-            // 所以列 = index / 3、行 = index % 3。**若以后放宽每境技能数，这两处要改成按境界分组排行号。**
-            var button = UiKit.Button(_page, row.Name, index / 3 * 376, 42 + index % 3 * 78, 356, 70,
-                () => { SelectPreviewSkill(index); ShowPage(_selectedTab); Refresh(); }, id == PreviewSkillId);
-            // 悬停提示里放完整口径：书页那一行只能写「15%→100%」，涨多少得在这里说清。
-            button.TooltipText = skill.TriggerChanceStep > 0
-                ? $"{row.Description}\n神通：每经过一次普攻，触发概率 +{skill.TriggerChanceStep:P0}，摇中后回到 {skill.TriggerChance:P0}。"
-                : row.Description;
-        }
-        UiKit.Label(_page, skill.Description, 20, 276, 1840, 36, 19, UiKit.Muted);
+        int rank = _game.State.Skills.GetValueOrDefault(skill.Id);
+        int shown = Math.Max(1, rank);
+        string level = rank > 0 ? $"等级 {rank}/{skill.MaxLevel}" : "尚未习得";
+        double rate = SkillRateAt(skill, shown), next = SkillRateAt(skill, shown + 1);
+        // 环绕飞剑的参数（剑罡护体用）住在 `game_settings` 里，不在 SwordSkill 行上，所以显式传进去。
+        return $"{skill.Name}　{level}\n\n"
+            + $"{skill.Description}\n\n"
+            + SkillText.ParamsBlock(skill, _game.Attack, rate, next,
+                _game.Config.Setting("guard_blade_power"), _game.Config.Setting("guard_interval")) + "\n\n"
+            + UpgradeTip(skill, shown);
     }
+
+    /// <summary>某一级下的 **SkillRate**（`power × (1 + 技能等级成长 + 参悟成长)`）。
+    /// 与 `GameSession.SkillPower` 是同一条口径——提示里的"下一级能打多少"必须与实现同源，否则提示会撒谎。</summary>
+    private double SkillRateAt(SkillDef skill, int rank) =>
+        skill.Power * (1 + _game.Config.Setting("skill_level_bonus") * (rank - 1) + _game.SkillBonus(skill.Id, "damage_percent"));
 
     /// <summary>
     /// 升级到底强化了什么——技能页「强化」按钮的悬停提示用它，两类分开写：
@@ -70,7 +72,8 @@ public partial class Main
             {
                 // 行距从 78 放到 108：纵向多了 136px，摊到三行正好填满，不再挤在面板上半截。
                 float y = 104 + j++ * 108; string sid = skill.Id;
-                var label = UiKit.Label(_page, "", x + 18, y, 298, 30, 20);
+                // 技能名那一行也要挂提示：书页这一列只塞得下名字与 CD / 神通，具体效果只能靠它说清。
+                var label = UiKit.Label(_page, "", x + 18, y, 298, 30, 20).Tip(SkillTip(skill));
                 // 神通不靠冷却出手，显示 "CD 5.0s" 会让人以为它每 5 秒放一次——那 5 秒只是最短触发间隔。
                 _bindings.Add(() => label.Text = skill.TriggerChance > 0
                     // 概率叠加形态（trigger_chance_step > 0）只写「15%→100%」：把"起步值"和"会长"两件事一起说清，
@@ -82,8 +85,9 @@ public partial class Main
                 var button = UiKit.Button(_page, "", x + 18, y + 34, 298, 40, () => Act(() => _game.UpgradeSkill(sid)));
                 _bindings.Add(() => button.Text = $"{(_game.State.Skills.GetValueOrDefault(sid) > 0 ? "强化" : "习得")} · {UiKit.Number(_game.SkillCost(sid))} {_game.CurrencyName("gold")}");
                 button.Disabled = !unlocked;
-                // 提示要跟着等级变（当前 Lv 与覆盖率），所以放进绑定里逐帧刷新。
-                _bindings.Add(() => button.TooltipText = $"{skill.Description}\n{UpgradeTip(skill, _game.State.Skills.GetValueOrDefault(sid))}");
+                // 提示与技能名那一行**同一份**（`SkillTip`）。从前这里只写"描述 + 升级口径"两行，
+                // 于是玩家悬停「习得/强化」按钮时看到的仍是旧样子——而那个按钮才是他真正会去悬停的。
+                _bindings.Add(() => button.Tip(SkillTip(skill)));
             }
         }
     }
@@ -115,14 +119,17 @@ public partial class Main
     }
     /// <summary>
     /// 参悟行的效果文案——按配置的 `effect` 渲染，而不是一律写「效果 +X%」。
-    /// 剑二十三那 4 行的语义是**继承比例**（它的 `power` 根本不参与伤害），写成"伤害"会误导；
-    /// 未知取值由加载期校验拦住（见 `GameConfig` 对 `SwordUpgrade.effect` 的检查），这里给个兜底。
+    /// 剑二十三那 4 行的语义是**继承比例**（它的 `power` 根本不参与伤害），写成"伤害"会误导。
+    ///
+    /// 兜底是**响亮失败**，不是印一句含糊的「效果 +X%/级」：加载期虽然已经把 `effect` 校验成白名单，
+    /// 但"白名单加了一个取值、这里忘了补文案"正是本工程反复踩的那类静默失败——
+    /// 那时玩家看到的是一句**看起来没问题的错话**，比看到 id 更难发现。
     /// </summary>
     private static string IntentEffectText(CsvRow r) => r.Text("effect") switch
     {
         "inherit_percent" => $"继承比例 +{r.Number("value"):P0}/级",
         "damage_percent" => $"伤害 +{r.Number("value"):P0}/级",
-        _ => $"效果 +{r.Number("value"):P0}/级",
+        _ => throw new InvalidDataException($"参悟效果 '{r.Text("effect")}' 没有文案——新增 effect 时要在这里补一条"),
     };
 
     private void IntentPage()

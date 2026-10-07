@@ -45,7 +45,6 @@ public static class LevelCurve
     public const double EliteAtkRatio = 0.95;
 
     // ── 模型内部的成长轴（不对外，调用方用不到）──
-    private const double BladesStart = 1, BladesEnd = 5;    // 御剑术剑支数（参悟，尚未接线）
     private const double RankStart = 1, RankEnd = 32;       // 期望技能等级（该关应有的练度）
     private const double NStart = 3, NEnd = 15;             // 波次怪物数
     private const double TEnd = 14;                         // 第 100 关的清波目标秒数（起点由第 1 关反推）
@@ -267,38 +266,102 @@ public static class LevelCurve
         /// <summary>法术频率乘区 = `1 + skill_cdr + 增益那一份`（冷却是 `cooldown ÷(1+它)`）。</summary>
         double SkillSpeed(int order) => 1 + attrs["skill_cdr"] + SpeedBonus(order);
 
-        /// <summary>每秒的"技能倍率总量" = Σ(威力 × 期望命中数 × 等级成长 ÷ 出手周期)。**不含加速**，加速在 `Dps` 那一层乘。</summary>
+        /// <summary>
+        /// 该关这一式的 **SkillRate**（威力）：`power × (1 + 技能等级加成 [+ 参悟])`。
+        ///
+        /// 🚨 **参悟（剑意）这一项还没算，而它不是小项**：`SwordUpgrade.csv` 给每个法术配了 4 行
+        /// `damage_percent`（`intent_0..3`），每行 20 级 × 8% ⇒ 满配 **+640%**（`SkillRate ×7.4`）。
+        /// 模拟侧（`GameSession.SkillPower`）**是算的**，所以模型现在系统性低估。
+        /// `balance_ttk.md` §6.2 的三步走也明确要求把剑意算进满配效率，所以这是**已经脱钩的前提**，
+        /// 不是"有意简化的近似"。补它要先定一条"期望参悟练度"曲线（与 `RankStart/RankEnd` 同类）——
+        /// 那是设计决定，见 `docs/design/combat.md` §12.4 第 2 条。
+        /// **提取成一处**是为了让它只有一个该被改的地方，而不是散在两个函数里。
+        /// </summary>
+        double SkillRateAt(CsvRow s, int order) =>
+            s.Number("power") * (1 + settings["skill_level_bonus"] * (Lerp(RankStart, RankEnd, order) - 1));
+
+        /// <summary>普攻**未加速**的每发 DMG1（`AttackPower × basic_power + 0`）。</summary>
+        double BasicDmg1(int order) => DamageFormula.Dmg1(Attack(order), attrs["basic_power"], 0);
+
+        /// <summary>
+        /// 法术链**未加速**的每秒 DMG1 总量 = `Σ(DMG1(单发) × 期望命中数 ÷ 出手周期)`。
+        /// **每一项都经 `DamageFormula.Dmg1`**：DMG1 里将来加的组成部分（`skill_flat` 等）会自动被算进来，
+        /// 不会出现"公式里加了一项、模型没跟着算，而 `--check` 照样绿"。
+        /// </summary>
         double Chain(int order)
         {
             double chain = 0;
             foreach (var s in skills)
             {
                 if (s.Text("kind") is "buff" or "summon" || !Unlocked(s, order)) continue;
-                // 御剑术的成长轴是剑支数（1 → 5），其余法术只吃技能等级。
-                double hits = s.Text("id") == "skill_01" ? Lerp(BladesStart, BladesEnd, order) : Hits(s, WaveSize(order));
-                chain += s.Number("power") * hits * (1 + settings["skill_level_bonus"] * (Lerp(RankStart, RankEnd, order) - 1)) / Cycle(s);
+                // ⚠️ 这里从前给御剑术单开了一条成长轴（剑支 1 → 5），而**模拟根本不产生多支**
+                // （`projectile_count = 1` 写死、选敌只取一支）⇒ 模型按一条不存在的成长轴多算了最多 5 倍
+                // 命中数。删掉它，模型回到"只算真的会发生的事"。
+                // 参悟把剑支涨上去是**设计里写过、但没接线**的东西（见 `docs/design/combat.md` §12.4 第 3 条），
+                // 接线时要连同这条一起加回来。
+                chain += DamageFormula.Dmg1(Attack(order), SkillRateAt(s, order), s.Number("skill_flat"))
+                    * Hits(s, WaveSize(order)) / Cycle(s);
             }
             return chain;
         }
-        /// <summary>普攻**未加速**的每秒倍率 = `basic_power ÷ basic_interval`（当前 = 1/1 = 1）。</summary>
-        double BasicBase() => attrs["basic_power"] / attrs["basic_interval"];
+
+        /// <summary>
+        /// **共享伤害倍率窗**（DMG3 的 Build 乘区）：`power != 1` 的增益类法术在生效期内把**所有**伤害
+        /// 乘上它的威力（`GameSession.CastBuff` 写入、`Hit` 读取）。期望值 = `1 + (威力 − 1) × 覆盖率`，
+        /// 多个窗**相乘**（Build = `Π`，与 `GameSession._windows` 同一口径）。
+        ///
+        /// ⚠️ 从前模型**完全没算这一项**：`剑罡护体`（`power` 1.5，且威力随技能等级成长）在模拟里是一个
+        /// 大乘区，而在模型里等于不存在——中后期 DPS 被系统性低估。见 `docs/design/combat.md` §12。
+        /// </summary>
+        double DamageWindow(int order)
+        {
+            double product = 1;
+            foreach (var s in skills)
+            {
+                if (s.Text("kind") != "buff" || s.Number("power") == 1 || !Unlocked(s, order)) continue;
+                // `CastBuff` 写进窗里的是**算上等级与参悟**的威力（`SkillPower`），不是配置的 power。
+                double power = SkillRateAt(s, order);
+                // 窗的寿命取 `duration`（`CastBuff` 用的是它），与 `secondary_duration` 那类效果量是两件事。
+                double uptime = Math.Min(1, s.Number("duration") / BuffCooldown(s, order));
+                product *= 1 + (power - 1) * uptime;
+            }
+            return product;
+        }
+
+        /// <summary>
+        /// **环绕飞剑**（`secondary = shield` 的剑罡护体）：护盾在时每 `guard_interval` 秒还手一柄，
+        /// 威力 = `guard_blade_power`。它是模拟里一个**确定的**伤害源（除了暴击与倍率窗不吃别的条件），
+        /// 所以模型要算它。返回"未加速的每秒 DMG1"。
+        /// </summary>
+        double GuardBlade(int order)
+        {
+            var shield = skills.FirstOrDefault(s => s.Text("kind") == "buff" && s.Text("secondary") == "shield");
+            if (shield is null || !Unlocked(shield, order)) return 0;
+            double uptime = Math.Min(1, shield.Number("duration") / BuffCooldown(shield, order));
+            return DamageFormula.Dmg1(Attack(order), settings["guard_blade_power"] / settings["guard_interval"], 0) * uptime;
+        }
+
         /// <summary>该关的暴击率合计（基础 + 增益那一份）。暴击的**判定**在 DMG2，这里只解它的期望。</summary>
         double CritRate(int order) => attrs["crit_rate"]
             + (critBuff is null ? 0 : critBuff.Number("secondary_value") * BuffUptime(critBuff, order));
         /// <summary>暴击的**期望**倍率 `1 + C × (M − 1)`——共用 `DamageFormula` 那一份实现，别在这里重写一遍。</summary>
         double CritMul(int order) => DamageFormula.ExpectedCritMultiplier(CritRate(order), attrs["crit_damage"]);
+        /// <summary>影分身的**期望继承总量** = 继承比例 × 覆盖率。它复制的是法术，所以只乘法术链。</summary>
         double Mirror(int order) => mirror is null ? 0 : mirror.Number("secondary_value") * BuffUptime(mirror, order);
+        /// <summary>DMG3 的通用增伤（加算池）。当前 `generic_damage = 0`，但**结构上必须在**。</summary>
+        double GenericMul(int order) => DamageFormula.GenericMultiplier(attrs["generic_damage"]);
 
-        // 期望总 DPS（**与获批的 `balance_ttk.md` §4.1 逐字一致**，改它等于换一条曲线）：
-        //   攻击力 × [（普攻 + 法术链）× 暴击期望 + 法术链 × 影分身]
-        //     · 普攻那一份吃**普攻频率**（attack_speed），法术链那一份吃**法术频率**（skill_cdr）
-        //     · 加号左边是"本体"，右边是分身那一份（它只复制法术，所以只乘 Chain）
-        // ⚠️ **影分身那一项不吃任何加速**——这是原模型就有的写法（它的注释却写着"攻速与暴击作用于全链"，
-        // 两者互相矛盾）。本轮逐字保留：改它会让全 100 关的 `normal_hp` 变一遍（实测第 100 关 +4.9%），
-        // 而那属于"要不要修这个模型"的独立决定，不该顺手做。已记在 `docs/design/combat.md` 与本文件末尾。
-        double Dps(int order) => Attack(order) *
-            ((BasicBase() * BasicSpeed(order) + Chain(order) * SkillSpeed(order)) * CritMul(order)
-             + Chain(order) * Mirror(order));
+        // 期望总 DPS：**全部走同一套模板**（`combat.md` 的 `DMG1 × Generic × Critical × Build × Vulnerability`）：
+        //   通用增伤 × 暴击期望 × 共享倍率窗 × [ 三个来源各自的"每发 DMG1 × 频率" ]
+        //     · 普攻吃**普攻频率**（attack_speed），法术链吃**法术频率**（skill_cdr）——两条独立轴
+        //     · **影分身复制的是法术**，所以它同时吃法术频率与暴击期望。它**没有特殊待遇**：
+        //       每一个被复制出去的都是一个独立的 Attack Event（各自摇暴击），期望上就是 × 暴击期望。
+        //     · 环绕飞剑不走频率轴（它的节奏是固定的 `guard_interval`），但同样吃暴击与倍率窗
+        // 口径与差异见 `docs/design/combat.md` §12。
+        double Dps(int order) => GenericMul(order) * DamageWindow(order) * CritMul(order) *
+            (BasicDmg1(order) * BasicSpeed(order)
+             + Chain(order) * SkillSpeed(order) * (1 + Mirror(order))
+             + GuardBlade(order));
 
         // SU(1) = 标准小怪的基础 HP = 30（裸开局 30 ÷ 10 = 3 下普攻）；此后 SU 跟着期望总 DPS 走。
         // 第 1 关的清波秒数不写死，而是从模型反推（N × SU ÷ DPS）——写死近似值会让 normal_hp(1) 不是恰好 1.0。

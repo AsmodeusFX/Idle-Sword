@@ -114,4 +114,40 @@ public static class UiKit
             if (child is Control control) PassThrough(control);
     }
     public static string Number(double n) => n >= 1e9 ? (n / 1e9).ToString("0.##") + "B" : n >= 1e6 ? (n / 1e6).ToString("0.##") + "M" : n >= 1e4 ? (n / 1e3).ToString("0.#") + "K" : Math.Floor(n).ToString("0");
+
+    /// <summary>
+    /// **给控件挂悬停提示**，同时把提示框的外观装上。所有提示都该走它，而不是直接写 `TooltipText`。
+    ///
+    /// 为什么需要：Godot 默认主题的提示框是**半透明**的深色板，压在页面文字上时两层字叠在一起读不清
+    /// （技能 tips 变成多行之后尤其明显）。工程里**没有 Theme 资源**——所有样式都是逐控件
+    /// `AddThemeStyleboxOverride`，所以这是唯一一处设"默认外观"的地方。
+    ///
+    /// ⚠️ **外观只落在"带提示的那个控件"上，不许往根节点挂。** 一个 `Theme` 出现在树的更高处会改变
+    /// "本 Theme 未定义的项"的解析路径，实测让**中文标签量出来的行高差 1px**（换成"拷一份默认主题"
+    /// 也一样，说明与 Theme 内容无关，只与它存在有关）。而编辑器里有几处是**声明高度正好卡住**的布局，
+    /// 于是与提示框毫无关系的东西被顶出去：`编辑器「提示」声明的 56px 装不下它的行（需要 57px）`。
+    /// 挂在这几个控件上就没事——它们的矩形都是定死的，真正会被布局量高度的标签一根手指都碰不到。
+    /// </summary>
+    public static T Tip<T>(this T control, string text) where T : Control
+    {
+        control.Theme ??= TipTheme;
+        control.TooltipText = text;
+        return control;
+    }
+
+    /// <summary>提示框的外观，全工程共用一份（懒建）。</summary>
+    private static Theme? _tipTheme;
+    private static Theme TipTheme => _tipTheme ??= BuildTipTheme();
+    /// <summary>自检用：提示框底板的**不透明度**。它必须是不透明的（压在页面文字上还能读清）——
+    /// "半透明底 + 两层字叠在一起"正是当初要修的那个问题，所以钉一条断言在这里，
+    /// 免得以后谁顺手把它调回去而没人发现。</summary>
+    internal static float TipPanelAlphaForCheck() => ((StyleBoxFlat)TipTheme.GetStylebox("panel", "TooltipPanel")).BgColor.A;
+    private static Theme BuildTipTheme()
+    {
+        var theme = new Theme();
+        theme.SetStylebox("panel", "TooltipPanel", Box(new Color("#0c1a24"), 6, Line, 10));
+        theme.SetFontSize("font_size", "TooltipLabel", 18);
+        theme.SetColor("font_color", "TooltipLabel", Text);
+        return theme;
+    }
 }

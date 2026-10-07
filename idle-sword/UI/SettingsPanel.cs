@@ -131,7 +131,7 @@ public partial class Main
         _resetButton.AddThemeStyleboxOverride("normal", UiKit.Box(DangerBg, 6, DangerEdge));
         _resetButton.AddThemeStyleboxOverride("hover", UiKit.Box(new Color("#5d2f3d"), 6, DangerText));
         _resetButton.AddThemeColorOverride("font_color", DangerText);
-        _resetButton.TooltipText = "需要连续点击两次确认，5 秒内未确认会自动取消。";
+        _resetButton.Tip("需要连续点击两次确认，5 秒内未确认会自动取消。");
     }
     private HSlider VolumeSlider(float y)
     {
@@ -258,7 +258,7 @@ public partial class Main
     private void ResetProgress()
     {
         var config = _game.Config;
-        // 先退出预览：否则 _battle.Session 指向新会话，而 Active 仍指向预览会话，画面与读数会打架。
+        // 先退出技能预览：它会重建 `_game`，而预览页的读数与靶场是照旧会话摆的，留着就是两套东西并存。
         if (_preview is not null) TogglePreview();
         _store.Delete();
         // 重建会话：旧会话的事件订阅随对象一起丢弃，新会话从初始状态开始。

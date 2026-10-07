@@ -25,7 +25,10 @@ public sealed record WaveUnitDef(string Monster, int Weight);
 // SkillFlat：DMG1 里的固定伤害项（`攻击力 × power + skill_flat`）。**当前全表为 0 = 尚未投放**：
 // 它是给"固定伤害类"招式留的位置（例如按目标最大气血结算、或教学期不随攻击力成长的那类）。
 // 用之前先读 docs/design/combat.md 的「SkillFlat 的陷阱」——它不随境界缩放，一旦攻击力上了量级就会静默失效。
-public sealed record SkillDef(string Id, string Name, string Realm, string Kind, double Cooldown, double Range, double Power, double Duration, int MaxLevel, double Cost, double CostGrowth, string Description, string Secondary, double SecondaryValue, double SecondaryDuration, double AoeRadius, string Trajectory, int ProjectileCount, double HoverTime, double ArcMin, double ArcMax, double Speed, double Spread, double VolleyInterval, double VolleyJitter, double SpawnJitter, double PierceChance, double SecondaryExtra, double TriggerChance, double TriggerChanceStep, double CastRoot, double Knockback, string Targeting, bool AoeAll, string Hits, double Gather, double Band, double SkillFlat);
+// DamageWindow：这一式（**只有 `kind = buff` 才有意义**）是否写一格"共享伤害倍率窗"——生效期内把所有伤害
+// 乘上它的 `power`。**必须显式声明**，不能拿 `power != 1` 当判据：`power` 同时是被技能等级与参悟成长的量，
+// 于是"给一个防御增益点一级参悟"就会**静默把它变成全队伤害乘区**（本工程真踩过：剑罡护体）。
+public sealed record SkillDef(string Id, string Name, string Realm, string Kind, double Cooldown, double Range, double Power, double Duration, int MaxLevel, double Cost, double CostGrowth, string Description, string Secondary, double SecondaryValue, double SecondaryDuration, double AoeRadius, string Trajectory, int ProjectileCount, double HoverTime, double ArcMin, double ArcMax, double Speed, double Spread, double VolleyInterval, double VolleyJitter, double SpawnJitter, double PierceChance, double SecondaryExtra, double TriggerChance, double TriggerChanceStep, double CastRoot, double Knockback, string Targeting, bool AoeAll, string Hits, double Gather, double Band, double SkillFlat, bool DamageWindow);
 
 /// <summary>唯一配置入口。读取源 CSV 后校验并建立索引，运行时不修改配置对象。</summary>
 public sealed class GameConfig
@@ -140,6 +143,15 @@ public sealed class GameConfig
             Nonnegative(r, "secondary_value", "secondary_duration", "aoe_radius", "secondary_extra", "pierce_chance", "trigger_chance", "trigger_chance_step");
             // 固定伤害项（DMG1 的 `+ skill_flat`）：负数会把这一式变成"给对方回血"，拦下来。
             Nonnegative(r, "skill_flat");
+            // 伤害倍率窗的显式标记：只有增益类法术写得进窗（`CastBuff` 只在 buff 那条路上跑），
+            // 所以在别的类别上配它是个**什么都不做的死配置**，当场拦下。
+            bool damageWindow = r.Flag("damage_window");
+            if (damageWindow && r.Text("kind") != "buff")
+                throw r.Error("damage_window", "只有 kind = buff 的招式能声明伤害倍率窗");
+            // 声明了窗却 `power = 1` ⇒ 窗里乘的是 1，等于没声明。这种"配了但不生效"的写法必须拦——
+            // 它和「参悟把防御增益变成乘区」是同一类静默失效的两端。
+            if (damageWindow && r.Number("power") == 1)
+                throw r.Error("power", "声明了伤害倍率窗（damage_window = 1）时 power 不能是 1，否则这一格窗什么都不做");
             // 利用状态（bonus_vs_state）：对**携带任意状态**的目标增伤。它不写任何状态字段，只在 Hit 里当乘区用，
             // 所以值必须为正——配成 0 就是一行什么都不做的死配置。
             if (secondary == "bonus_vs_state" && r.Number("secondary_value") <= 0)
@@ -203,7 +215,7 @@ public sealed class GameConfig
             var speed = r.Number("speed");
             if (speed != 0 && speed < 100) throw r.Error("speed", "0 表示默认 1500；显式配置时必须 ≥ 100");
             c.Skills.Add(r.Text("id"), new(r.Text("id"), r.Text("name"), r.Text("realm_id"), r.Text("kind"), r.Number("cooldown"), r.Number("range"), r.Number("power"), r.Number("duration"), r.Int("max_level"), r.Number("cost"), r.Number("cost_growth"), r.Text("description"), secondary, r.Number("secondary_value"), r.Number("secondary_duration"), r.Number("aoe_radius"), trajectory, count, r.Number("hover_time"), r.Number("arc_min"), r.Number("arc_max"), speed, r.Number("spread"), r.Number("volley_interval"), r.Number("volley_jitter"), r.Number("spawn_jitter"), r.Number("pierce_chance"), r.Number("secondary_extra"), r.Number("trigger_chance"), r.Number("trigger_chance_step"),
-                r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits"), r.Number("gather"), r.Number("band"), r.Number("skill_flat")));
+                r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits"), r.Number("gather"), r.Number("band"), r.Number("skill_flat"), damageWindow));
         }
         // ── 修行星图：内容表 + 布局表 ──────────────────────────────────────
         // 刻意拆成两张表：**几何与拓扑由工具整份拥有**（下一轮的节点编辑器），数值与文案人工维护。

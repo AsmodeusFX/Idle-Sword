@@ -320,7 +320,7 @@ public partial class Main
             // 紧凑按钮（18 号字 + 内边距 2）：默认那套的最小高是 45，会把行距顶穿（与 GM 面板同一处理）。
             var adopt = UiKit.Button(inner, "采纳", px + 500, 0, 70, 38, () => LevelAdopt(column), pad: 2);
             adopt.AddThemeFontSizeOverride("font_size", 18);
-            adopt.TooltipText = "把模型算出来的这一列填进待写值（模型口径见 balance_ttk.md）。";
+            adopt.Tip("把模型算出来的这一列填进待写值（模型口径见 balance_ttk.md）。");
             Row(power, adopt, dy);
         }
 
@@ -334,7 +334,7 @@ public partial class Main
         // 「复制成专用」：把当前这条共享波次抄一份新的（波次行 + 阵容），把本关指过去。
         // 这是"只想改这一关"的唯一正确做法——直接在共享模板上改会连带同 wave 的十几关。
         var copyWave = UiKit.Button(inner, "复制成专用", px + 320, 0, 120, 38, LevelCopyWavePrivate);
-        copyWave.TooltipText = "把当前波次抄一份新的、只给这一关用；原共享模板一个字不动。";
+        copyWave.Tip("把当前波次抄一份新的、只给这一关用；原共享模板一个字不动。");
         Row(challenge, copyWave, 46);
         // "这条被 N 关共用"独占一行（它是要紧的警告，不该被省略号吃掉）。
         _waveSharedHint = Hint(challenge, 0, 92, 680);
@@ -385,7 +385,7 @@ public partial class Main
         Note(add, 0, "以当前这一关为模板复制一份追加到末尾：自动分配 id 与 order、复用两个奖励组、"
             + "七列填模型建议值。不动任何已有行的 order。", 44);
         var append = UiKit.Button(inner, "追加一关", px, 0, 140, 38, LevelAppend);
-        append.TooltipText = "追加后 tests 里那批「正好 100 关」的断言会红，要一起更新（体检区会列出来）。";
+        append.Tip("追加后 tests 里那批「正好 100 关」的断言会红，要一起更新（体检区会列出来）。");
         Row(add, append, 50);
     }
 

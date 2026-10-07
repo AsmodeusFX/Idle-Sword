@@ -7,6 +7,15 @@ public sealed class SaveStore(string path)
 {
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     public string? Warning { get; private set; }
+
+    /// <summary>
+    /// **深拷贝一份玩家状态**（走与存档完全相同的序列化器，所以嵌套的 `BattleState`、字典与集合
+    /// 都是新的实例）。供需要"一份独立板面"的工具使用——目前是 GM 技能预览的「跟随当前存档」练度：
+    /// 沙盒会话会**推进、会结算**（靶子一旦被打死就掉钱、写解锁标记），
+    /// 所以必须拷贝而不是共享引用，否则一开预览就会污染真实进度。
+    /// </summary>
+    public static PlayerState Clone(PlayerState state) =>
+        JsonSerializer.Deserialize<PlayerState>(JsonSerializer.Serialize(state, Options)) ?? new PlayerState();
     public PlayerState? Load(GameConfig config)
     {
         bool exists = false;

@@ -75,7 +75,12 @@ void Dummies(GameSession g, int count, double startOffset, double step)
         });
 }
 
-Check("all tables / 100 stages / 15 skills / 60 intent upgrades", () => Assert(config.Levels.Count == 100 && config.Skills.Count == 15 && config.Rows("SwordUpgrade").Count == 60, "table counts"));
+// 参悟行数 = 12 个输出法术 × 4 类 + 剑二十三的 4 行 `inherit_percent` = **48**。
+// ⚠️ 从前的 60（= 15 × 4）里，**仙云 / 醉仙 / 剑罡护体那 12 行是完全无效的**：
+// 它们配的是 `damage_percent`，而这三个是增益类，`power` 对增益**只有声明了伤害倍率窗才产生作用**
+// （它们都没声明）⇒ 玩家花参悟货币买不到任何东西。2026-10-07 删掉，等参悟整体重做时再按
+// `sword_intent.md` 的设想给增益配"自己的强度轴"（仙云 → 攻速比例、醉仙 → 暴击、剑罡护体 → 护盾量）。
+Check("all tables / 100 stages / 15 skills / 48 intent upgrades", () => Assert(config.Levels.Count == 100 && config.Skills.Count == 15 && config.Rows("SwordUpgrade").Count == 48, "table counts"));
 Check("skill roster: three per realm, rearranged as designed", () => {
     // 每境恰 3 个。本轮把青元剑芒下到小妖、万剑决与天剑下到妖将、剑气流云壁下到妖尊，
     // 妖圣档腾出的位置给新技能剑二十三；剑侍归档，一进一出，在役数不变。
@@ -344,6 +349,9 @@ Check("reject invalid flight shape, count and arc band", () => {
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_02", "aoe_all", "1") : source[f]));              // 天降火海与全体命中互斥
     Reject(() => GameConfig.Load(f => f == "monster.csv" ? Cell(source[f], "slime", "layer", "sky") : source[f]));                    // 未知层级
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "hits", "sky") : source[f]));              // 未知技能定位
+    // 伤害倍率窗是**显式声明**的，而且只在 buff 上成立：
+    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "damage_window", "1") : source[f]));      // 非 buff 声明窗 = 什么都不做的死配置
+    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_14", "damage_window", "1") : source[f]));      // 声明了窗却 power = 1 = 那格窗乘 1，等于没声明
     Reject(() => GameConfig.Load(f => f == "wave_unit.csv" ? Cell(source[f], "wave_3_hawk", "wave_id", "wave_99") : source[f]));      // 悬空波次引用
     Reject(() => GameConfig.Load(f => f == "wave_unit.csv" ? Cell(source[f], "wave_1_slime", "monster_id", "missing") : source[f]));   // 悬空的怪物引用
     // 某一波没有任何 wave_unit：那一波会刷不出怪、关卡直接空转，必须在加载期被拒。
@@ -1721,17 +1729,22 @@ Check("haste speeds up attack cooldowns but never buff cooldowns", () => {
     Assert(Math.Abs(g.Battle.Cooldowns["skill_01"] - (10 - .0625)) < 1e-9, $"attack cooldown ticked 1.25x: {g.Battle.Cooldowns["skill_01"]}");
     Assert(Math.Abs(g.Battle.Cooldowns["skill_04"] - (10 - .05)) < 1e-9, $"buff cooldown ticked 1x: {g.Battle.Cooldowns["skill_04"]}");
 });
-Check("a power-1 buff leaves the shared damage window alone", () => {
-    // 剑罡护体（power 1.5，持续走配置）生效中再放仙风云体术（power 1，6 秒）：
-    // 若纯功能向的增益也占用共享窗口，剩余时间会被顶成 6 秒。
+Check("伤害倍率窗只认显式标记：没声明它的增益不会占用窗口", () => {
+    // 判据是 `SwordSkill.damage_window` 这个显式标记，**不是** `power != 1`（见 GameSession.CastBuff 的说明）。
+    // 用改过的配置造一个"声明了窗"的增益：靶子在身前 90，增益才有合法目标可放。
     // 持续秒数从配置读，别写死——增益时长是会调的。
-    double window = config.Skills["skill_14"].Duration;
-    var g = Salvo("skill_14");                       // 靶子在身前 90，增益才有合法目标可放
-    Assert(Math.Abs(g.BuffRemaining - window) < 1e-9, $"damage buff window is {window}s: {g.BuffRemaining}");
-    g.State.Skills["skill_04"] = 1; g.Battle.Cooldowns.Clear();
-    g.Step(.05);
-    Assert(g.HasteRemaining > 0, "haste came up");
-    Assert(g.BuffRemaining <= window, $"the power-1 buff did not reset the damage window: {g.BuffRemaining}");
+    var declared = GameConfig.Load(f => f == "SwordSkill.csv"
+        ? Cell(Cell(source[f], "skill_04", "power", "1.6"), "skill_04", "damage_window", "1") : source[f]);
+    double window = declared.Skills["skill_04"].Duration;
+    var g = SalvoOn(declared, "skill_04");
+    Assert(Math.Abs(g.BuffPower - 1.6) < 1e-9, $"声明了窗的增益写进了它自己的那一格：{g.BuffPower}");
+    Assert(Math.Abs(g.BuffRemaining - window) < 1e-9, $"而且只占它自己的那一格、寿命是 {window}s：{g.BuffRemaining}");
+    // 没声明窗的增益（剑罡护体现在的样子）即便 `power` 变了也不写窗 —— 这正是"参悟/等级不再能偷偷打开它"。
+    var quiet = GameConfig.Load(f => f == "SwordSkill.csv"
+        ? Cell(source[f], "skill_14", "power", "1.5") : source[f]);
+    var q = SalvoOn(quiet, "skill_14");
+    Assert(q.BuffPower == 1 && q.BuffRemaining == 0,
+        $"没声明窗的增益不写窗（power 是 1.5 也不行）：×{q.BuffPower} / {q.BuffRemaining}s");
 });
 Check("crit_reduce raises the crit rate while it lasts", () => {
     // 固定 seed 下确定性可比：叠伤害合计，加成期间应明显高于基础暴击率。
@@ -2291,6 +2304,144 @@ Check("曲线模型与 fightattr 对账：改了主轴常量而不同步锚点�
     Assert(Threw(() => LevelCurve.Compute(f => f == "fightattr.csv"
         ? Cell(source[f], "basic_power", "base_value", "0.5") : source[f])),
         "把 basic_power 减半会让『裸开局 3 刀』的锚点校验失败");
+});
+Check("共享伤害倍率窗：按来源相乘、威力含等级成长，且期望模型确实算上了它", () => {
+    // 窗是 DMG3 的 **Build 乘区**，所以多个窗**相乘**而不是互相覆盖（从前是"最后一个写入者胜"，
+    // 两个窗同时在役时先放的会被静默取消）。
+    // ⚠️ 在役的 15 个法术**没有一个声明窗**（唯一的历史载体是退役表里的「护心剑罡」），
+    // 所以这一组用改过的配置合成窗——这与其它死配置（pierce / multi / summon…）是同一套办法。
+    GameConfig Windows(string power) => GameConfig.Load(f => f == "SwordSkill.csv"
+        ? Cell(Cell(source[f], "skill_14", "power", power), "skill_14", "damage_window", "1") : source[f]);
+    var one = Windows("1.5");
+    var g = SalvoOn(one, "skill_14", 200);
+    Assert(Math.Abs(g.BuffPower - 1.5) < 1e-9, $"单窗 = 配置 power：{g.BuffPower}");
+    // 第二个窗：让仙风云体术也声明一格。它的 `power` 本来是 1，而加载期拦着"声明了窗却 power = 1"
+    // （那格窗什么都不做），所以这里连 power 一起抬到 1.25 ⇒ 两格相乘应当是 1.5 × 1.25 = 1.875。
+    var two = GameConfig.Load(f => f == "SwordSkill.csv"
+        ? Cell(Cell(Cell(Cell(source[f], "skill_14", "power", "1.5"), "skill_14", "damage_window", "1"),
+               "skill_04", "damage_window", "1"), "skill_04", "power", "1.25") : source[f]);
+    var both = SalvoOn(two, "skill_14", 200);
+    Assert(Math.Abs(both.BuffPower - 1.5) < 1e-9, $"先只有一格：{both.BuffPower}");
+    both.State.Skills["skill_04"] = 1; both.Battle.Cooldowns.Clear();
+    both.Step(.05);
+    Assert(Math.Abs(both.BuffPower - 1.5 * 1.25) < 1e-9, $"两个窗相乘（Build = Π）：{both.BuffPower} vs 1.875");
+    // 威力取的是 `SkillPower`（**含**技能等级与参悟），不是配置里那个基础 `power`——
+    // 这一条最容易漏，而它正是这个乘区在高等级下变大的原因（剑罡护体那条遗留窗就是这么长到 ×8.5 的）。
+    var ranked = SalvoOn(one, "skill_14", 200);
+    ranked.State.Skills["skill_14"] = 32;
+    ranked.Battle.Cooldowns.Clear(); ranked.Effects.Clear();
+    Assert(ranked.ForceRelease("skill_14"), "32 级释放");
+    double expected = 1.5 * (1 + config.Setting("skill_level_bonus") * 31);
+    Assert(Math.Abs(ranked.BuffPower - expected) < 1e-9, $"窗的威力含等级成长：{ranked.BuffPower} vs {expected}");
+    // 模型侧：**声明了窗**与**没声明**相比，后期 normal_hp 必须明显不同。
+    // 模型要是没算这一项，下面这条会纹丝不动——这正是本轮修掉的那个"模型漏乘区"。
+    var withWindow = LevelCurve.Compute(f => f == "SwordSkill.csv"
+        ? Cell(Cell(source[f], "skill_14", "power", "1.5"), "skill_14", "damage_window", "1") : source[f]);
+    var noWindow = LevelCurve.Compute(f => source[f]);
+    Assert(noWindow.NormalHp[99] < withWindow.NormalHp[99] * .8,
+        $"模型必须算上共享倍率窗：关 100 的 normal_hp 有窗 {withWindow.NormalHp[99]:0.#} / 无窗 {noWindow.NormalHp[99]:0.#}");
+});
+Check("共享伤害倍率窗是**全队**乘区：它放大的是别人的伤害，账也记在别人名下", () => {
+    // 这一条解释"为什么伤害统计里看不到那个增益"：面板按**谁打出的那一笔**归因，
+    // 所以全局增伤只会让**别人的行**变大，它自己那一行只剩它直接打出去的那点东西。
+    // 要看它的真实分量，得量"同一式在窗开 / 窗关时的伤害比"。
+    // 关掉暴击：数字要能精确断言，暴击会让比值随抽签漂。
+    // ⚠️ 在役的 15 个法术没有一个声明窗（历史载体是退役表里的「护心剑罡」），所以这里合成一个。
+    var cfg = GameConfig.Load(f => f switch
+    {
+        "SwordSkill.csv" => Cell(Cell(source[f], "skill_14", "power", "1.5"), "skill_14", "damage_window", "1"),
+        "fightattr.csv" => Cell(source[f], "crit_rate", "base_value", "0"),
+        _ => source[f],
+    });
+    double SkillDamage(int rank, bool withWindow)
+    {
+        var g = SalvoOn(cfg, "skill_01", 200);
+        g.State.Skills["skill_01"] = rank;
+        if (withWindow) g.State.Skills["skill_14"] = rank;
+        g.Battle.Cooldowns.Clear(); g.Effects.Clear();
+        foreach (var e in g.Battle.Enemies) e.Hp = e.MaxHp = 1e9;
+        g.ResetDamageStats();
+        if (withWindow) Assert(g.ForceRelease("skill_14"), "窗增益上盾");
+        Assert(g.ForceRelease("skill_01"), "御剑术出手");
+        Step(g, 1.5);
+        return g.DamageStats.Rows["skill_01"].Effective;
+    }
+    // 窗开着的那几秒里，**御剑术**的伤害应当恰好是"基础 power × (1 + 每级 +15%)"倍——
+    // 也就是说放大是**全队**的，而且随技能等级一路长上去（这就是那条遗留窗能长到 ×8.5 的原因）。
+    foreach (int rank in new[] { 1, 10, 20, 32 })
+    {
+        double closed = SkillDamage(rank, false), open = SkillDamage(rank, true);
+        double expected = 1.5 * (1 + config.Setting("skill_level_bonus") * (rank - 1));
+        Assert(Math.Abs(open / closed - expected) < 1e-9,
+            $"{rank} 级把御剑术放大了 {open / closed:0.###} 倍（期望 {expected:0.###}）：{closed:0.#} → {open:0.#}");
+    }
+});
+Check("技能文案：每个在役法术都能翻成人话，且不泄漏配置里的原始枚举值", () => {
+    // 这一条防的是本工程真栽过的那类事：`bonus_vs_state` 没进文案表，落到兜底分支**原样印出内部标识符**，
+    // 而两边都不报错。`SkillText` 的每个取值分支都是**穷举 + 抛错**，所以"新增取值却没补文案"会在这里当场炸。
+    // 断言两条：① 原文里不许出现配置里的枚举值；② 该有的信息必须真的露面。
+    foreach (var s in config.Skills.Values)
+    {
+        string text = SkillText.Summary(s) + "\n" + SkillText.ParamsBlock(s, 100, s.Power, s.Power * 1.15);
+        foreach (string raw in new[] { s.Secondary, s.Trajectory, s.Targeting, s.Hits, s.Kind, s.Realm })
+            if (raw.Length > 0 && text.Contains(raw, StringComparison.Ordinal))
+                throw new Exception($"{s.Id} 的文案里出现了配置原始值 '{raw}'：\n{text}");
+    }
+    // 层是玩家会反复踩到的硬规则（飞行单位免疫只打地面的技能），必须在参数里说清。
+    var sea = config.Skills["skill_02"];
+    Assert(SkillText.Layer(sea).Contains("只打地面")
+        && SkillText.ParamsBlock(sea, 100, sea.Power, sea.Power).Contains("只打地面"),
+        "只打地面的法术要在 tips 里写明");
+    // 无限制层时不说废话（那是不受限的默认情形）。
+    Assert(SkillText.Layer(config.Skills["skill_01"]) == "", "不限制层的法术不印这一行");
+    // 增益类不印"威力"——它们的 `power` 不产生伤害（除非声明了伤害倍率窗），印出来是误导。
+    var shield = config.Skills["skill_14"];
+    Assert(!SkillText.ParamsBlock(shield, 100, shield.Power, shield.Power).Contains("单发伤害"),
+        "增益类不该印单发伤害（它的 power 不产生伤害）");
+    // 穷举兜底是**响亮失败**，不是把原始 id 印出去。
+    bool Threw(Action a) { try { a(); } catch (InvalidDataException) { return true; } return false; }
+    Assert(Threw(() => SkillText.Secondary(config.Skills["skill_01"] with { Secondary = "bogus" })), "未知次级效果要响亮失败");
+    Assert(Threw(() => SkillText.Kind(config.Skills["skill_01"] with { Kind = "bogus" })), "未知类别要响亮失败");
+});
+Check("沙盒模式：世界静止，只有战斗结算在跑", () => {
+    // 技能预览那个固定靶场靠它。这一条钉的是一个**真实踩过的回归**：靶场从前靠 UI 侧打补丁
+    // （关普攻 + 把当前格标 Passed + 每步重钉靶子），而"近战停步 120 而靶子钉在 520"这种
+    // 正规改动的连带影响一进来，角色就一路前进、走进新格当拍刷怪。
+    var g = New(basic: true);
+    g.Step(.05);
+    g.SandboxMode = true;
+    // 清空场地，让读数只反映"沙盒自己有没有动"。
+    g.Battle.Enemies.Clear(); g.Battle.Spawns.Clear();
+    g.State.Skills["skill_01"] = 1;
+    var at = (X: g.Battle.PlayerX, Cell: g.Battle.Cell, Hp: g.Battle.PlayerHp);
+    Step(g, 5);   // 正常模式下这 5 秒足够走出好几格、刷好几波
+    Assert(g.Battle.PlayerX == at.X, $"沙盒里玩家不该移动：{at.X} → {g.Battle.PlayerX}");
+    Assert(g.Battle.Cell == at.Cell, "沙盒里不该换格");
+    Assert(g.Battle.Enemies.Count == 0, "沙盒里不该刷怪");
+    Assert(g.Battle.PlayerHp == at.Hp, "沙盒里气血不变（不结算受伤与死亡）");
+    Assert(!g.Moving, "沙盒里不进入移动状态");
+    // **另一半是"结算照常"**：沙盒只是把世界冻住，战斗本身还得跑，否则预览里技能不会出手。
+    g.Battle.Cooldowns["skill_01"] = 5;
+    g.Step(.05);
+    Assert(g.Battle.Cooldowns["skill_01"] < 5, "沙盒里冷却照常流逝");
+});
+Check("SaveStore.Clone：深拷贝一份状态（改副本不影响原状态）", () => {
+    // 技能预览的「跟随当前存档」练度靠它：沙盒会推进、会结算（靶子被打死就掉钱、写解锁标记），
+    // 所以必须是拷贝而不是共享引用，否则一开预览就污染真实进度。
+    var original = new PlayerState();
+    original.Wallet["gold"] = 7;
+    original.Skills["skill_01"] = 3;
+    original.Talents["t_root"] = 1;
+    original.Battle.PlayerX = 123;
+    original.Battle.Enemies.Add(new() { Id = 1, MonsterId = "slime", Hp = 5, MaxHp = 5 });
+    var copy = SaveStore.Clone(original);
+    Assert(copy.Amount("gold") == 7 && copy.Skills["skill_01"] == 3 && copy.Battle.Enemies.Count == 1, "副本内容与原状态一致");
+    copy.Wallet["gold"] = 100; copy.Skills["skill_01"] = 9; copy.Talents["t_root"] = 9;
+    copy.Battle.PlayerX = 999; copy.Battle.Enemies[0].Hp = 1; copy.Battle.Enemies.Add(new() { Id = 2 });
+    Assert(original.Amount("gold") == 7 && original.Skills["skill_01"] == 3 && original.Talents["t_root"] == 1,
+        "改副本的字典不该影响原状态（说明不是浅拷贝）");
+    Assert(original.Battle.PlayerX == 123 && original.Battle.Enemies.Count == 1 && original.Battle.Enemies[0].Hp == 5,
+        "嵌套的 Battle 也必须是新的实例");
 });
 Console.WriteLine($"ALL {passed} CHECKS PASSED");
 

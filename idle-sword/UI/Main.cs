@@ -120,9 +120,9 @@ public partial class Main : Control
         // 顶栏右侧依次为 GM / 设置 / 保存，钱包宽度收窄给设置按钮让位。
         _wallet = UiKit.Label(this, "", 825, 14, 620, 48, 23);
         var gm = UiKit.Button(this, "GM", 1462, 20, 120, 42, ToggleGm);
-        gm.TooltipText = "调试专用：发放资源，以及临时加减每波的怪物数量（不影响正式配置）。";
+        gm.Tip("调试专用：发放资源，以及临时加减每波的怪物数量（不影响正式配置）。");
         var settings = UiKit.Button(this, "设置", 1592, 20, 120, 42, ToggleSettings);
-        settings.TooltipText = "画面、音频与进度重置。";
+        settings.Tip("画面、音频与进度重置。");
         var saveButton = UiKit.Button(this, "保存", 1730, 20, 150, 42, Save);
         _hp = new ProgressBar { ShowPercentage = false }; UiKit.Place(_hp, 34, 72, 465, 18);
         _hp.AddThemeStyleboxOverride("background", UiKit.Box(new Color("#263946"), 3)); _hp.AddThemeStyleboxOverride("fill", UiKit.Box(new Color("#89bda8"), 3)); AddChild(_hp);
@@ -205,7 +205,9 @@ public partial class Main : Control
             // 满血、无刷怪无敌人），只要不 Step 它就一直干净——所以过场里没有刷怪、没有战斗、也不写存档，
             // 是构造上没有，不是靠抑制。走路与镜头全由表现层驱动。
             if (_prologue is not null) TickPrologue(step);
-            else if (_preview is not null) { TickPreview(step); _preview.Step(step); }
+            // 预览期间只推进预览会话：既让主线挂机暂停，也保证预览状态不回写存档。
+            // `_previewPaused` 是工具页上的暂停（停步进、留画面）。
+            else if (_preview is not null) { if (!_previewPaused) { TickPreview(step); _preview.Step(step); } }
             else _game.Step(step);
             // 逐 Step 观测而不是逐帧：一次长帧会合并多个 Step，短冷却技能可能触发又走完而被漏掉。
             TrackSkillCasts(Active);
@@ -222,7 +224,7 @@ public partial class Main : Control
         TickAttributes(delta);
         _saveClock += delta; _refreshClock += delta;
         if (_preview is null && _saveClock >= _game.Config.Setting("save_interval")) { _saveClock = 0; Save(); }
-        if (_refreshClock >= .15) { _refreshClock = 0; Refresh(); }
+        if (_refreshClock >= .15) { _refreshClock = 0; Refresh(); RefreshPreviewPage(); }
         // 过场期间不数帧：RunUiSmoke 在第 100 帧开跑，而它整段都假设"正常关卡正在运行"。
         // 序章跑的时候先冻住计数，交接之后从 0 重新数，冒烟因此仍拿到完整的 100 帧预热。
         if (_testMode && _prologue is null && ++_frames == 100) RunUiSmoke();
@@ -1349,11 +1351,24 @@ public partial class Main : Control
                 }
                 // 技能预览：15 个法术各出一张对照图，逐个核对表现与数值。
                 TogglePreview();
+                if (!PreviewOpenForCheck()) throw new Exception("技能预览页没打开");
+                // 提示框底板必须**不透明**：半透明底压在页面文字上会两层字叠在一起读不清（用户报过）。
+                if (UiKit.TipPanelAlphaForCheck() < 1f) throw new Exception($"提示框底板是半透明的（alpha {UiKit.TipPanelAlphaForCheck()}）");
+                if (_previewBattle.LoadError is not null) throw new Exception(_previewBattle.LoadError);
+                await Capture("-preview");
+                // 沙盒不变量：推进若干帧之后世界必须纹丝不动（玩家坐标 / 格号 / 敌人数）。
+                // 这一条钉的正是"角色乱走 + 一直刷怪"那个回归——它从前是 UI 侧打补丁挡的，被正规改动击穿过。
+                var sandboxBefore = SandboxForCheck();
+                AdvancePreview(120);
+                if (SandboxForCheck() != sandboxBefore) throw new Exception($"预览沙盒的世界动了：{sandboxBefore} → {SandboxForCheck()}");
                 for (int i = 0; i < _game.Config.Skills.Count; i++)
                 {
-                    SelectPreviewSkill(i); ShowPage(_selectedTab); Refresh(); AdvancePreview(40);
+                    SelectPreviewSkill(i); AdvancePreview(40);
                     await Capture("-skill" + (i + 1).ToString("00"));
                 }
+                // 布局：工具页的控件不许越出 1920×1080（从前玩家页那版把化神三个技能与退出按钮推出了屏幕）。
+                var (pageRight, pageBottom) = PreviewBoundsForCheck();
+                if (pageRight > 1920 || pageBottom > 1080) throw new Exception($"技能预览页超框：右 {pageRight} / 下 {pageBottom}");
                 TogglePreview();
             }
             // 设置面板：打开、改音量、改分辨率、二次确认重置，覆盖界面到系统的接线。
@@ -1379,7 +1394,10 @@ public partial class Main : Control
             // 重置后法术数为 0：开局不再白送御剑术，得自己花灵石学（见 GameSession 构造器）。
             if (_game.State.FirstKills.Count != 0 || _game.State.Skills.Count != 0) throw new Exception("Reset left progress behind");
             if (_settingsRoot.Visible) throw new Exception("Settings panel should close after reset");
-            if (_preview is not null || !ReferenceEquals(_battle.Session, _game)) throw new Exception("Reset must leave preview mode and rebind the battle view");
+            // 技能预览是**自己一块全屏页**，不再是"占着玩家页"的第二种模式：重置前它必须已经关掉，
+            // 而且主场景的战斗视口**任何时刻**都绑在 `_game` 上（预览用的是工具自己那份视口）。
+            if (_preview is not null || PreviewOpenForCheck() || !ReferenceEquals(_battle.Session, _game))
+                throw new Exception("Reset must leave preview mode and keep the battle view on the main session");
             // 阵亡与复活的四拍：强制死一次、逐拍留图。**放在最后**——它会整关重置，
             // 放前面会把上面那些依赖关卡状态的断言搅乱。帧数是按 60fps 估的，只看个大概齐。
             // 先让游戏**自然跑几帧**把怪刷出来。**不要用同步的一大串 `Step`**：那会把这一帧的
@@ -1649,7 +1667,8 @@ public partial class Main : Control
         RefreshTabs();
         // **不重置平移**：切走再切回来应该还停在原处。"居中"按钮已按用户要求删掉，平移全交给拖拽。
         if (_talentRoot.Visible) RefreshTalentMap();
-        if (_preview is not null) { PreviewPage(); return; }
+        // 技能预览**不再借用这一页**：它是自己一块全屏工具页（`UI/SkillPreview.cs`），
+        // 从前的 `if (_preview is not null) { PreviewPage(); return; }` 正是"工具与玩家页面纠缠"的来源。
         if (TabLocked(tab)) { LockedPage(_tabs[tab].Text); return; }
         switch (tab) { case 0: break; case 1: SkillPage(); break; case 2: ForgePage(); break; case 3: IntentPage(); break; case 4: PetPage(); break; }
     }

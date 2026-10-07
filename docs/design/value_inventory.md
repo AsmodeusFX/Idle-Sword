@@ -19,7 +19,7 @@
 | 武器攻击 | 数值 | `Equip.base_atk × (1 + .15×WeaponLevel) × WeaponRoll`，`Features/Forging/ForgingSystem.cs` |
 | 技能威力（SkillRate） | 数值 | `SkillDef.Power × (1 + skill_level_bonus×(rank−1) + SkillBonus(id,"damage_percent"))` |
 | 技能固定伤害 | 数值 | `SwordSkill.skill_flat`（**全表 0 = 尚未投放**，用前读 [combat.md](combat.md) §2 的陷阱） |
-| 共享伤害倍率窗 | 数值 | `CombatEffect.BuffPower`（`power != 1` 的 buff 写入，出手时**快照**） |
+| 共享伤害倍率窗 | 数值 | `CombatEffect.BuffPower`（**声明了 `SwordSkill.damage_window` 的 buff** 写入，出手时**快照**；当前无在役载体 = 死配置） |
 | 处决（斩杀增伤） | 数值 | `secondary=execute` → DMG3 **Build** 乘区 |
 | 对状态目标增伤 | 数值 | `secondary=bonus_vs_state` → DMG3 **Build** 乘区 |
 | 易伤（敌方承伤放大） | 状态 | `secondary=vulnerable` → DMG3 **Vulnerability** 乘区（**当前无在役技能**） |
@@ -194,6 +194,17 @@ Vulnerability = Π(目标身上的易伤 …)                          // 乘算
 
 ## K. 死配置（代码与词汇表都在，只差载体）
 
-当前**没有任何在役技能**使用的值：次级效果 `pierce` / `multi` / `regen` / `lifesteal` / `vulnerable`；形态 `hover_homing`；类别 `summon`；`hits=air`。
+当前**没有任何在役技能**使用的值：次级效果 `pierce` / `multi` / `regen` / `lifesteal` / `vulnerable`；形态 `hover_homing`；类别 `summon`；`hits=air`；以及两个**列**——`SwordSkill.skill_flat`（全 0）与 `SwordSkill.damage_window`（全 0）。
+
+> ⚠️ `damage_window` 的来历值得记一句：它的**前一版判据是 `power != 1`**，于是 `剑罡护体` 漏改的
+> `power = 1.5` 让它静默成了一个全队伤害乘区（满级 ×8.47），而文档还以为那个 `power` 没有伤害作用。
+> 现在判据是显式标记，`power` 只当威力用。它当前**没有载体**（历史载体是退役表里的「护心剑罡」，
+> 那一行标着 `damage_window = 1`），属于上面这套死配置的惯例。见 [combat.md](combat.md) §12.1。
+
+> ⚠️ **`SwordUpgrade.csv` 里 12 行参悟曾经完全无效、却照样卖**（仙云 / 醉仙 / 剑罡护体 × 4 类）：
+> 它们配的是 `damage_percent`，而这三个是增益类，`power` 对增益**只有声明了伤害倍率窗才产生作用**
+> ——玩家花参悟货币买不到任何东西。**已删除**（参悟行数 60 → **48**）。
+> 参悟整体重做时，按 `sword_intent.md` 的设想给增益配"自己的强度轴"（仙云 → 攻速比例、
+> 醉仙 → 暴击、剑罡护体 → **护盾量**）再加回来。
 
 退役技能原文收在 `idle-sword/Config/Tables/SwordSkill_Retired.csv`（**不参与加载**）。这些是为后续扩展留的词汇表——`tests/Program.cs` 用**内存改配置**维持它们的覆盖，所以别当成死代码删掉。
