@@ -1279,19 +1279,19 @@ public partial class Main : Control
                 throw new Exception($"属性面板**建出来**的行数与 fightattr 不符：{AttributeCellRowCountForCheck()} vs {tableRows}");
             // ㉗ 口径写死在断言里：面板值走 `MaxHp` / `Attack`，动态值走暴击加成与攻速。
             //    以后谁把动态列改成"只显示属性本身"，这几条会红。
-            var hpRow = attrRows.First(r => r.Id == "hp");
+            var hpRow = attrRows.First(r => r.Id == "max_hp_base");
             if (Math.Abs(hpRow.Panel - _battle.Session.MaxHp) > 1e-6)
                 throw new Exception($"气血的面板值应当等于 MaxHp：{hpRow.Panel} vs {_battle.Session.MaxHp}");
-            var atkRow = attrRows.First(r => r.Id == "atk");
+            var atkRow = attrRows.First(r => r.Id == "atk_base");
             if (Math.Abs(atkRow.Panel - _battle.Session.Attack) > 1e-6)
                 throw new Exception($"攻击的面板值应当等于 Attack：{atkRow.Panel} vs {_battle.Session.Attack}");
             if (Math.Abs(atkRow.Current - _battle.Session.Attack * _battle.Session.BuffPower) > 1e-6)
                 throw new Exception("攻击的动态值应当是 Attack × 伤害倍率窗（buff 改的是伤害、不是攻击）");
-            var critRow = attrRows.First(r => r.Id == "crit");
-            if (Math.Abs(critRow.Current - (_game.Config.Attr("crit") + _battle.Session.CritBonus)) > 1e-9)
+            var critRow = attrRows.First(r => r.Id == "crit_rate");
+            if (Math.Abs(critRow.Current - (_game.Config.Attr("crit_rate") + _battle.Session.CritBonus)) > 1e-9)
                 throw new Exception("暴击率的动态值应当含临时加成");
             var intervalRow = attrRows.First(r => r.Id == "basic_interval");
-            if (Math.Abs(intervalRow.Current - _game.Config.Attr("basic_interval") / _battle.Session.HasteFactor) > 1e-9)
+            if (Math.Abs(intervalRow.Current - _game.Config.Attr("basic_interval") / (1 + _battle.Session.AttackSpeed)) > 1e-9)
                 throw new Exception("普攻间隔的动态值应当按攻速折算");
             if (BuffRows().Length != 8) throw new Exception("临时状态那一块应当固定八行（没生效也要占位）");
             // ㉘ **面板值读的是活状态，不是开面板那一刻的快照**：给一个投攻击的天赋点上一级，
@@ -1300,9 +1300,9 @@ public partial class Main : Control
             string atkTalent = _game.Config.Rows("Talent").First(r => r.Text("effect") is "atk_flat" or "atk").Text("id");
             int hadLevel = _game.State.Talents.GetValueOrDefault(atkTalent);
             _game.State.Talents[atkTalent] = hadLevel + 1;
-            double before = AttributeRows().First(r => r.Id == "atk").Panel;
+            double before = AttributeRows().First(r => r.Id == "atk_base").Panel;
             _game.State.Talents[atkTalent] = hadLevel;
-            double after = AttributeRows().First(r => r.Id == "atk").Panel;
+            double after = AttributeRows().First(r => r.Id == "atk_base").Panel;
             if (_game.State.Talents.GetValueOrDefault(atkTalent) != hadLevel)
                 throw new Exception("天赋没还原干净——后面的断言会被这条污染");
             if (Math.Abs(before - after) < 1e-9)

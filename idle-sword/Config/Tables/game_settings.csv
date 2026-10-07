@@ -16,3 +16,4 @@ guard_blade_power,1.2
 guard_interval,0.8
 guard_range,400
 talent_grid_rows,5
+ground_tick_interval,0.6

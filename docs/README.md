@@ -9,6 +9,8 @@
 - [设计镜片：养成系统的三层流转](design/design_lens.md)
 - [战斗价值清单（可投放的价值门类）](design/value_inventory.md)
 - [已确认规则与待确认边界](design/core_rules.md)
+- [战斗底层规则（DMG1 / DMG2 / DMG3）](design/combat.md) —— **战斗公式与结算顺序的权威口径**
+- [战斗属性与 DamageModifier 规范](design/fightattr.md) —— **要加战斗属性前先看这份**
 - [世界观与包装](design/worldview.md)
 - [怪物设计与「层 / 定位」轴](design/monsters.md)
 - [剑意（参悟）的包装与分页](design/intent_packaging.md)

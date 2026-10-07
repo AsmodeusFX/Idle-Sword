@@ -95,7 +95,26 @@ public sealed class CombatEffect
     // 追踪类弹道记住的"目标最后所在的位置"。目标中途死亡后，弹丸靠它把这一程飞完、到点即散，
     // 而不是改成朝发射方向一直飘出去（那会变成贴着地面平行右移，看着像脱靶）。
     public double TargetX { get; set; }
+    /// <summary>
+    /// **DMG1**：这一发的原始伤害（`攻击力 × 技能倍率 + 平值`），**不含任何条件乘区**。
+    /// 暴击倍率、共享伤害倍率窗、斩杀、利用状态、易伤一律不在这里——它们在落地那一刻由
+    /// `DamageFormula` 按目标当下的状态算（见 <see cref="Critical"/> 与 `GameSession.Hit`）。
+    /// 所以读这个数做判断（例如"这一发有多重"）时要清楚它只是**出手时**的原始值。
+    /// </summary>
     public double Damage { get; init; }
+    /// <summary>
+    /// **出手快照**：这一发产生时摇定的暴击结果。此后由它派生的一切结算共享这份快照
+    /// （同一弹丸的其余命中、地面场每跳、天降落点、灼烧每跳），**不重新摇**——
+    /// 期望值不变（线性期望），但一次出手的观感与账目对得上。见 `docs/design/combat.md` 的「出手快照」。
+    /// </summary>
+    public bool Critical { get; init; }
+    /// <summary>出手那一刻的暴击倍率面板值（`fightattr.crit_damage`）。是否生效由 <see cref="Critical"/> 决定。</summary>
+    public double CritDamage { get; init; } = 1;
+    /// <summary>
+    /// 出手那一刻生效的**共享伤害倍率窗**（`power != 1` 的增益类法术写入），非生效期为 1。
+    /// 它是攻击者侧的 **Build** 乘区因子，所以跟着快照走；召唤物射击与灼烧跳伤因此不再重算它。
+    /// </summary>
+    public double BuffPower { get; init; } = 1;
     public double Life { get; set; }
     public double Timer { get; set; }
     // 出场前的等待秒数：> 0 时这效果还没"发生"——不结算、表现层也不画。

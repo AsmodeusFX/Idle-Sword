@@ -18,9 +18,11 @@ namespace IdleSword.Core;
 public static class LevelCurve
 {
     // ── 主轴锚点（改任何一个都要同步改配置，见 balance_ttk.md）──
-    public const double BaseAttack = 10;      // fightattr.atk：主轴的起点，不含武器与剑意
-    public const double BasicPower = 1;       // fightattr.basic_power
-    public const double StandardHp = 30;      // 标准小怪（青苔妖）的基础 HP，SU 的载体
+    // ⚠️ `atk_base` / `basic_power` / `crit_rate` / `crit_damage` / `attack_speed` / `skill_cdr` **不在这里**：
+    // 它们**直接从 fightattr.csv 读**。从前是抄一份常量在代码里、注释写上"同 fightattr.xxx"，
+    // 而两份之间没有任何东西对账——改了表不改常量，模型与游戏就静默分叉（`--check` 只会说"文件与模型不符"，
+    // 不会告诉你是哪一边错了）。现在只有下面这几条**模型自身的设计决策**留作常量。
+    public const double StandardHp = 30;      // 标准小怪（青苔妖）的基础 HP，SU 的载体（与 monster.csv 对账，见自检）
     public const double StandardHits = 3;     // 裸开局"N 下普攻打死后标准怪"的锚点
 
     /// <summary>**前几关是手抠的教学段**，不参与生成：它们的 `cells` 与 BOSS 血量都是按"点几下修为就能过"定的，
@@ -48,10 +50,7 @@ public static class LevelCurve
     private const double NStart = 3, NEnd = 15;             // 波次怪物数
     private const double TEnd = 14;                         // 第 100 关的清波目标秒数（起点由第 1 关反推）
     private const double AtkEnd = 2.5;                      // normal_atk 第 100 关的硬上界（balance_ttk.md §4.5）
-    private const double CritDamage = 1.5;                  // fightattr.crit_damage
-    private const double BaseCrit = 0.05;                   // fightattr.crit：**基础暴击**也要进模型
-    private const double BuffFloorRatio = 1.25;             // game_settings.buff_cooldown_floor_ratio
-    private const double BuffCdPerLevel = 0.02;             // game_settings.buff_cooldown_per_level
+    // 增益类法术的冷却成长：**读 game_settings 而不是抄常量**（`buff_cooldown_floor_ratio` / `_per_level`）。
     private const double PerBlade = 1.2, PerTick = 2;       // 命中数密度系数（见 skill_values.md 第三节）
     private const string Gold = "gold";
 
@@ -109,6 +108,11 @@ public static class LevelCurve
         var layout = Load("TalentLayout.csv").ToDictionary(r => r.Text("id"));
         var settings = Load("game_settings.csv").ToDictionary(r => r.Text("id"), r => r.Number("value"));
         var realmDefs = Load("SwordLevel.csv").OrderBy(r => r.Int("order")).ToArray();
+        // 战斗属性**从表里读**，不再抄一份常量在代码里（see the anchor comment above）。缺行会当场抛，
+        // 这正是想要的：改名/删行之后模型不该"接着按旧值算下去"。
+        var attrs = Load("fightattr.csv").ToDictionary(r => r.Text("id"), r => r.Number("base_value"));
+        // 地面持续效果的结算间隔：与 `GameSession.TickEffects` 读的是**同一个配置项**。
+        double groundTick = settings["ground_tick_interval"];
 
         double Lerp(double a, double b, int order) => a + (b - a) * (order - 1) / 99.0;
         double WaveSize(int order) => Lerp(NStart, NEnd, order);
@@ -154,7 +158,7 @@ public static class LevelCurve
                     case "atk_flat": flat += amount; break;    // 平攻：加在乘区之外
                 }
             }
-            return BaseAttack * (1 + percent) + flat;
+            return attrs["atk_base"] * (1 + percent) + flat;
         }
 
         for (int order = 1; order <= count; order++)
@@ -228,12 +232,14 @@ public static class LevelCurve
         double Hits(CsvRow s, double wave)
         {
             if (s.Flag("aoe_all")) return s.Int("projectile_count") * wave;
-            if (s.Text("kind") == "ground") return Math.Round(s.Number("duration") / 0.6) * PerTick;
+            // 地面持续效果的跳数 = 时长 ÷ 结算间隔。间隔**读 game_settings**，与 GameSession 同源——
+            // 写死 0.6 的旧写法会让"把间隔调成 0.5"变成一次静默的模型脱钩（模型仍按 0.6 算命中数）。
+            if (s.Text("kind") == "ground") return Math.Round(s.Number("duration") / groundTick) * PerTick;
             if (s.Text("trajectory") == "sky_drop")
             {
                 if (s.Text("secondary") == "dot")
                     // 天降火海：落地不结算，只有火海在跳 —— 直伤按跳数，灼烧按"着火秒数 × 灼烧系数"折算成等效命中。
-                    return Math.Round(s.Number("secondary_duration") / 0.6) * PerTick
+                    return Math.Round(s.Number("secondary_duration") / groundTick) * PerTick
                         + s.Number("secondary_duration") * PerTick * s.Number("secondary_value");
                 return s.Int("projectile_count") * PerBlade;
             }
@@ -242,6 +248,26 @@ public static class LevelCurve
             return 1;
         }
 
+        // 三个增益都是乘区：加速作用于普攻与法术（两条轴各算各的）、暴击作用于全链，影分身只复制法术、不复制普攻。
+        CsvRow? Buff(string sec) => skills.FirstOrDefault(s => s.Text("kind") == "buff" && s.Text("secondary") == sec);
+        double BuffCooldown(CsvRow s, int order) => Math.Max(
+            s.Number("duration") * settings["buff_cooldown_floor_ratio"],
+            s.Number("cooldown") * (1 - settings["buff_cooldown_per_level"] * (Lerp(RankStart, RankEnd, order) - 1)));
+        double BuffUptime(CsvRow? s, int order) =>
+            s is null || !Unlocked(s, order) ? 0 : Math.Min(1, s.Number("secondary_duration") / BuffCooldown(s, order));
+        var haste = Buff("haste"); var critBuff = Buff("crit_reduce"); var mirror = Buff("mirror");
+
+        // ── 频率：**普攻与法术是两条独立的轴**（见 docs/design/combat.md）──
+        // 普攻吃 `attack_speed`、法术吃 `skill_cdr`，两者都不能进伤害乘区。
+        // 加速类增益（仙风云体术）**两样一起给**——它的效果口径就是"普攻与法术一起加速"，
+        // 与 `GameSession.CastBuff` 的 `haste` 分支同源；只给一边这条曲线整体就变形了。
+        double SpeedBonus(int order) => haste is null ? 0 : haste.Number("secondary_value") * BuffUptime(haste, order);
+        /// <summary>普攻频率乘区 = `1 + attack_speed + 增益那一份`（普攻间隔是 `basic_interval ÷(1+它)`）。</summary>
+        double BasicSpeed(int order) => 1 + attrs["attack_speed"] + SpeedBonus(order);
+        /// <summary>法术频率乘区 = `1 + skill_cdr + 增益那一份`（冷却是 `cooldown ÷(1+它)`）。</summary>
+        double SkillSpeed(int order) => 1 + attrs["skill_cdr"] + SpeedBonus(order);
+
+        /// <summary>每秒的"技能倍率总量" = Σ(威力 × 期望命中数 × 等级成长 ÷ 出手周期)。**不含加速**，加速在 `Dps` 那一层乘。</summary>
         double Chain(int order)
         {
             double chain = 0;
@@ -254,31 +280,36 @@ public static class LevelCurve
             }
             return chain;
         }
-
-        // 四个增益都是乘区：攻速与暴击作用于全链（普攻也吃），影分身只复制法术、不复制普攻。
-        CsvRow? Buff(string sec) => skills.FirstOrDefault(s => s.Text("kind") == "buff" && s.Text("secondary") == sec);
-        double BuffCooldown(CsvRow s, int order) => Math.Max(
-            s.Number("duration") * BuffFloorRatio,
-            s.Number("cooldown") * (1 - BuffCdPerLevel * (Lerp(RankStart, RankEnd, order) - 1)));
-        double BuffUptime(CsvRow? s, int order) =>
-            s is null || !Unlocked(s, order) ? 0 : Math.Min(1, s.Number("secondary_duration") / BuffCooldown(s, order));
-        var haste = Buff("haste"); var critBuff = Buff("crit_reduce"); var mirror = Buff("mirror");
-        double Haste(int order) => 1 + (haste is null ? 0 : haste.Number("secondary_value") * BuffUptime(haste, order));
-        // 暴击乘区 = **基础暴击** + 增益给的那一份。基础那 5% 以前漏了，少算约 +2.5% DPS。
-        double CritMul(int order) => 1 + BaseCrit * (CritDamage - 1)
-            + (critBuff is null ? 0 : critBuff.Number("secondary_value") * (CritDamage - 1) * BuffUptime(critBuff, order));
+        /// <summary>普攻**未加速**的每秒倍率 = `basic_power ÷ basic_interval`（当前 = 1/1 = 1）。</summary>
+        double BasicBase() => attrs["basic_power"] / attrs["basic_interval"];
+        /// <summary>该关的暴击率合计（基础 + 增益那一份）。暴击的**判定**在 DMG2，这里只解它的期望。</summary>
+        double CritRate(int order) => attrs["crit_rate"]
+            + (critBuff is null ? 0 : critBuff.Number("secondary_value") * BuffUptime(critBuff, order));
+        /// <summary>暴击的**期望**倍率 `1 + C × (M − 1)`——共用 `DamageFormula` 那一份实现，别在这里重写一遍。</summary>
+        double CritMul(int order) => DamageFormula.ExpectedCritMultiplier(CritRate(order), attrs["crit_damage"]);
         double Mirror(int order) => mirror is null ? 0 : mirror.Number("secondary_value") * BuffUptime(mirror, order);
 
-        double Dps(int order) => Attack(order) * ((1 + Chain(order)) * Haste(order) * CritMul(order) + Chain(order) * Mirror(order));
+        // 期望总 DPS（**与获批的 `balance_ttk.md` §4.1 逐字一致**，改它等于换一条曲线）：
+        //   攻击力 × [（普攻 + 法术链）× 暴击期望 + 法术链 × 影分身]
+        //     · 普攻那一份吃**普攻频率**（attack_speed），法术链那一份吃**法术频率**（skill_cdr）
+        //     · 加号左边是"本体"，右边是分身那一份（它只复制法术，所以只乘 Chain）
+        // ⚠️ **影分身那一项不吃任何加速**——这是原模型就有的写法（它的注释却写着"攻速与暴击作用于全链"，
+        // 两者互相矛盾）。本轮逐字保留：改它会让全 100 关的 `normal_hp` 变一遍（实测第 100 关 +4.9%），
+        // 而那属于"要不要修这个模型"的独立决定，不该顺手做。已记在 `docs/design/combat.md` 与本文件末尾。
+        double Dps(int order) => Attack(order) *
+            ((BasicBase() * BasicSpeed(order) + Chain(order) * SkillSpeed(order)) * CritMul(order)
+             + Chain(order) * Mirror(order));
 
         // SU(1) = 标准小怪的基础 HP = 30（裸开局 30 ÷ 10 = 3 下普攻）；此后 SU 跟着期望总 DPS 走。
         // 第 1 关的清波秒数不写死，而是从模型反推（N × SU ÷ DPS）——写死近似值会让 normal_hp(1) 不是恰好 1.0。
         // 这条锚点是本模型唯一的"外部输入"：改 StandardHp 就必须同步改 monster.csv 的 hp 列。
         const int First = 1;
-        double bareHits = StandardHp / (BaseAttack * BasicPower);
+        // 裸开局的每发伤害 = `DMG1 = atk_base × basic_power + 0`（无武器、无天赋、无剑诀）。
+        double bareShot = DamageFormula.Dmg1(attrs["atk_base"], attrs["basic_power"], 0);
+        double bareHits = StandardHp / bareShot;
         if (bareHits < StandardHits - 0.5 || bareHits > StandardHits + 0.5)
             throw new InvalidOperationException(
-                $"标准怪 {StandardHp} HP ÷ 裸开局普攻 {BaseAttack * BasicPower} = {bareHits:F2} 下，已偏离 {StandardHits} 下的设计锚");
+                $"标准怪 {StandardHp} HP ÷ 裸开局普攻 {bareShot} = {bareHits:F2} 下，已偏离 {StandardHits} 下的设计锚");
         double su1 = StandardHp;
         double t1 = WaveSize(First) * su1 / Dps(First);
         double TargetSeconds(int order) => t1 + (TEnd - t1) * (order - 1) / 99.0;

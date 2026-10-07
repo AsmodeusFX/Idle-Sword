@@ -1,3 +1,4 @@
+using System.Globalization;
 using IdleSword.Core;
 
 namespace IdleSword.Features;
@@ -15,12 +16,42 @@ public sealed partial class GameSession
     public bool Moving { get; private set; }
     public double Elapsed { get; private set; }
     private readonly Random _random;
+    /// <summary>
+    /// `fightattr` 的取值缓存。**为什么要有它**：`Config.Attr(id)` 是一次 LINQ 扫描
+    /// （`Rows("fightattr").Single(...)`），而攻速与 CDR 在冷却衰减那条热路径上**每步、每个冷却键**都要读，
+    /// 一秒就是几百次扫描。配置在 `Load` 之后只读、会话内不会变（改配置要重新加载并新建会话），所以缓存安全。
+    /// </summary>
+    private readonly Dictionary<string, double> _attrs = [];
+    /// <summary>属性上下限的缓存，与上面的取值缓存同一理由（暴击率合计每次出手都要夹一次）。</summary>
+    private readonly Dictionary<string, (double Min, double Max)> _bounds = [];
+    private double Attr(string id) => _attrs.TryGetValue(id, out double value) ? value : _attrs[id] = Config.Attr(id);
+    /// <summary>该属性的上下限。`max_value` 留空 = 不设上限。</summary>
+    private (double Min, double Max) Bounds(string id)
+    {
+        if (_bounds.TryGetValue(id, out var bounds)) return bounds;
+        var row = Config.Row("fightattr", id);
+        string max = row.Text("max_value").Trim();
+        return _bounds[id] = (row.Number("min_value"),
+            max.Length > 0 ? double.Parse(max, CultureInfo.InvariantCulture) : double.MaxValue);
+    }
+    /// <summary>
+    /// 把属性的**合计值**夹回上下限内。夹的是"基础值 + 各来源加成"之后的总量，这才是上下限该管的东西。
+    /// 上限是**防手滑的护栏**（例如暴击率合计不得超过 1），不是平衡旋钮——要调平衡请改属性的持有者，
+    /// 不要把上限往下压：那会让超出部分**静默消失**，而玩家看到的面板值还停在夹取之前。
+    /// </summary>
+    private double ClampAttr(string id, double total)
+    {
+        var (min, max) = Bounds(id);
+        return Math.Clamp(total, min, max);
+    }
     private bool _persist;
     private double _buffTime;
     private double _buffPower = 1;
     // 玩家增益（护盾/回血/吸血）：跨关卡与死亡清除，不随存档持久化。
     private double _shield, _shieldUntil, _regenUntil, _regenRate, _lifestealUntil, _lifestealFactor;
     // 攻速与暴击增益：各自持有计时器与参数，互不覆盖（_buffTime/_buffPower 是共享的伤害倍率，与之无关）。
+    // `_hasteFactor` 是"出手快如疾风"那类增益给的加速倍数（1 + secondary_value）——
+    // 它**同时**算进普攻攻速与法术冷却缩减两样，见 `AttackSpeed` / `SkillCdr`。
     private double _hasteUntil, _hasteFactor = 1;
     private double _critBonusUntil, _critBonus, _critReduceUntil, _critReduce;
     // 影分身（剑二十三）：_mirrorUntil > 0 期间，本体每放一个法术，分身同步再放一份（伤害 × _mirrorRatio）。
@@ -38,12 +69,18 @@ public sealed partial class GameSession
     private readonly Dictionary<string, double> _triggerRamp = [];
     public bool RiftUnlocked => Battle.BossDefeated && !Battle.Enemies.Any(e => e.Hp > 0 && e.Kind != "rift");
     /// <summary>最终气血。平血（`hp_flat`）与平攻同理**加在乘区之外**，见 <see cref="Attack"/>：
-    /// 并进乘区的话，后期会被 `hp_percent` 放大成完全不同的量级。</summary>
-    public double MaxHp => Config.Attr("hp") * (1 + Config.Attr("hp_percent") + TalentBonus("hp"))
+    /// 并进乘区的话，后期会被 `max_hp_percent` 放大成完全不同的量级。</summary>
+    public double MaxHp => Attr("max_hp_base") * (1 + Attr("max_hp_percent") + TalentBonus("hp"))
         + TalentBonus("hp_flat");
-    /// <summary>最终攻击。平攻（`atk_flat`）**加在乘区之外**：它是"开局先从 +1 起步"那种固定值，
-    /// 若并进乘区，后期会被装备与百分比放大成完全不同的量级——那不是这个节点想表达的东西。</summary>
-    public double Attack => (Config.Attr("atk") + WeaponAttack) * (1 + Config.Attr("atk_percent") + TalentBonus("atk"))
+    /// <summary>
+    /// 最终攻击 = **DMG1 里的 `AttackPower`**（见 `docs/design/combat.md`）。
+    /// 构成写死在这一行，别的模块不许再拼一遍：
+    /// `(atk_base + 武器攻击) × (1 + atk_percent + 天赋百分比) + 天赋平攻`。
+    /// **武器在乘区之内**（与 `atk_base` 同类，都是"基础攻击"），**平攻在乘区之外**——
+    /// 它是"开局先从 +1 起步"那种固定值，若并进乘区，后期会被武器与百分比放大成完全不同的量级，
+    /// 那不是这个节点想表达的东西。
+    /// </summary>
+    public double Attack => (Attr("atk_base") + WeaponAttack) * (1 + Attr("atk_percent") + TalentBonus("atk"))
         + TalentBonus("atk_flat");
     public double WeaponAttack => State.Weapon == "" ? 0 : Config.Row("Equip", State.Weapon).Number("base_atk") * (1 + .15 * State.WeaponLevel) * State.WeaponRoll;
     /// <summary>角色能打到的最大距离：取已习得法术的最大射程（不含 buff 类，它们不造成伤害）。
@@ -86,14 +123,14 @@ public sealed partial class GameSession
     /// 与 `StopRange` 一起必须满足 `BasicAttackRange ≥ StopRange`：否则角色站定了却够不着怪，
     /// 表现为"停在原地永远不出手"（挂机彻底中断，且不报任何错）。
     /// </summary>
-    public double BasicAttackRange => MeleeBasic ? Config.Attr("melee_range") : Config.Attr("basic_range");
+    public double BasicAttackRange => MeleeBasic ? Attr("melee_range") : Attr("basic_range");
 
     /// <summary>
     /// 走到离怪多近就停下。近战时缩到贴身——这是"真近战"的落脚点：不只是把飞剑换成挥剑，
     /// 而是角色真的要走进去。副作用是玩家会站进远程怪（460~620）的射程里挨打，这正是
     /// "血少、不点修为就容易死"那一段压力的来源，是有意的。
     /// </summary>
-    public double StopRange => MeleeBasic ? Config.Attr("melee_stop_range") : Config.Attr("stop_range");
+    public double StopRange => MeleeBasic ? Attr("melee_stop_range") : Attr("stop_range");
 
     /// <summary>
     /// 近战挥砍的**动作时长**：这一式在结算完成后还要在场上留这么久，纯粹给表现层画挥剑的余韵。
@@ -146,12 +183,17 @@ public sealed partial class GameSession
             if (Battle.RespawnTimer == 0) { EnterLevel(Level.Id); _persist = true; }
             FinishStep(); return;
         }
-        // 冷却流逝（唯一的衰减点）：攻速按倍数加速，但**不加速增益类法术**。
-        // 若连增益一起加速，仙风云体术（15s 冷却 / 6s 持续）会在持续期内就转好，等于自己给自己减冷却，
-        // 变成 100% 常驻；两个 15s 增益还会互相锁死。剑灵的键不在 Config.Skills 里，照样加速。
+        // 冷却流逝（**唯一的衰减点**）：攻速与 CDR **各管各的**，两者都不进伤害乘区。
+        //   · 普攻键（不在 SwordSkill 表里的键）吃 `attack_speed`
+        //   · 输出类法术、神通与剑灵的键吃 `skill_cdr`
+        //   · **增益类法术两样都不吃**：若连增益一起加速，仙风云体术（15s 冷却 / 6s 持续）会在持续期内就转好，
+        //     等于自己给自己减冷却，变成 100% 常驻；两个 15s 增益还会互相锁死。
+        // 按 `dt × (1 + x)` 递减，等价于"间隔 ÷ (1 + x)"——所以 x 再大也不会出现零冷却。
         foreach (var key in Battle.Cooldowns.Keys.ToArray())
         {
-            double factor = HasteFactor > 1 && Config.Skills.TryGetValue(key, out var hastened) && hastened.Kind == "buff" ? 1 : HasteFactor;
+            double factor = 1 + (Config.Skills.TryGetValue(key, out var cooling) && cooling.Kind == "buff"
+                ? 0            // 增益类：不吃加速
+                : Config.Skills.ContainsKey(key) ? SkillCdr : AttackSpeed);
             Battle.Cooldowns[key] = Math.Max(0, Battle.Cooldowns[key] - dt * factor);
         }
         _buffTime = Math.Max(0, _buffTime - dt);
@@ -180,7 +222,7 @@ public sealed partial class GameSession
             foreach (var e in Battle.Enemies)
                 if (e.Hp > 0 && (e.Kind != "rift" || RiftUnlocked))
                     limit = Math.Max(limit, e.X - StopRange);
-            Battle.PlayerX = Math.Min(limit, Battle.PlayerX + Config.Attr("move_speed") * dt);
+            Battle.PlayerX = Math.Min(limit, Battle.PlayerX + Attr("move_speed") * dt);
             ActivateCell();
         }
         TickSpawns(dt);
@@ -240,10 +282,36 @@ public sealed partial class GameSession
         ? Math.Min(1, s.TriggerChance + _triggerRamp.GetValueOrDefault(id)) : 0;
     /// <summary>该法术在指定等级下的**实际冷却**（增益类会随等级缩短，见 `BuffCooldown`）。自检用。</summary>
     internal double BuffCooldownNow(string id, int rank) => Config.Skills.TryGetValue(id, out var s) ? BuffCooldown(s, rank) : 0;
-    /// <summary>冷却流逝倍数：攻速增益生效时为 1 + secondary_value，否则 1。只有输出类法术与剑灵吃这个倍数（见 Step）。</summary>
+    /// <summary>
+    /// 增益给的那一份加速（仙风云体术 = `1 + secondary_value`，未生效时 1）。面板的「攻速」那一条读它。
+    /// 它**不改属性、也不进伤害乘区**——乘的是冷却流逝的速度。
+    /// </summary>
     public double HasteFactor => _hasteUntil > 0 ? _hasteFactor : 1;
+    private double HasteBonus => _hasteUntil > 0 ? _hasteFactor - 1 : 0;
+    /// <summary>
+    /// **普攻攻速合计**（`fightattr.attack_speed` + 增益那一份），已按上下限夹取。
+    /// 它只决定普攻多久出手一次：`普攻间隔 = basic_interval ÷ (1 + 它)`。
+    /// **不进 DMG1、也不进 DMG3**——攻速改的是"每秒几下"，不是"每下多疼"；
+    /// 两者混在一起的话，DPS 会随攻速平方增长，而玩家在面板上永远算不清自己为什么变强了。
+    /// </summary>
+    public double AttackSpeed => ClampAttr("attack_speed", Attr("attack_speed") + HasteBonus);
+    /// <summary>
+    /// **法术冷却缩减合计**（`fightattr.skill_cdr` + 增益那一份），已按上下限夹取。
+    /// 它只决定法术多久能再放：`冷却 = cooldown ÷ (1 + 它)`。
+    /// 用**除法**而不是"按秒数缩减"，所以它**不可能**把冷却压成 0 或负数——这也是 CDR 唯一需要的上限护栏
+    /// （要更强的上限就改 `fightattr.skill_cdr` 的 `max_value`，不要再在别处写一个数）。
+    /// 「暴击后缩短若干秒冷却」（醉仙望月步）是另一条路：它按**秒**扣，不受这里约束，
+    /// 所以那个秒数必须小于它能砸到的最短冷却，见 `docs/design/combat.md`。
+    /// </summary>
+    public double SkillCdr => ClampAttr("skill_cdr", Attr("skill_cdr") + HasteBonus);
     /// <summary>暴击率加成（绝对值）：醉仙望月步生效期间提高，直接叠在配置的基础暴击率上。</summary>
     public double CritBonus => _critBonusUntil > 0 ? _critBonus : 0;
+    /// <summary>
+    /// 本次出手的**暴击率合计**（`fightattr.crit_rate` + 增益那一份），已按上下限夹取（上限 1）。
+    /// 注意分工：暴击**判定**（"这一发是不是暴击"）属于 DMG2，暴击**倍率**（"暴击后是多少倍"）属于 DMG3。
+    /// 两件事混在一起的话，"提高暴击率"和"提高暴击伤害"就没法各自调平衡了。
+    /// </summary>
+    private double CritRateTotal => ClampAttr("crit_rate", Attr("crit_rate") + CritBonus);
     /// <summary>清除玩家短时增益（伤害倍率/护盾/回血/吸血/攻速/暴击）。关卡切换、死亡重生与技能预览切换时调用。</summary>
     public void ClearBuffs()
     {
@@ -453,7 +521,8 @@ public sealed partial class GameSession
             var target = Target(row.Number("range"));
             if (target is null || !Ready(pet)) continue;
             var bonus = State.PetBuffs.GetValueOrDefault(pet, []).Sum(id => Config.Row("PetEquip", id).Number("power"));
-            Launch(row.Text("kind"), target, Attack * row.Number("power") * (1 + bonus), .5, skill: row.Text("id"));
+            // 剑灵弹与法术同一条 DMG1：它的"技能倍率"是 `PetSkill.power × (1 + 增强 buff)`。
+            Launch(row.Text("kind"), target, DamageFormula.Dmg1(Attack, row.Number("power") * (1 + bonus), 0), .5, skill: row.Text("id"));
             Battle.Cooldowns[pet] = row.Number("cooldown");
         }
     }
@@ -473,13 +542,23 @@ public sealed partial class GameSession
         if (!Config.Skills.TryGetValue(_shieldSkill, out var skill)) return;
         var target = Target(Config.Setting("guard_range"));
         if (target is null) return;
-        Launch("projectile", target, Attack * Config.Setting("guard_blade_power"), .5, skill: skill.Id, index: 1);
+        // 环绕飞剑也走同一条 DMG1：`guard_blade_power` 就是它的技能倍率。
+        Launch("projectile", target, DamageFormula.Dmg1(Attack, Config.Setting("guard_blade_power"), 0), .5, skill: skill.Id, index: 1);
         _guardCooldown = Config.Setting("guard_interval");
     }
 
-    /// <summary>法术威力：配置基础值 × 技能等级加成 × 参悟加成。普攻不走这里（它用 `fightattr.basic_power`）。
+    /// <summary>
+    /// 法术的 **SkillRate**（文档口径里的那个；代码里叫 Power 是因为它读的是 `SwordSkill.power` 列）：
+    /// `配置 power × (1 + 技能等级加成 + 参悟加成)`。普攻不走这里（它用 `fightattr.basic_power`）。
+    ///
+    /// 它是**技能自身的永久成长**：等级与参悟都是"这一式被培养到什么程度"，属于技能定义，
+    /// 所以落在 **DMG1** 的 `SkillRate` 上；而"这一发因为目标残血/带着状态/某个 BD 条件而被放大多少"
+    /// 落在 **DMG3** 的 Build 乘区。两者的分界见 `docs/design/combat.md`——混在一起就会出现
+    /// "同一个技能在不同 BD 下的定义都不一样"，任何数值对照都失去意义。
+    ///
     /// 每级的加成走 `game_settings.skill_level_bonus` 而不是硬编码——技能页的「每级 +X%」提示读的是同一个值，
-    /// 两边必须同源，否则提示会撒谎。</summary>
+    /// 两边必须同源，否则提示会撒谎。
+    /// </summary>
     private double SkillPower(SkillDef skill, int rank) =>
         skill.Power * (1 + Config.Setting("skill_level_bonus") * (rank - 1) + SkillBonus(skill.Id, "damage_percent"));
 
@@ -520,8 +599,12 @@ public sealed partial class GameSession
     }
 
     /// <summary>按法术的形态真正把这一手放出去。返回 false 表示没有合法目标、没有空放。</summary>
+    /// <param name="power">这一式的 **SkillRate**（已含等级与参悟）。DMG1 在这里算一次，往下只传结果。</param>
     private bool LaunchShape(SkillDef skill, double power, int rank, bool mirrored = false)
     {
+        // DMG1 = 最终攻击 × SkillRate + 技能平值。**只在这里算一次**，往下传的都是它，
+        // 所以"某个形态忘了乘攻击力"这类错误在结构上不可能发生（从前 multi 与 volley 两条路各写了一遍）。
+        double dmg1 = DamageFormula.Dmg1(Attack, power, skill.SkillFlat);
         if (skill.Kind == "buff")
         {
             // Buff 以自身为目标，仅在交战时触发，避免无敌人时浪费冷却。
@@ -534,10 +617,10 @@ public sealed partial class GameSession
             // 历史次级效果：当前已无技能使用（原疾风剑专用），退休配置日后可能复活，勿删。
             var targets = Targets(skill.Range, (int)skill.SecondaryValue);
             if (targets.Count == 0) return false;
-            for (int i = 0; i < targets.Count; i++) LaunchSkill(skill, targets[i], Attack * power, i, 0, mirrored);   // 序号照传，暴击缩冷却才不会被多发放大
+            for (int i = 0; i < targets.Count; i++) LaunchSkill(skill, targets[i], dmg1, i, 0, mirrored);   // 序号照传，暴击缩冷却才不会被多发放大
             return true;
         }
-        return CastVolley(skill, Attack * power, mirrored);
+        return CastVolley(skill, dmg1, mirrored);
     }
 
     /// <summary>
@@ -581,8 +664,12 @@ public sealed partial class GameSession
         if (Battle.PlayerHp <= 0 || !Ready(BasicAttackKey)) return false;
         var target = Target(BasicAttackRange);
         if (target is null) return false;
-        Battle.Cooldowns[BasicAttackKey] = Config.Attr("basic_interval");
-        Launch("projectile", target, Attack * Config.Attr("basic_power"),
+        // 普攻间隔从 `basic_interval` 起步，此后每步按攻速加速（见 Step 的冷却流逝）——
+        // 即 `实际间隔 = basic_interval ÷ (1 + attack_speed)`。这里写的是**未加速的原值**，
+        // 与法术写 `cooldown` 是同一条口径：冷却值本身不含倍率，倍率只作用在流逝速度上。
+        Battle.Cooldowns[BasicAttackKey] = Attr("basic_interval");
+        // 普攻的 `SkillRate` 就是 `fightattr.basic_power`，`SkillFlat` 为 0——它与法术走同一份 DMG1。
+        Launch("projectile", target, DamageFormula.Dmg1(Attack, Attr("basic_power"), 0),
             MeleeBasic ? MeleeSwingLife : 4, skill: "",
             trajectory: MeleeBasic ? "melee_slash" : "");
         RollTriggerSkills();
@@ -617,7 +704,7 @@ public sealed partial class GameSession
     /// <summary>
     /// 弹群编排：数量、落点/排列间距与错时都在这里决定，返回是否真的出手了（false 表示没有合法目标）。
     /// </summary>
-    private bool CastVolley(SkillDef skill, double damage, bool mirrored = false)
+    private bool CastVolley(SkillDef skill, double dmg1, bool mirrored = false)
     {
         int count = skill.Kind == "projectile" ? skill.ProjectileCount : 1;
         if (skill.Trajectory == "sky_drop")
@@ -639,19 +726,19 @@ public sealed partial class GameSession
                 for (int i = 0; i < count; i++)
                 {
                     double slot = count == 1 ? .5 : i / (double)(count - 1);
-                    LaunchSkill(skill, volley[i % volley.Count], damage, i, 0, mirrored, near + slot * skill.Band);
+                    LaunchSkill(skill, volley[i % volley.Count], dmg1, i, 0, mirrored, near + slot * skill.Band);
                 }
                 return true;
             }
             var center = Pick(skill);
             if (center is null) return false;
-            for (int i = 0; i < count; i++) LaunchSkill(skill, center, damage, i, (i - (count - 1) / 2.0) * skill.Spread, mirrored);
+            for (int i = 0; i < count; i++) LaunchSkill(skill, center, dmg1, i, (i - (count - 1) / 2.0) * skill.Spread, mirrored);
             return true;
         }
         // 其余形态各自选敌、尽量不重复（敌人不足才循环重复）。
         var picks = Picks(skill, count);
         if (picks.Count == 0) return false;
-        for (int i = 0; i < picks.Count; i++) LaunchSkill(skill, picks[i], damage, i, 0, mirrored);
+        for (int i = 0; i < picks.Count; i++) LaunchSkill(skill, picks[i], dmg1, i, 0, mirrored);
         return true;
     }
 
@@ -740,6 +827,10 @@ public sealed partial class GameSession
             case "shield": _shield = Math.Max(_shield, Attack * skill.SecondaryValue); _shieldUntil = skill.SecondaryDuration; _shieldSkill = skill.Id; break;
             case "regen": _regenUntil = skill.SecondaryDuration; _regenRate = skill.SecondaryValue; break;
             case "lifesteal": _lifestealUntil = skill.SecondaryDuration; _lifestealFactor = skill.SecondaryValue; break;
+            // 加速类增益（仙风云体术）：**同时**给"普攻攻速"与"法术冷却缩减"两样。
+            // 它的文案就是"出手快如疾风"，而拆成两条属性之后**必须一起给**：
+            // 只给一边的话，`LevelCurve` 那条期望曲线（按"普攻与法术一起加速"推的）会当场变形，
+            // 而 `--check` 只会告诉你曲线变了、不会告诉你为什么。见 docs/design/combat.md 的频率一节。
             case "haste": _hasteFactor = 1 + skill.SecondaryValue; _hasteUntil = skill.SecondaryDuration; break;
             case "crit_reduce": _critBonus = skill.SecondaryValue; _critBonusUntil = skill.SecondaryDuration; _critReduce = skill.SecondaryExtra; _critReduceUntil = skill.SecondaryDuration; break;
             // 影分身（剑二十三）：继承比例 = 配置基础值 + 每级 +1% + 参悟那 4 行的加成，**不封顶**（用户定）。
@@ -754,6 +845,11 @@ public sealed partial class GameSession
     /// <summary>
     /// 暴击后的"缩短一个随机技能的冷却"：只从已习得且**当前冷却 &gt; 0** 的非增益技能里抽
     /// （抽到冷却为 0 的技能等于白给；抽到增益会让攻速覆盖率自涨，见下）。没有候选就什么都不做。
+    ///
+    /// ⚠️ 它按**秒**扣，与 `skill_cdr` 的 `÷(1 + cdr)` 是**两条不同的路**：除法形式永远不会把冷却压成 0，
+    /// 而按秒扣可以。所以配置里的 `secondary_extra`（醉仙望月步 = 1 秒）必须**小于它能砸到的最短冷却**
+    /// （当前最短是御剑术的 1.2 秒），否则会出现"冷却被扣成 0 → 法术连发"。
+    /// 这一条写在 `docs/design/combat.md` 的频率一节，改数值前先回去看一眼。
     /// </summary>
     private void CritShortenCooldown()
     {
@@ -770,7 +866,7 @@ public sealed partial class GameSession
         string pick = cooling[_random.Next(cooling.Length)];
         Battle.Cooldowns[pick] = Math.Max(0, Battle.Cooldowns[pick] - _critReduce);
     }
-    private void LaunchSkill(SkillDef skill, EnemyState target, double damage, int index, double lane = 0, bool mirrored = false, double spawnX = 0)
+    private void LaunchSkill(SkillDef skill, EnemyState target, double dmg1, int index, double lane = 0, bool mirrored = false, double spawnX = 0)
     {
         // 随机量在这里一次摇定，表现层只读结果：逐帧重摇会让弧线/高度抖动，也让自检无法复现。
         // 弧度只有弧线形态抽；Jitter 是 0..1 的通用抖动，由表现层按形态解释（天降形态拿它做出生高度）。
@@ -779,30 +875,45 @@ public sealed partial class GameSession
         double jitter = _random.NextDouble();
         // 弹群错时：第 i 支额外延迟 i × interval，再叠加 ±jitter 的随机；与 hover_time 一起折算成"起飞前停留"。
         double delay = Math.Max(0, index * skill.VolleyInterval + (_random.NextDouble() * 2 - 1) * skill.VolleyJitter);
-        Launch(skill.Kind, target, damage, skill.Duration, true, skill.Secondary, skill.SecondaryValue,
+        Launch(skill.Kind, target, dmg1, skill.Duration, true, skill.Secondary, skill.SecondaryValue,
             skill.SecondaryDuration, skill.Secondary == "execute" ? skill.SecondaryValue : 0, skill.AoeRadius, skill.Id,
             skill.Trajectory, index, skill.HoverTime + delay, arc, skill.Speed > 0 ? skill.Speed : 1500, lane, jitter,
             skill.PierceChance, skill.Knockback, skill.AoeAll, skill.Hits, mirrored, skill.Gather, spawnX, skill.Band);
     }
-    private void Launch(string kind, EnemyState target, double damage, double duration, bool applyModifiers = true,
+    /// <param name="dmg1">这一发的 **DMG1**（原始伤害），不许在这里再乘任何条件倍率。</param>
+    /// <param name="attackerSnapshot">
+    /// 为 true 表示**这一发是一次新的 Attack Event**：现在摇暴击、并把共享伤害倍率窗定格成快照。
+    /// 为 false 表示它是某个已有 Attack Event **派生的**结算（目前只有召唤物射击），
+    /// 攻击者侧已经由 <paramref name="inherits"/> 给定，这里不再重摇——重摇会让一次召唤的十几发
+    /// 各自碰运气，而"召唤那一手"才是真正的出手。
+    /// </param>
+    /// <param name="inherits">派生结算要继承的那一发（出手快照的来源）。</param>
+    /// <param name="secondary">次级效果。斩杀的阈值与利用状态的增伤比例**不在这里结算**，见 `Hit`。</param>
+    private void Launch(string kind, EnemyState target, double dmg1, double duration, bool attackerSnapshot = true,
         string secondary = "", double secondaryValue = 0, double secondaryDuration = 0, double executeThreshold = 0, double aoeRadius = 0, string skill = "",
         string trajectory = "", int index = 0, double hold = 0, double arc = 0, double speed = 1500, double lane = 0, double jitter = 0,
-        double pierceChance = 0, double knockback = 0, bool aoeAll = false, string layer = "", bool mirrored = false, double gather = 0, double spawnX = 0, double band = 0)
+        double pierceChance = 0, double knockback = 0, bool aoeAll = false, string layer = "", bool mirrored = false, double gather = 0, double spawnX = 0, double band = 0,
+        CombatEffect? inherits = null)
     {
-        if (applyModifiers && _buffTime > 0) damage *= _buffPower;
-        // 暴击判定全游戏只有这一处，逐弹丸各摇一次（召唤弹 applyModifiers=false 不参与）。
-        // 抽签消耗 _random，会让后续随机序列偏移（同 seed 仍可复现）。
-        if (applyModifiers && _random.NextDouble() < Config.Attr("crit") + CritBonus)
-        {
-            damage *= Config.Attr("crit_damage");
-            // "暴击缩短一个随机技能的冷却"按**每次施法**最多触发一次：多发齐射是 3～5 支各摇一次暴击的，
-            // 若每支都触发，实际触发密度会放大数倍（实测能把增益冷却吃到覆盖率自涨）。
-            // 由该次施法的第一支负责，单发/剑灵弹丸的 index 本就是 0。
-            // 普攻（skill 为空）不参与缩冷却：它每秒一次，若也算，醉仙望月步的覆盖率会自涨——
-            // 与"攻速不加速增益类法术"是同一条护栏口径：缩冷却只挂在法术出手上。
-            // 影分身那一份不替本体缩冷却：它不是玩家亲手放的那一手，否则分身窗口内缩冷却会凭空翻倍。
-            if (index == 0 && skill != "" && !mirrored) CritShortenCooldown();
-        }
+        // ── 出手快照 ──────────────────────────────────────────────────────────────
+        // 暴击判定**全游戏只有这一处**，逐弹丸各摇一次；摇中的结果与"这一刻的共享伤害倍率窗"
+        // 一起写进效果，此后由它派生的一切结算（同一弹丸的其余命中、地面场每跳、天降落点、灼烧每跳）
+        // **共享这份快照，不重新摇**。为什么这么定：期望值不变（线性期望），但一次出手的账目与观感对得上——
+        // 否则同一发火海会一跳暴击一跳不暴击，玩家看到的是同一个技能在随机翻倍。
+        // 口径见 docs/design/combat.md 的「出手快照」。
+        //
+        // 抽签消耗 _random，会让后续随机序列偏移（同 seed 仍可复现）——**顺序不能动**：
+        // 这一行以前也是"先摇暴击、再按需缩冷却"，调换之后所有依赖 seed 的自检都会换一套数字。
+        bool critical = inherits?.Critical ?? (attackerSnapshot && _random.NextDouble() < CritRateTotal);
+        // "暴击缩短一个随机技能的冷却"（醉仙望月步）按**每次施法**最多触发一次：多发齐射是 3～5 支各摇一次暴击的，
+        // 若每支都触发，实际触发密度会放大数倍（实测能把增益冷却吃到覆盖率自涨）。由第一支负责（index == 0）。
+        // 另外三类不参与：普攻（skill 为空，它每秒一次，若也算则增益覆盖率自涨）、影分身那一份
+        // （不是玩家亲手放的那一手，否则分身窗口内缩冷却凭空翻倍）、派生结算（`inherits` 非空，它没有自己的出手）。
+        // 与"增益类法术不吃攻速/CDR"是同一条口径：缩冷却只挂在**玩家亲手放的法术出手**上。
+        if (critical && attackerSnapshot && inherits is null && index == 0 && skill != "" && !mirrored) CritShortenCooldown();
+        // 暴击倍率与共享倍率窗跟着快照走：派生结算直接继承，不重算、也不与当下生效的增益串味。
+        double critDamage = inherits?.CritDamage ?? Attr("crit_damage");
+        double buffWindow = inherits?.BuffPower ?? (attackerSnapshot && _buffTime > 0 ? _buffPower : 1);
         // 生命期分两种：普通弹道沿用硬编码 4 秒——召唤弹传 2、剑灵弹只传 0.5，
         // 若把 duration 当通用寿命会缩短剑灵弹丸、使其飞不到目标；自定义飞行形态才用 duration（本列对该形态即飞行/下坠时长）。
         // 自定义形态还要加上起飞前停留（hold）：停留与飞行各自计时，落地/命中的时刻才会随错时而变化。
@@ -822,7 +933,8 @@ public sealed partial class GameSession
         Effects.Add(new() { Kind = kind, X = startX, LegX = startX,
             // 出生点只给表现层用（生成带模式下的黑洞与斜落轨迹）；为 0 表示与 X 相同。
             SpawnX = spawnX,
-            Target = target.Id, TargetX = target.X, Damage = damage, Life = life, MaxLife = life,
+            Target = target.Id, TargetX = target.X, Damage = dmg1, Life = life, MaxLife = life,
+            Critical = critical, CritDamage = critDamage, BuffPower = buffWindow,
             // 自定义形态复用 Timer 作"起飞前停留"倒计时：TickEffects 每步已经 Timer -= dt，停留期只读 Timer > 0。
             Timer = customFlight ? hold : 0,
             Skill = skill, Secondary = secondary, SecondaryValue = secondaryValue, SecondaryDuration = secondaryDuration,
@@ -894,6 +1006,9 @@ public sealed partial class GameSession
                             Effects.Add(new()
                             {
                                 Kind = "ground", X = effect.X, Damage = effect.Damage, Life = life, MaxLife = life,
+                                // 火海是那把剑**派生**出来的效果，所以它继承那一发的出手快照（暴击与倍率窗），
+                                // 不自己重摇——少了这三个字段，火海会在同一发里凭空变成"永不暴击且不吃倍率窗"。
+                                Critical = effect.Critical, CritDamage = effect.CritDamage, BuffPower = effect.BuffPower,
                                 // Index 非 0：技能名标签只由本次施法的第一支负责，火海是那把剑派生出来的，不该再挂一次名字。
                                 Index = 1, Skill = effect.Skill, Secondary = "dot", SecondaryValue = effect.SecondaryValue,
                                 SecondaryDuration = effect.SecondaryDuration, AoeRadius = radius, Layer = effect.Layer,
@@ -992,33 +1107,59 @@ public sealed partial class GameSession
                 case "ground":
                     if (effect.Timer <= 0)
                     {
-                        effect.Timer = .6;
+                        // 结算间隔走 `game_settings`（`ground_tick_interval`）：它同时被 `LevelCurve` 的
+                        // 期望命中数读，两处必须是同一个数——写死在两边过一次就会静默分叉
+                        // （模型按 0.6 秒算命中数，实际每 0.5 秒结算一次，而 `--check` 照样绿）。
+                        effect.Timer = Config.Setting("ground_tick_interval");
                         double radius = effect.AoeRadius > 0 ? effect.AoeRadius : 220;
                         foreach (var e in Battle.Enemies.Where(e => Legal(e, effect.Layer) && Math.Abs(e.X - effect.X) < radius).ToArray()) Hit(e, effect.Damage, effect);
                     }
                     break;
                 case "summon":
                     effect.X = Battle.PlayerX + 110;
-                    if (effect.Timer <= 0) { effect.Timer = 1; var next = Target(1100); if (next is not null) Launch("projectile", next, effect.Damage, 2, false, executeThreshold: effect.ExecuteThreshold, skill: effect.Skill); }
+                    // 召唤物射击是「召唤那一手」**派生**的结算：它不再摇暴击、也不再重读当下的增益，
+                    // 而是原样继承召唤时定下的那份快照（`inherits: effect`）。
+                    // 这才是"召唤物不吃新的攻击者快照"的准确含义——不是"不算暴击"，而是"不**重新**摇"。
+                    if (effect.Timer <= 0) { effect.Timer = 1; var next = Target(1100); if (next is not null) Launch("projectile", next, effect.Damage, 2, false, executeThreshold: effect.ExecuteThreshold, skill: effect.Skill, inherits: effect); }
                     break;
             }
         }
         Effects.RemoveAll(e => e.Life <= 0);
     }
-    // 命中结算：应用斩杀与吸血，再附带次级效果状态；易伤在 HurtEnemy 内统一处理。
-    private void Hit(EnemyState e, double damage, CombatEffect fx)
+    /// <summary>
+    /// **攻击者侧结算**：`DMG1 × 通用增伤 × 暴击 × 共享倍率窗`，**不含目标侧修正**
+    /// （易伤按目标当下的状态在落地那一刻算，不吃出手快照）。
+    /// 灼烧每跳用的就是它：施放那一刻算一次、冻进 `DotDps`，此后不再重算——这正是「出手快照」。
+    /// </summary>
+    private double AttackerSettled(CombatEffect fx) => DamageFormula.Final(
+        new DamageEvent(fx.Damage, Attr("generic_damage"), fx.Critical, fx.CritDamage, fx.BuffPower, 1));
+    /// <summary>
+    /// **DMG3 的结算点**：把出手快照（DMG1 / 暴击 / 倍率窗）与**目标当下的状态**凑成一笔
+    /// <see cref="DamageEvent"/>，交给 <see cref="DamageFormula.Final"/> 算最终伤害，再落给 <see cref="ApplyDamage"/>。
+    /// 全工程只有这里与 <see cref="HurtEnemy"/>（灼烧跳伤那条派生路）给敌人算伤害。
+    /// </summary>
+    private void Hit(EnemyState e, double dmg1, CombatEffect fx)
     {
         // 层数不匹配就直接不结算：这是"飞行单位免疫地面技能"的最后一道防线，
         // 任何绕过选敌的调用路径（比如 aoe_all 的全场扫描）都在这里被拦住。
+        // **它是目标合法性，不是命中率**：没有摇骰子，只是"这一发本来就够不着这一层"。
         if (!Legal(e) || !LayerHit(fx.Layer, e)) return;
-        if (fx.ExecuteThreshold > 0 && e.Hp / e.MaxHp < fx.ExecuteThreshold) damage *= 2; // 斩杀：低于阈值气血伤害翻倍（暂定）
-        // 利用状态（法术的 secondary = bonus_vs_state）：目标身上带着**任意状态**就增伤。
-        // 必须在 ApplySecondary 之前读——那一句在函数末尾，会把本次施加的状态覆盖上去，晚读就会把"刚挂上的"也算成"已有的"。
-        if (fx.Secondary == "bonus_vs_state" && fx.SecondaryValue > 0 && CarriesAnyState(e)) damage *= 1 + fx.SecondaryValue;
+        // ── Build 乘区（攻击者侧、带条件）：三个来源全是"条件成立才生效"的倍率，所以进乘算池 ──
+        // ① 出手那一刻的共享伤害倍率窗（power != 1 的增益类法术写入，已快照进 fx）。
+        double build = fx.BuffPower;
+        // ② 斩杀：目标残血时翻倍（天剑）。阈值与倍率都在配置里，这里只是求值。
+        if (fx.ExecuteThreshold > 0 && e.Hp / e.MaxHp < fx.ExecuteThreshold) build *= 2;
+        // ③ 利用状态（bonus_vs_state，斩鬼神）：目标身上带着**任意状态**就增伤。
+        // 必须在 ApplySecondary 之前读——那一句在函数末尾，会把本次施加的状态覆盖上去，
+        // 晚读就会把"刚挂上的"也算成"已有的"。
+        if (fx.Secondary == "bonus_vs_state" && fx.SecondaryValue > 0 && CarriesAnyState(e)) build *= 1 + fx.SecondaryValue;
+        // 目标侧修正（易伤）**在这里读、按目标当下状态算**，不吃出手快照——飞一半目标才中的易伤也该吃到。
         // 来源在这里是现成的：宠物弹 / 召唤弹 / 剑罡飞剑都带着自己的 id；影分身那一份走 `DamageSource`，
         // 归到**复制它的法术**（剑二十三）名下，而不是被复制的这一式。
-        HurtEnemy(e, damage, fx.DamageSource);
-        if (damage > 0 && _lifestealUntil > 0) Battle.PlayerHp = Math.Min(MaxHp, Battle.PlayerHp + damage * _lifestealFactor); // 吸血
+        double dealt = ApplyDamage(e, new DamageEvent(dmg1, Attr("generic_damage"), fx.Critical, fx.CritDamage, build,
+            e.VulnerableUntil > 0 ? e.VulnerableFactor : 1), fx.DamageSource);
+        // 吸血：按**这一笔实际结算出的伤害**折算（含溢出部分，与从前一致）。
+        if (dealt > 0 && _lifestealUntil > 0) Battle.PlayerHp = Math.Min(MaxHp, Battle.PlayerHp + dealt * _lifestealFactor);
         // 击退：沿背离玩家的方向推开。死在本次伤害上的敌人不再后退，免得"尸体会滑动"。
         // 推离战力范围会让角色随即继续前进，正是"剑气推着敌人走"该有的结果，不需要额外处理。
         // 裂隙不可移动，绝不推它——它的位置是关卡与停步判定的锚点。
@@ -1071,33 +1212,56 @@ public sealed partial class GameSession
             // 供表现层把受击角色染成冰蓝。与减速互相覆盖时，谁都可能后写，故两者都按"最后一次命中"为准。
             case "chill": e.SlowUntil = fx.SecondaryDuration; e.SlowFactor = 1 - fx.SecondaryValue; e.ChillUntil = fx.SecondaryDuration; break;
             case "stun": e.StunUntil = fx.SecondaryDuration; break;
-            // 灼烧：一并记下**来源法术**，供伤害统计在跳伤时归因（那条路上没有 fx 可查）。
-            case "dot": e.DotUntil = fx.SecondaryDuration; e.DotDps = fx.Damage * fx.SecondaryValue; e.DotSkill = fx.DamageSource; break;
+            // 灼烧：每秒伤害在**施放那一刻**按攻击者侧结算定格（出手快照——暴击与倍率窗都冻在这里），
+            // 此后每跳只再叠目标侧修正（易伤），所以跳伤走 `HurtEnemy` 而不是 `Hit`：那条路上再算一次攻击者侧
+            // 就是双重结算。一并记下**来源法术**，供伤害统计在跳伤时归因（那时没有 fx 可查）。
+            // ⚠️ 用的是攻击者侧结算值（`AttackerSettled`）而**不是** `Hit` 里那个已经乘过斩杀/利用状态的局部量——
+            // 斩杀与利用状态是**逐次命中**的条件，不该被折算进"接下来几秒的每秒伤害"。
+            case "dot": e.DotUntil = fx.SecondaryDuration; e.DotDps = AttackerSettled(fx) * fx.SecondaryValue; e.DotSkill = fx.DamageSource; break;
             case "vulnerable": e.VulnerableUntil = fx.SecondaryDuration; e.VulnerableFactor = 1 + fx.SecondaryValue; break;
         }
     }
+    /// <summary>
+    /// 玩家承伤。**与打怪是同一条管线、同一份 `DamageFormula`，只是目标换成了玩家**：
+    /// 怪物对玩家也是一次 Attack Event（`怪攻击 × 倍率 1.0 + 0`），只是它的攻击力在 `Spawn` 时
+    /// 已经乘过关卡倍率与波次系数，所以这里拿到的 `amount` 就是它的 DMG1。
+    ///
+    /// 玩家侧的三个环节，顺序**不能改**：
+    /// <list type="number">
+    /// <item>无敌（GM 开关）/ 复活读条短路；</item>
+    /// <item>**命中判定 = `dodge`**——它在承伤方这一侧，见 `docs/design/combat.md`：这不是
+    /// "攻方命中 vs 守方闪避"的对抗体系（怪物没有命中属性，玩家也没有可破的敌方闪避），
+    /// 而是纯粹的承伤方减伤。闪避排在护盾**之前**，所以躲开的那一下不消耗护盾。</item>
+    /// <item>承伤应用：先扣护盾、再扣气血。</item>
+    /// </list>
+    /// 玩家侧的 DMG3 乘区表**当前为空**（怪物不会暴击，玩家也不吃易伤），所以结算结果就等于传进来的量；
+    /// 走一遍 `DamageFormula` 是为了让"以后给玩家加一个受创乘区"不必再开第二条路。
+    /// </summary>
     private void HurtPlayer(double amount)
     {
         if (PlayerInvincible) return;   // GM 调试开关，见 PlayerInvincible 的说明
-        if (Battle.RespawnTimer > 0 || _random.NextDouble() < Config.Attr("dodge")) return;
-        if (_shieldUntil > 0 && _shield > 0) { double absorbed = Math.Min(_shield, amount); _shield -= absorbed; amount -= absorbed; if (_shield <= 0) _shieldUntil = 0; }
-        Battle.PlayerHp = Math.Max(0, Battle.PlayerHp - amount);
+        if (Battle.RespawnTimer > 0 || _random.NextDouble() < ClampAttr("dodge", Attr("dodge"))) return;
+        double damage = DamageFormula.Final(DamageEvent.Raw(amount));
+        if (_shieldUntil > 0 && _shield > 0) { double absorbed = Math.Min(_shield, damage); _shield -= absorbed; damage -= absorbed; if (_shield <= 0) _shieldUntil = 0; }
+        Battle.PlayerHp = Math.Max(0, Battle.PlayerHp - damage);
     }
     /// <summary>
-    /// 扣血。**全游戏唯一给敌人造成伤害的地方**，伤害统计（<see cref="DamageStats"/>）就挂在这里。
-    /// `source` 是来源技能 id（空串 = 普通攻击），只有两个生产调用方：`Hit` 传 `fx.Skill`、
-    /// 灼烧跳伤传 `EnemyState.DotSkill`；测试里的直接调用不传，落到"普通攻击"那一档。
+    /// **承伤的应用步骤**（Apply Damage）——扣血与死亡结算，**全游戏唯一给敌人造成伤害的地方**，
+    /// 伤害统计（<see cref="DamageStats"/>）就挂在这里。第 1 步「目标合法性」由调用方保证（见 `Hit`）。
+    /// `source` 是来源技能 id（空串 = 普通攻击）。
+    ///
+    /// 记账必须在这里、**在易伤乘区之后**：改在调用方读 DMG1 会漏掉目标侧那一档，数字会偏小。
+    /// `Math.Max(0, …)` 已经把过量击杀吃掉了，所以有效 = before − after、溢出 = 伤害 − 有效。
     /// </summary>
-    internal void HurtEnemy(EnemyState e, double damage, string source = "")
+    /// <returns>这一笔的**最终伤害**（含溢出部分），供吸血折算。</returns>
+    private double ApplyDamage(EnemyState e, in DamageEvent ev, string source)
     {
-        if (!Legal(e)) return;
-        if (e.VulnerableUntil > 0) damage *= e.VulnerableFactor; // 易伤：目标受击伤害提高
+        if (!Legal(e)) return 0;
+        double damage = DamageFormula.Final(ev);
         double before = e.Hp;
         e.Hp = Math.Max(0, before - damage);
-        // 记账必须在这里、**在易伤乘区之后**：在 `Hit` 里读 damage 会漏掉 `VulnerableFactor`，数字会偏小。
-        // `Math.Max(0, …)` 已经把过量击杀吃掉了，所以有效 = before − after、溢出 = damage − 有效。
         DamageStats.Add(source, before - e.Hp, damage - (before - e.Hp));
-        if (e.Hp > 0) return;
+        if (e.Hp > 0) return damage;
         // 掉落 +1（`drop_flat`）：只加在**怪物自身**那一笔上，普通怪 / 精英 / BOSS 都走这一行、自动覆盖。
         // **裂隙除外**：它 `gold = 0`，平白 +1 读成"开一道门送一块灵石"；而且下面几行已经明确
         // 把裂隙排除在"怪"之外（不触发修行解锁），这里跟着同一个口径。
@@ -1128,7 +1292,18 @@ public sealed partial class GameSession
             _persist = true;
         }
         if (e.Kind == "rift") { Battle.PortalDestroyed = true; _persist = true; }
+        return damage;
     }
+    /// <summary>
+    /// 直接扣血：传进来的数**已经是"攻击者侧结算完"的量**，本函数只再叠**目标侧修正**（易伤）。
+    ///
+    /// 两条调用方：灼烧跳伤（`TickEnemies`）——它的攻击者侧（暴击与倍率窗）在**施放那一刻**就快照进了
+    /// `DotDps`，走 `Hit` 会把它再算一遍，等于双重结算；以及自检 / GM 的直接调用（传一个裸伤害，
+    /// 预期就是"目标侧修正照常生效"，见 `tests/` 里那条易伤用例）。
+    /// **正常命中走 <see cref="Hit"/>**——那条路上才有出手快照与 Build 乘区。
+    /// </summary>
+    internal void HurtEnemy(EnemyState e, double damage, string source = "") =>
+        ApplyDamage(e, new DamageEvent(damage, 0, false, 1, 1, e.VulnerableUntil > 0 ? e.VulnerableFactor : 1), source);
     /// <summary>
     /// 阵亡。**不管死在哪一格都回关卡起点**——Boss 格原先的"本格重生、敌人伤势保留"已取消
     /// （用户要求：死亡行为各处一致）。

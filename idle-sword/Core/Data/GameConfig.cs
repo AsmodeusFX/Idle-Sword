@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace IdleSword.Core;
 
 // Layer：怪物所在层，ground / air（空 = ground）。飞行单位免疫地面定位的技能，见 SwordSkill.hits。
@@ -20,7 +22,10 @@ public sealed record WaveUnitDef(string Monster, int Weight);
 // Targeting：空 / nearest = 最近的合法目标（受射程限制）；highest_hp = 全场血量最高者，无视射程。
 // AoeAll：落点/范围结算命中全体合法敌人（aoe_radius 退为表现用）。
 // Hits：能打到哪一层。空 / both = 打地面也打空中；ground 只打地面；air 只打空中。与 monster.layer 配对判定。
-public sealed record SkillDef(string Id, string Name, string Realm, string Kind, double Cooldown, double Range, double Power, double Duration, int MaxLevel, double Cost, double CostGrowth, string Description, string Secondary, double SecondaryValue, double SecondaryDuration, double AoeRadius, string Trajectory, int ProjectileCount, double HoverTime, double ArcMin, double ArcMax, double Speed, double Spread, double VolleyInterval, double VolleyJitter, double SpawnJitter, double PierceChance, double SecondaryExtra, double TriggerChance, double TriggerChanceStep, double CastRoot, double Knockback, string Targeting, bool AoeAll, string Hits, double Gather, double Band);
+// SkillFlat：DMG1 里的固定伤害项（`攻击力 × power + skill_flat`）。**当前全表为 0 = 尚未投放**：
+// 它是给"固定伤害类"招式留的位置（例如按目标最大气血结算、或教学期不随攻击力成长的那类）。
+// 用之前先读 docs/design/combat.md 的「SkillFlat 的陷阱」——它不随境界缩放，一旦攻击力上了量级就会静默失效。
+public sealed record SkillDef(string Id, string Name, string Realm, string Kind, double Cooldown, double Range, double Power, double Duration, int MaxLevel, double Cost, double CostGrowth, string Description, string Secondary, double SecondaryValue, double SecondaryDuration, double AoeRadius, string Trajectory, int ProjectileCount, double HoverTime, double ArcMin, double ArcMax, double Speed, double Spread, double VolleyInterval, double VolleyJitter, double SpawnJitter, double PierceChance, double SecondaryExtra, double TriggerChance, double TriggerChanceStep, double CastRoot, double Knockback, string Targeting, bool AoeAll, string Hits, double Gather, double Band, double SkillFlat);
 
 /// <summary>唯一配置入口。读取源 CSV 后校验并建立索引，运行时不修改配置对象。</summary>
 public sealed class GameConfig
@@ -133,6 +138,8 @@ public sealed class GameConfig
             var secondary = r.Text("secondary");
             if (secondary != "") Choice(r, "secondary", "pierce", "multi", "slow", "stun", "dot", "vulnerable", "chill", "lifesteal", "execute", "shield", "regen", "haste", "crit_reduce", "mirror", "bonus_vs_state");
             Nonnegative(r, "secondary_value", "secondary_duration", "aoe_radius", "secondary_extra", "pierce_chance", "trigger_chance", "trigger_chance_step");
+            // 固定伤害项（DMG1 的 `+ skill_flat`）：负数会把这一式变成"给对方回血"，拦下来。
+            Nonnegative(r, "skill_flat");
             // 利用状态（bonus_vs_state）：对**携带任意状态**的目标增伤。它不写任何状态字段，只在 Hit 里当乘区用，
             // 所以值必须为正——配成 0 就是一行什么都不做的死配置。
             if (secondary == "bonus_vs_state" && r.Number("secondary_value") <= 0)
@@ -196,7 +203,7 @@ public sealed class GameConfig
             var speed = r.Number("speed");
             if (speed != 0 && speed < 100) throw r.Error("speed", "0 表示默认 1500；显式配置时必须 ≥ 100");
             c.Skills.Add(r.Text("id"), new(r.Text("id"), r.Text("name"), r.Text("realm_id"), r.Text("kind"), r.Number("cooldown"), r.Number("range"), r.Number("power"), r.Number("duration"), r.Int("max_level"), r.Number("cost"), r.Number("cost_growth"), r.Text("description"), secondary, r.Number("secondary_value"), r.Number("secondary_duration"), r.Number("aoe_radius"), trajectory, count, r.Number("hover_time"), r.Number("arc_min"), r.Number("arc_max"), speed, r.Number("spread"), r.Number("volley_interval"), r.Number("volley_jitter"), r.Number("spawn_jitter"), r.Number("pierce_chance"), r.Number("secondary_extra"), r.Number("trigger_chance"), r.Number("trigger_chance_step"),
-                r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits"), r.Number("gather"), r.Number("band")));
+                r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits"), r.Number("gather"), r.Number("band"), r.Number("skill_flat")));
         }
         // ── 修行星图：内容表 + 布局表 ──────────────────────────────────────
         // 刻意拆成两张表：**几何与拓扑由工具整份拥有**（下一轮的节点编辑器），数值与文案人工维护。
@@ -310,14 +317,22 @@ public sealed class GameConfig
         {
             Positive(r, "offset"); if (r.Number("offset") >= c.Setting("cell_width")) throw r.Error("offset", "必须在格内");
         }
-        // 普攻参数参与每次出手，取 0 会让普攻永不出手或零伤害，故按「必须为正」校验（其余属性可以为 0）。
-        // 近战那两个同理：`melee_range = 0` 是"近战永远够不着"、`melee_stop_range = 0` 是"只能站到贴脸"，
-        // 两者都不会报错，只会让近战形态整个不能用——正是要靠加载期拦下来的那种静默失败。
+        // 属性表的每一行自带**上下限**（`min_value` / `max_value`），所以"哪个属性不能为 0"写在它自己那一行上，
+        // 不再是一份与表并行维护的硬编码 id 名单——那种名单迟早会与表分叉。
+        // 例：`basic_interval = 0` 会让普攻永不出手、`melee_range = 0` 会让近战永远够不着，
+        // 两者都不报错、只让一整个形态不能用，所以它们自己的 min_value 就是 0.01。
+        //
+        // `max_value` **允许留空 = 不设上限**（攻击力这类属性本来就该无上限）。
+        // 这里校验的是**基础值**；各项加成之后的**合计值**由 `GameSession` 用同一对上下限夹取
+        // （暴击率合计不得超过 1 之类），两处读的是同一列，不会各写一个数。
         foreach (var r in c.Rows("fightattr"))
         {
             Nonnegative(r, "base_value");
-            if (r.Text("id") is "basic_interval" or "basic_power" or "basic_range" or "melee_range" or "melee_stop_range")
-                Positive(r, "base_value");
+            double min = Optional(r, "min_value") ?? throw r.Error("min_value", "不能留空（只允许 max_value 留空）");
+            double? max = Optional(r, "max_value");
+            if (max is double high && high < min) throw r.Error("max_value", "不能小于 min_value");
+            if (r.Number("base_value") < min) throw r.Error("base_value", $"低于下限 {min}");
+            if (max is double cap && r.Number("base_value") > cap) throw r.Error("base_value", $"超出上限 {cap}");
         }
         // 全局设置一律必须为正……**除了 `starting_gold`**：开局不给钱是合法的设计选择
         // （第一点修为必须靠杀怪换来），而"必须大于 0"会把它拦在加载期。
@@ -335,6 +350,17 @@ public sealed class GameConfig
         if (!Rows(table).Any(t => t.Text("id") == r.Text(field))) throw r.Error(field, $"引用不存在: {r.Text(field)}");
     }
     private static void Positive(CsvRow r, string f) { if (r.Number(f) <= 0) throw r.Error(f, "必须大于 0"); }
+    /// <summary>可留空的数值列：空串 / 纯空白 → null。
+    /// 不能用 <see cref="CsvRow.Number"/> 读——它会把留空直接判成"需要有限数值"，
+    /// 而"上限留空 = 不设上限"是属性表里最常见的写法。</summary>
+    private static double? Optional(CsvRow r, string f)
+    {
+        string text = r.Text(f).Trim();
+        if (text.Length == 0) return null;
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value))
+            throw r.Error(f, "需要有限数值（留空表示不设上限）");
+        return value;
+    }
     private static void Nonnegative(CsvRow r, params string[] fields) { foreach (var f in fields) if (r.Number(f) < 0) throw r.Error(f, "不能小于 0"); }
     private static void Choice(CsvRow r, string f, params string[] choices) { if (!choices.Contains(r.Text(f))) throw r.Error(f, "未知枚举值"); }
 }

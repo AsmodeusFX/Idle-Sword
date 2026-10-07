@@ -68,21 +68,40 @@
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| id | string | 稳定唯一 ID |
+| id | string | 稳定唯一 ID。**改名等于改接口**（代码、编辑器、文档都可能引用它） |
 | name | string | 中文显示名称 |
-| base_value | number | 属性基础值；百分比用0～1表示 |
+| base_value | number | 属性基础值（"裸角色"的值，不含任何养成投放）；百分比用 0～1 表示 |
 | format | enum | 显示提示 integer / percent / decimal |
+| min_value | number | 该属性**合计值**的下限，**不能留空**。"哪个属性不能为 0"就写在它自己那一行上 |
+| max_value | number | 该属性**合计值**的上限。**留空 = 不设上限** |
 
-其中 `basic_interval`（普攻间隔，秒）、`basic_power`（普攻倍率，乘最终攻击）、`basic_range`（普攻射程）、`melee_range`（近战普攻射程）、`melee_stop_range`（近战停步距离）五行是**普通攻击**的参数，校验为**必须大于 0**（其余属性允许为 0）。普攻的规则见 [../design/core_rules.md](../design/core_rules.md) 的「战斗」一节。
+上下限管的是**合计值**（基础 + 各来源加成之后）：加载期校验 `base_value` 落在区间内，运行时由
+`GameSession.ClampAttr` 夹合计值——**所以增益也吃同一条上限**（`skill_cdr` 顶到 1 之后再吃 25% 的加速，
+仍然被夹回 1）。**上限是防手滑的护栏，不是平衡旋钮**：往下压会让超出部分静默消失，而面板显示的还是夹取前的值。
 
-> ⚠️ **`name` 与 `format` 两列长期没有消费者**，而且 **`format` 连加载期校验都没有**（`GameConfig` 只校验 `base_value` 非负、上面那五行 > 0）——合法取值只写在本节这张表里。
+`min_value = 0.01` 的五行（`basic_interval` / `basic_power` / `basic_range` / `melee_range` / `melee_stop_range`）
+是**普通攻击**的参数，取 0 分别意味着"普攻永不出手""普攻零伤害""近战永远够不着"，都不报错、只让一整个形态不能用。
+从前这是一份写在 `GameConfig` 里的硬编码 id 名单，现在它就在各自那一行上。普攻的规则见
+[../design/core_rules.md](../design/core_rules.md) 的「战斗」一节。
+
+> ⚠️ **`name` 与 `format` 两列长期没有消费者**，而且 **`format` 连加载期校验都没有**（`GameConfig` 只校验上下限）——合法取值只写在本节这张表里。
 > **2026-10-07 起它们有了第一个消费者**：GM 的**属性面板**（`UI/AttributePanel.cs`）按 `name` 显示中文名、按 `format` 渲染数值，
 > 并对**未知取值兜底**成普通数字（不能假设它一定合法）。改这两列之前先看那儿。
 >
+> ⚠️ **加一行属性的完整清单见 [../design/fightattr.md](../design/fightattr.md) §5.1**。最容易漏的是
+> `UI/AttributePanel.cs` 里那个 `switch (id)`：不加 `case` 也能渲染出那一行，但**「受什么影响」会是空白**，
+> 而**冒烟测不出来**（它比的是行数）——只能靠 `--capture` 目视。
+>
 > 属性面板把每个属性显示成**三种状态**：`基础`（本表的 `base_value`）/ `面板值`（各养成系统加成之后的最终值）/
 > `动态值`（叠上当前临时状态后**真正生效的量**）。最后那一列的口径值得记一句：**临时状态大多不改属性**——
-> 它乘的是结算伤害（`GameSession.BuffPower`），所以 `atk` 的动态值是 `Attack × 伤害倍率窗`，而属性本身没变。
-> 真正被临时状态改写的只有 `crit`（加 buff 那份）与 `basic_interval`（按攻速折算）。
+> 它乘的是结算伤害（`GameSession.BuffPower`），所以 `atk_base` 的动态值是 `Attack × 伤害倍率窗`，而属性本身没变。
+> 真正被临时状态改写的只有 `crit_rate`（加 buff 那份）、`attack_speed` / `skill_cdr`（加加速那份）与
+> `basic_interval`（按攻速折算）。
+>
+> **2026-10-07 改名过一轮**（见 [../design/fightattr.md](../design/fightattr.md) §6）：
+> `atk` → `atk_base`、`hp` → `max_hp_base`、`hp_percent` → `max_hp_percent`、`crit` → `crit_rate`，
+> 并新增 `attack_speed` / `skill_cdr` / `generic_damage` 与上面那两列上下限。
+> **属性 id 不进存档**（存档存的是天赋/法术/参悟的 id），所以改名不需要存档迁移。
 
 **普攻有近战 / 远程两种形态**（`GameSession.MeleeBasic`）：远程用 `basic_range` + `stop_range`，近战用 `melee_range` + `melee_stop_range`。近战不是"换个画法"——射程与停步距离都真的缩短，角色要走进去才够得着。两条不变量：
 
@@ -109,7 +128,8 @@
 | kind | enum | 类别；对应表的已注册行为/分类 |
 | cooldown | number | 独立冷却秒数 |
 | range | number | 目标选择距离（逻辑坐标） |
-| power | number | 伤害/效果倍率 |
+| power | number | **SkillRate**：伤害/效果倍率。DMG1 = `最终攻击 × power × (1 + 技能等级成长 + 参悟) + skill_flat` |
+| skill_flat | number | DMG1 里的**固定伤害项**。⚠️ **当前全表为 0 = 尚未投放**，用之前先读 [../design/combat.md](../design/combat.md) §2 的陷阱说明——它不随境界缩放，攻击力上了量级就会静默失效 |
 | duration | number | 持续时间秒数；定点技能为延迟；自定义飞行形态下为飞行／下坠时长 |
 | max_level | integer | 最大等级 |
 | cost | number | 基础升级成本；具体成长规则见下方 |
@@ -627,13 +647,28 @@ AI 不得改写。留这个口子是因为它常牵连「必须在 `Systems.ByEf
 
 ## 当前公式与全局设置
 
+> **完整口径见 [../design/combat.md](../design/combat.md)**（DMG1 / DMG2 / DMG3、结算顺序、出手快照、频率分离）。
+> 本节只列"这一列怎么参与计算"，不重复推导。
+
 - 法术消耗：`ceil(cost × cost_growth ^ 当前等级)`；当前等级0表示尚未习得。
 - 天赋消耗：取 `Talent.csv` 的 `cost` 列表第 N 项（N = 当前等级+1），按该行的 `cost_currency` 扣；买不起就**什么都不改**，绝不部分生效。花灵核**不写投放账本**（它是记账货币，累计投放量必须等于首杀关卡数 + 调试发放量）。
 - 参悟消耗：`cost × (当前等级+1)` 份对应货币（4 类货币名待定）。
 - 武器攻击：`base_atk × (1 + 0.15 × 淬炼等级) × 洗练品质`。
-- 最终攻击：`(基础攻击 + 武器攻击) × (1 + 基础攻击加成 + 天赋攻击加成)`。
-- 技能伤害：`最终攻击 × power × (1 + skill_level_bonus × (技能等级-1) + 参悟加成)`，再应用 Buff 及暴击。
+- **最终攻击（= DMG1 的 `AttackPower`）**：`(atk_base + 武器攻击) × (1 + atk_percent + 天赋攻击加成) + 天赋平攻`。
+  武器**在乘区之内**（与 `atk_base` 同类），天赋平攻**在乘区之外**（并进去会被后期百分比放大成另一个量级）。
+- **最终伤害**：`DMG1 × Generic × Critical × Build × Vulnerability`，逐项见 `combat.md` §4。DMG1 又等于
+  `最终攻击 × SkillRate + skill_flat`，其中 `SkillRate = power × (1 + skill_level_bonus × (技能等级-1) + 参悟加成)`。
   - `skill_level_bonus`（默认 **0.15**）是**技能等级**每级的威力加成。它从代码里提出来放进本表，是为了让技能页「每级 +X%」的提示与实现**同源**——硬编码会让提示和实际悄悄对不上。
+  - **技能等级与参悟落在 DMG1**（它们是"这一式被培养到什么程度"，属于技能定义），
+    **斩杀 / 利用状态 / 倍率窗落在 DMG3 的 Build 乘区**（它们是"这一发遇到了什么条件"）。
+    这条分界是 `combat.md` 的核心之一：混在一起就再也答不出"是技能强还是 BD 强"。
+- **普攻间隔**：`basic_interval ÷ (1 + attack_speed)`；**法术冷却**：`cooldown ÷ (1 + skill_cdr)`。
+  两者都不进任何伤害乘区，且**增益类法术两样都不吃**（否则仙风云体术会在自己持续期内转好、变成常驻）。
+  加速类增益（`secondary = haste`）**同时给两样**——它的文案就是"出手快如疾风"，而期望曲线是按"两者一起加速"推的。
+- **通用增伤**：`generic_damage` 进 DMG3 的第一乘区（加算池，`1 + Σ`）。它与 `atk_percent` 在数值上是同一个乘区，
+  同时存在只为展示口径（攻击力看得见 / 伤害看不见）——**同一个养成来源只能选一边投**，见 `fightattr.md` §3.1。
+- **暴击**：率 `crit_rate`（判定，DMG2）+ 增益那份；倍率 `crit_damage`（DMG3）。非暴击恒为 1。率与倍率必须能各自调。
+- **易伤**：目标身上 `VulnerableFactor`，进 DMG3 第四乘区。**目标侧，按落地那一刻算，不吃出手快照**。
 - **剑罡护体（`secondary = shield`）的环绕飞剑**：护盾生效期间，每 `guard_interval` 秒向 `guard_range` 内最近的合法敌人射出一柄小剑，威力 = `最终攻击 × guard_blade_power`。三个参数都在 `game_settings.csv`。
   - **出手范围必须与法术自己的 `range` 分开**：`range` 管的是"能不能施放这个增益"（要够得着敌人才放）。两者曾被我压成同一个值（射程 400 当近身范围），结果是**远程怪在场时增益根本放不出来**，预览页更惨——靶子固定在 520，射程压到 400 之后剑罡护体**连护盾都上不了**，画面上什么都没有。
   - 射出的小剑 `index` 传 1，不占"技能名标签"与"暴击缩冷却"的名额。护盾不在时什么都不做。
@@ -650,7 +685,10 @@ AI 不得改写。留这个口子是因为它常牵连「必须在 `Systems.ByEf
 
   - 两条都只在落点附近找、**不改追远处**：多发齐射若都能改追远处，会收敛到同一只（`Picks` 刻意"尽量不重复"就是为了铺开）。
   - 表现层配套修了一处：`FlightProgress` 原先在目标消失时回退成 `x + 200`，把进度钉死在弧顶附近，剑芒因此**一直飘在半空、再凭空消失**；现在改为飞向 `TargetX`（它最后所在的位置）。
-- 普通攻击伤害：`最终攻击 × fightattr.basic_power`，每 `fightattr.basic_interval` 秒对最近的合法目标平射一柄飞剑（见 `fightattr.csv` 一节）。它照常吃暴击，但**不触发**「暴击缩短一个随机技能的冷却」。
+- 普通攻击伤害：`最终攻击 × basic_power`（即 DMG1，`skill_flat = 0`），每 `basic_interval ÷ (1 + attack_speed)` 秒对最近的合法目标出手一次（见 `fightattr.csv` 一节）。它照常吃暴击，但**不触发**「暴击缩短一个随机技能的冷却」。
+- `ground_tick_interval`（**0.6**）：地面持续效果的**结算间隔**（焚天剑诀的火海、寒冰龙卷的力场），
+  每一次结算都是一次独立的 Attack Event（各自摇暴击、各自记账）。**它同时被期望模型读**
+  （`LevelCurve.Hits` 用它算跳数），从前两边各写一个 `0.6`——改一处不改另一处会让模型与实际静默脱钩。
 - `starting_gold`：初始灵石（教学期是 **0**——第一点修为必须靠杀怪换来；它是全表**唯一允许为 0** 的全局设置）；`cell_width`：1920；`respawn_seconds`：复活等待秒数。
 - 接近裂隙的停步判定取**已习得法术的最大射程**（`GameSession.AttackRange`），**不并入普攻射程**：并进去会让角色停在裂隙射程外空转。普攻射程单列在 `fightattr.basic_range`，它不小于停步距离，因此角色站定时必定够得着。
 - `pet_draw_cost`、`pet_duplicate_gold`：召唤成本与重复返还。

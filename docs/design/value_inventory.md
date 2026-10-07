@@ -12,37 +12,44 @@
 
 | 维度 | 性质 | 锚点 |
 | --- | --- | --- |
-| 基础攻击 | 数值 | `fightattr.atk` → `GameSession.Attack` |
+| 基础攻击 | 数值 | `fightattr.atk_base` → `GameSession.Attack`（**武器在乘区之内**） |
 | 百分比攻击 | 数值 | `fightattr.atk_percent` + 天赋 `effect=atk`（`TalentBonus("atk")`） |
 | **固定攻击** | 数值 | 天赋 `effect=atk_flat`，**加在乘区之外**（过渡期主投这一种） |
+| **通用增伤（加算池）** | 数值 | `fightattr.generic_damage` → DMG3 第一乘区（**当前无投放来源**） |
 | 武器攻击 | 数值 | `Equip.base_atk × (1 + .15×WeaponLevel) × WeaponRoll`，`Features/Forging/ForgingSystem.cs` |
-| 技能威力 | 数值 | `SkillDef.Power × (1 + skill_level_bonus×(rank−1) + SkillBonus(id,"damage_percent"))` |
-| 共享伤害倍率窗 | 数值 | `_buffPower` / `_buffTime`（`power != 1` 的 buff 写入） |
-| 处决（斩杀增伤） | 数值 | `secondary=execute` |
-| 对状态目标增伤 | 数值 | `secondary=bonus_vs_state` |
-| 易伤（敌方承伤放大） | 状态 | `secondary=vulnerable`（**当前无在役技能**） |
+| 技能威力（SkillRate） | 数值 | `SkillDef.Power × (1 + skill_level_bonus×(rank−1) + SkillBonus(id,"damage_percent"))` |
+| 技能固定伤害 | 数值 | `SwordSkill.skill_flat`（**全表 0 = 尚未投放**，用前读 [combat.md](combat.md) §2 的陷阱） |
+| 共享伤害倍率窗 | 数值 | `CombatEffect.BuffPower`（`power != 1` 的 buff 写入，出手时**快照**） |
+| 处决（斩杀增伤） | 数值 | `secondary=execute` → DMG3 **Build** 乘区 |
+| 对状态目标增伤 | 数值 | `secondary=bonus_vs_state` → DMG3 **Build** 乘区 |
+| 易伤（敌方承伤放大） | 状态 | `secondary=vulnerable` → DMG3 **Vulnerability** 乘区（**当前无在役技能**） |
 | 宠物伤害 | 数值 | `PetSkill.power` + `PetEquip.power`，`Features/SwordSpirit/SwordSpiritSystem.cs` |
 | 召唤物 | 形态 | `Kind=summon`（**当前无在役技能**） |
 
 ## B. 节奏（攻速 / 冷却）
 
+> **攻速与 CDR 是两条独立的频率轴**，都不进任何伤害乘区（见 [combat.md](combat.md) §5）。
+
 | 维度 | 性质 | 锚点 |
 | --- | --- | --- |
-| 攻速 | 数值 | `secondary=haste` → `HasteFactor`，加速**非 buff 类**冷却与剑灵，**不加速 buff 类法术** |
-| 冷却缩减 | 数值 | `SkillDef.Cooldown` + buff 类随等级的覆盖率成长（`BuffCooldown`） |
-| **暴击缩冷却** | 机制 | `secondary=crit_reduce` 的 `secondary_extra`：暴击后缩短一个非增益、非神通法术的冷却（`CritShortenCooldown`） |
-| 普攻间隔 | 数值 | `fightattr.basic_interval` |
+| 普攻攻速 | 数值 | `fightattr.attack_speed`：`普攻间隔 = basic_interval ÷ (1+它)`（**当前无投放来源**） |
+| 法术冷却缩减 | 数值 | `fightattr.skill_cdr`：`冷却 = cooldown ÷ (1+它)`（**当前无投放来源**） |
+| 加速类增益 | 数值 | `secondary=haste` → **同时**给上面两样（`1 + value`），**不加速 buff 类法术** |
+| 冷却缩减 | 数值 | `SkillDef.Cooldown` + buff 类随等级的覆盖率成长（`BuffCooldown`，覆盖率封 80%） |
+| **暴击缩冷却** | 机制 | `secondary=crit_reduce` 的 `secondary_extra`：暴击后缩短一个非增益、非神通法术的冷却（`CritShortenCooldown`）。⚠️ 它按**秒**扣，不受 `÷(1+cdr)` 约束（见 `combat.md` §5 的告警） |
+| 普攻间隔 | 数值 | `fightattr.basic_interval`（未加速的原值） |
 | 多发错时 | 形态 | `ProjectileCount` / `VolleyInterval` / `VolleyJitter`（多发本身提高单位时间伤害） |
 
 ## C. 暴击 / 闪避
 
 | 维度 | 性质 | 锚点 |
 | --- | --- | --- |
-| 暴击率 | 数值 | `fightattr.crit` + `CritBonus`（`crit_reduce` 的绝对值叠加） |
-| 暴击倍率 | 数值 | `fightattr.crit_damage`（全游戏**唯一**的暴击判定点在 `Launch`） |
-| 闪避 | 数值 | `fightattr.dodge`（`HurtPlayer`） |
+| 暴击率 | 数值 | `fightattr.crit_rate` + `CritBonus`（`crit_reduce` 的绝对值叠加），合计按 `max_value` 夹取 |
+| 暴击倍率 | 数值 | `fightattr.crit_damage` → DMG3 第二乘区（全游戏**唯一**的暴击判定点在 `Launch`） |
+| 闪避 | 数值 | `fightattr.dodge`（`HurtPlayer`，**承伤方减伤**、排在护盾之前） |
 
 > ⚠️ **没有命中率 / 精准，也没有敌方闪避**——"打不打得中"这个维度在本底盘里不存在。
+> 连"层不匹配"（飞行单位免疫只打地面的技能）也不是命中率：那是**目标合法性**，不结算也不记账。
 
 ## D. 弹道形态与覆盖
 
@@ -132,34 +139,58 @@
 
 > 这一节是 `GameSession` 的**现状快照**，每条都带锚点，改公式时**必须同步改这里**——
 > 与 `data/fields.md` 末尾那节「当前公式与全局设置」是同一个口径（那边偏配置参数，这边偏结算形状）。
+>
+> **2026-10-07 起，"为什么这么写"与四个乘区的完整规则搬到了 [combat.md](combat.md)**，
+> 本节只保留"现在实际是这么算的"这张表。两者冲突时以 `combat.md` 为准。
+
+**唯一的最终伤害公式**（`DamageFormula.Final`，纯函数，模拟与期望模型共用一份）：
+
+```
+最终伤害 = DMG1 × Generic × Critical × Build × Vulnerability
+DMG1     = 最终攻击 × SkillRate + skill_flat
+Generic  = 1 + Σ(generic_damage 这类普通加算增伤)          // 加算池
+Critical = 非暴击 1；暴击 crit_damage
+Build    = Π(共享倍率窗 × 斩杀 × 利用状态 …)                 // 乘算池，攻击者侧带条件
+Vulnerability = Π(目标身上的易伤 …)                          // 乘算池，目标侧
+```
 
 | 量 | 公式 | 锚点 |
 | --- | --- | --- |
-| **攻击** | `(fightattr.atk + 武器攻击) × (1 + atk_percent + 天赋atk) + 天赋atk_flat` | `GameSession.Attack` |
+| **攻击**（= DMG1 的 `AttackPower`） | `(fightattr.atk_base + 武器攻击) × (1 + atk_percent + 天赋atk) + 天赋atk_flat` | `GameSession.Attack` |
 | 武器攻击 | `Equip.base_atk × (1 + 0.15 × 淬炼等级) × WeaponRoll` | `GameSession.WeaponAttack` |
-| **气血** | `fightattr.hp × (1 + hp_percent + 天赋hp) + 天赋hp_flat` | `GameSession.MaxHp` |
-| **法术威力** | `SwordSkill.power × (1 + skill_level_bonus × (技能等级−1) + 参悟damage_percent)` | `GameSession.SkillPower` |
-| 普攻伤害 | `最终攻击 × fightattr.basic_power`，间隔 `basic_interval` | `TickBasicAttack` → `Launch` |
-| **暴击** | `rand < fightattr.crit + CritBonus` → `伤害 × fightattr.crit_damage` | `Launch`（**全游戏唯一判定点**，逐弹丸各摇一次） |
-| 共享伤害倍率 | 增益窗口内 `伤害 × _buffPower` | `Launch` |
-| **易伤** | 目标 `VulnerableUntil > 0` → `伤害 × VulnerableFactor` | `HurtEnemy`（**记账发生在这之后**） |
-| 落地 | `Hp = max(0, Hp − 伤害)`；有效 = `before−after`、溢出 = `伤害−有效` | `HurtEnemy` |
-| **冷却流逝** | `cd = max(0, cd − dt × HasteFactor)`，**buff 类不吃加速** | `Step` 顶部 |
-| 攻速 | `HasteFactor`（`secondary=haste` 窗口内 = `1 + value`，否则 1）；同时作用于**普攻冷却键**与剑灵 | `GameSession.HasteFactor` |
-| 掉落 | `monster.gold + 天赋drop_flat`（**裂隙除外**；且**不含** `drop.csv` 奖励组） | `HurtEnemy` |
+| **气血** | `fightattr.max_hp_base × (1 + max_hp_percent + 天赋hp) + 天赋hp_flat` | `GameSession.MaxHp` |
+| **SkillRate** | `SwordSkill.power × (1 + skill_level_bonus × (技能等级−1) + 参悟damage_percent)` | `GameSession.SkillPower` |
+| 普攻伤害 | `DMG1 = 最终攻击 × basic_power + 0` | `TickBasicAttack` → `Launch` |
+| 法术伤害 | `DMG1 = 最终攻击 × SkillRate + SwordSkill.skill_flat`（当前 `skill_flat` 全表 0） | `LaunchShape` → `Launch` |
+| **暴击判定** | `rand < crit_rate + CritBonus`（按 `max_value` 夹取），结果**快照进 `CombatEffect.Critical`** | `Launch`（**全游戏唯一判定点**，逐弹丸各摇一次） |
+| **暴击倍率** | `CriticalMultiplier = Critical ? crit_damage : 1`（DMG3 第二乘区） | `DamageFormula.Final` |
+| **Build 乘区** | `Π`：共享倍率窗 `BuffPower` × 斩杀 ×2（目标残血） × 利用状态 `1+secondary_value` | `GameSession.Hit` |
+| **易伤** | 目标 `VulnerableUntil > 0` → DMG3 第四乘区 `× VulnerableFactor`，**按目标当下状态算、不吃快照** | `GameSession.Hit`（**记账发生在这之后**） |
+| 落地 | `Hp = max(0, Hp − 最终伤害)`；有效 = `before−after`、溢出 = `伤害−有效` | `GameSession.ApplyDamage`（**唯一入口**） |
+| **普攻间隔** | `basic_interval ÷ (1 + attack_speed)` | `Step` 顶部的冷却流逝 |
+| **法术冷却** | `cooldown ÷ (1 + skill_cdr)`；**增益类法术两样都不吃** | `Step` 顶部的冷却流逝 |
+| 加速类增益 | `secondary = haste` 时**同时**给 `attack_speed` 与 `skill_cdr`（`1 + value`） | `GameSession.CastBuff` |
+| 灼烧 | 每秒伤害在**施放那一刻**定格（含暴击与倍率窗），此后每跳只叠目标侧修正 | `ApplySecondary` → `TickEnemies` → `HurtEnemy` |
+| 掉落 | `monster.gold + 天赋drop_flat`（**裂隙除外**；且**不含** `drop.csv` 奖励组） | `ApplyDamage` |
 | 射程 / 停步 | 取已习得**非 buff** 法术的最大射程；一个都没学时回落到 `BasicAttackRange`（**跟着近战/远程形态走**） | `GameSession.AttackRange` |
 
 **几条值得记住的形状**（改公式时最容易碰坏的）：
 
 - **平攻 / 平血加在乘区之外**——刻意的：并进乘区的话，后期会被装备与百分比放大成完全不同的量级。
 - **暴击只有一处判定**（`Launch`）：自建一条命中路径会**静默丢掉暴击**，近战那次就是为此才没走"瞬时命中"的捷径。
-- **易伤在 `HurtEnemy` 里、记账之前**：在 `Hit` 里读 `damage` 会漏掉 `VulnerableFactor`，伤害统计会偏小。
-- **攻速不加速 buff 类**：否则仙风云体术会在持续期内就转好，等于自己给自己减冷却（100% 常驻）。
+- **出手快照**：一次出手摇一次暴击，派生的一切结算（地面场每跳、灼烧每跳、召唤物射击）**共享它**。
+  唯一的例外是召唤物**继承召唤那一手**的快照——含义是"不重新摇"，不是"不算暴击"。
+- **易伤在 DMG3 里、记账之前**：在 `Hit` 里读 DMG1 会漏掉它，伤害统计会偏小。
+- **攻速与 CDR 是两条频率轴，都不进伤害乘区**：混在一起会让 DPS 随攻速平方增长。
+- **增益类法术两样加速都不吃**：否则仙风云体术会在持续期内就转好，等于自己给自己减冷却（100% 常驻）。
+- **层（地面/空中）是目标合法性**，不是命中率：飞行单位免疫只打地面的技能，既不结算也不记账。
+- **射手与"能打到谁"**：`pierce` / `line_pierce` 是**弹丸穿透**（一支剑穿过一整排），与"穿甲"无关。
 - **射程的回落必须跟着普攻形态走**：近战只有 150，若回落到远程的 950，角色会停在"以为够得着"的地方——
   **裂隙打不掉、整关卡死**。
 
 > **DPS / TTK 的模型口径**不在这里，在 [balance_ttk.md](balance_ttk.md)（§2 刻度、§2.1 前期模型、
 > §6.2 改数值前的三步走）。改数值前先读那份。
+> **期望模型与逐拍模拟共用同一份公式实现**（`Core/Data/DamageFormula.cs`）——这是"两边不会静默分叉"的唯一保证。
 
 ## K. 死配置（代码与词汇表都在，只差载体）
 

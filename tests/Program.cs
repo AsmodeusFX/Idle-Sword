@@ -160,7 +160,7 @@ Check("new and moved skills carry the intended effects", () => {
 });
 Check("影分身：本体每放一式，分身同步再放一份、伤害打折、不递归", () => {
     // 暴击是逐弹丸摇的，会把 70% 这个比值打乱，用改过配置的靶场把暴击关掉。
-    var noCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
+    var noCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit_rate", "base_value", "0") : source[f]);
     var g = SalvoOn(noCrit, "skill_01", 400);      // 靶场只学了御剑术
     g.State.Skills["skill_19"] = 1;                // 再挂上影分身
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
@@ -1265,7 +1265,7 @@ Check("line_pierce sweeps every enemy along the line", () => {
 });
 Check("basic attack fires one flat shot per interval, and stays silent without a legal target", () => {
     // 关掉暴击：普攻伤害要能被精确断言，暴击会把数字乘 1.5，抽签结果还随 seed 漂。
-    var plain = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
+    var plain = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit_rate", "base_value", "0") : source[f]);
     var g = new GameSession(plain, seed: 42) { BasicAttackEnabled = true };
     GrantLateGame(g);   // 远程 + 自动出手：不点这两个节点，普攻根本不会自己出手
     g.State.Skills.Clear(); g.Battle.Cooldowns.Clear();
@@ -1297,7 +1297,7 @@ Check("basic attack fires one flat shot per interval, and stays silent without a
 });
 Check("melee basic attack: short reach, resolves on the swing, same damage path as ranged", () => {
     // 关掉暴击：伤害要能被精确断言（与上面那条远程用例同一个理由）。
-    var plain = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
+    var plain = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit_rate", "base_value", "0") : source[f]);
     var g = Melee(plain, basic: true);
     // 只点「生根」（要验的是自动普攻那条路），**不给剑气** → 保持近战。
     g.State.Talents["t_auto"] = 1;
@@ -1786,7 +1786,7 @@ Check("crits never shorten buff cooldowns, and only fire once per cast", () => {
     Assert(g.Battle.Cooldowns["skill_06"] < 29, $"crits did shorten a non-buff cooldown: {g.Battle.Cooldowns["skill_06"]:0.##}");
 
     // 每次施法最多一次：把暴击率拉满，御剑术一轮 3 支，旧写法会一轮触发 3 次。
-    var alwaysCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "1") : source[f]);
+    var alwaysCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit_rate", "base_value", "1") : source[f]);
     var b = SalvoOn(alwaysCrit, "skill_01", 200);
     b.State.Skills["skill_06"] = 1; b.State.Skills["skill_09"] = 1;
     b.Battle.Cooldowns.Clear();
@@ -1860,7 +1860,7 @@ Check("神通的概率可以逐次累加，摇中后清零", () => {
     Assert(Math.Abs(g.TriggerChanceNow("skill_02") - ramp.Skills["skill_02"].TriggerChance) < 1e-9, "未配置累加的法术不涨");
 });
 Check("利用状态：目标带状态时增伤，不带时不变", () => {
-    var noCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit", "base_value", "0") : source[f]);
+    var noCrit = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "crit_rate", "base_value", "0") : source[f]);
     var g = SalvoOn(noCrit, "skill_10", 400);          // 斩鬼神：target 类，延迟 0.9 秒结算
     var foe = g.Battle.Enemies.OrderBy(e => e.Id).First();
     // SalvoOn 为了定住靶子给了 StunUntil = 1e9——那本身就算「带状态」。先清掉，否则两组都吃加成、比不出差异。
@@ -2135,6 +2135,162 @@ Check("base character can reach the boss in a sustained run", () => {
     Assert(maxCell == g.Level.Cells - 1,
         $"练度没能把角色送到 BOSS 格：只走到第 {maxCell + 1} / {g.Level.Cells} 格，"
         + $"御剑术 Lv.{g.State.Skills.GetValueOrDefault("skill_01")}，灵钱 {g.State.Amount("gold")}");
+});
+// ══════════════════════════════════════════════════════════════════════════════
+//  战斗底层规则：DMG1 / DMG2 / DMG3、出手快照、频率与伤害分离。
+//  口径见 docs/design/combat.md。这一组是那套规则的**可执行形式**——
+//  规则改了而这里没跟着改就会红，而不是让"文档与代码各说各话"。
+// ══════════════════════════════════════════════════════════════════════════════
+Check("DMG1 / DMG3：加算池与乘算池的区别，以及最终公式", () => {
+    // DMG1 = 攻击力 × 技能倍率 + 技能平值（文档里的算例：100 × 2.0 + 20 = 220）。
+    Assert(Math.Abs(DamageFormula.Dmg1(100, 2, 20) - 220) < 1e-9, "DMG1 = 攻击 × 倍率 + 平值");
+    // 通用增伤是**加算池**：两个 +50% 是 ×2.0，不是 ×2.25。基础成长区不制造组合爆炸。
+    Assert(Math.Abs(DamageFormula.GenericMultiplier(.5 + .5) - 2) < 1e-9, "通用增伤加算");
+    // BD 与易伤是**乘算池**：1.3 × 1.4 × 1.5 = 2.73（"成型感"就来自这里）。
+    var mods = new[]
+    {
+        new DamageModifier("A", ModifierZone.Build, 1.3),
+        new DamageModifier("B", ModifierZone.Build, 1.4),
+        new DamageModifier("C", ModifierZone.Build, 1.5),
+        new DamageModifier("V", ModifierZone.Vulnerability, 1.2),
+    };
+    Assert(Math.Abs(DamageFormula.BuildMultiplier(mods) - 2.73) < 1e-9, "BD 乘算");
+    Assert(Math.Abs(DamageFormula.VulnerabilityMultiplier(mods) - 1.2) < 1e-9, "易伤乘算");
+    // 非暴击恒为 1。判定在 DMG2、倍率在 DMG3，两件事不许混。
+    Assert(DamageFormula.CriticalMultiplier(false, 1.5) == 1 && DamageFormula.CriticalMultiplier(true, 1.5) == 1.5, "暴击倍率");
+    // 暴击期望 1 + C×(M−1)：50% × 200% = 1.5。
+    Assert(Math.Abs(DamageFormula.ExpectedCritMultiplier(.5, 2) - 1.5) < 1e-9, "暴击期望");
+    // 完整算例：220 × 1.5(通用) × 2.0(暴击) × 1.3(BD) × 1.0(易伤) = 858。
+    double final = DamageFormula.Final(new DamageEvent(220, .5, true, 2.0, 1.3, 1.0));
+    Assert(Math.Abs(final - 858) < 1e-9, $"最终伤害：{final}");
+});
+Check("攻速只改普攻频率，不改单次伤害", () => {
+    // 攻速与 CDR 是**频率轴**，不许进任何伤害乘区（否则 DPS 会随攻速平方增长，
+    // 而玩家在面板上永远算不清自己为什么变强了）。见 docs/design/combat.md 的频率一节。
+    GameConfig Speedy(string attr, string value) => GameConfig.Load(f => f == "fightattr.csv"
+        ? Cell(Cell(source[f], "crit_rate", "base_value", "0"), attr, "base_value", value) : source[f]);
+    (double Damage, double Ticked) Fire(GameConfig cfg)
+    {
+        var g = new GameSession(cfg, seed: 42) { BasicAttackEnabled = false };
+        GrantLateGame(g); g.State.Skills.Clear(); g.Battle.Cooldowns.Clear();
+        g.Step(.05);
+        // 初始波刷在格内 1450 处（普攻射程 950 之外），所以先把靶子挪进来再出手。
+        var target = g.Battle.Enemies[0];
+        foreach (var e in g.Battle.Enemies.Skip(1).ToArray()) g.Battle.Enemies.Remove(e);
+        target.X = g.Battle.PlayerX + 500; target.Hp = target.MaxHp = 1e6;
+        target.Atk = 0; target.AttackTimer = 999; target.StunUntil = 1e9;
+        Assert(g.ManualBasicAttack(), "按住普攻出手一次");
+        var shot = g.Effects.Single(e => e.Skill == "");
+        g.Battle.Cooldowns[GameSession.BasicAttackKey] = 1;      // 观测冷却流逝：一步能扣掉多少
+        g.Step(.05);
+        return (shot.Damage, 1 - g.Battle.Cooldowns[GameSession.BasicAttackKey]);
+    }
+    var none = Fire(Speedy("attack_speed", "0"));
+    var fast = Fire(Speedy("attack_speed", "1"));
+    Assert(Math.Abs(none.Damage - fast.Damage) < 1e-9, $"攻速不改单次伤害：{none.Damage} vs {fast.Damage}");
+    Assert(Math.Abs(none.Ticked - .05) < 1e-9 && Math.Abs(fast.Ticked - .10) < 1e-9,
+        $"但冷却流逝按 1+attack_speed 走：{none.Ticked} vs {fast.Ticked}");
+});
+Check("CDR 只改法术频率，不改单次伤害", () => {
+    GameConfig Cdr(string value) => GameConfig.Load(f => f == "fightattr.csv"
+        ? Cell(Cell(source[f], "crit_rate", "base_value", "0"), "skill_cdr", "base_value", value) : source[f]);
+    (double Damage, double Ticked) Fire(GameConfig cfg)
+    {
+        var g = SalvoOn(cfg, "skill_01", 200);
+        var shot = g.Effects.First(e => e.Skill == "skill_01");
+        g.Battle.Cooldowns["skill_01"] = 1;
+        g.Step(.05);
+        return (shot.Damage, 1 - g.Battle.Cooldowns["skill_01"]);
+    }
+    var none = Fire(Cdr("0"));
+    var fast = Fire(Cdr("1"));
+    Assert(Math.Abs(none.Damage - fast.Damage) < 1e-9, $"CDR 不改单次技能伤害：{none.Damage} vs {fast.Damage}");
+    Assert(Math.Abs(none.Ticked - .05) < 1e-9 && Math.Abs(fast.Ticked - .10) < 1e-9,
+        $"但法术冷却流逝按 1+skill_cdr 走：{none.Ticked} vs {fast.Ticked}");
+});
+Check("属性的上下限是硬护栏：增益把合计顶过 max_value 就夹回上限", () => {
+    // `÷(1 + cdr)` 的形式本来就不会把冷却压成 0，上限只是防手滑的护栏；
+    // 夹的是**合计值**（基础 + 各来源），所以增益也吃这条上限——这正是"上下限管最终值"的含义。
+    var capped = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "skill_cdr", "base_value", "1") : source[f]);
+    Assert(Math.Abs(new GameSession(capped, seed: 1).SkillCdr - 1) < 1e-9, "基础值就在上限");
+    var g = SalvoOn(capped, "skill_04", 200);            // 仙风云体术：给整体加速
+    Assert(g.HasteRemaining > 0, "加速增益生效");
+    Assert(Math.Abs(g.SkillCdr - 1) < 1e-9, $"顶过上限就夹回 1，不再继续缩冷却：{g.SkillCdr}");
+});
+Check("玩家承伤走同一条管线，且闪避排在护盾之前", () => {
+    // 打怪与打玩家共用 `DamageFormula`，只是目标不同。顺序是**口径的一部分**：
+    // 无敌 → 复活短路 / 闪避 → 护盾 → 扣血，所以躲开的那一下**不消耗护盾**。
+    var alwaysDodge = GameConfig.Load(f => f == "fightattr.csv" ? Cell(source[f], "dodge", "base_value", "1") : source[f]);
+    var g = SalvoOn(alwaysDodge, "skill_14", 200);       // 剑罡护体：先拿一个厚盾
+    Assert(g.ShieldRemaining > 0 && g.ShieldAmount > 0, "护盾已上身");
+    foreach (var e in g.Battle.Enemies)
+    { e.StunUntil = 0; e.Atk = 1e6; e.AttackTimer = .1; e.X = g.Battle.PlayerX + 60; }
+    double hp = g.Battle.PlayerHp, shield = g.ShieldAmount;
+    Step(g, 2);
+    Assert(g.Battle.PlayerHp == hp && g.ShieldAmount == shield,
+        $"闪避 100% ⇒ 既不掉血也不消耗护盾：血 {hp:0}→{g.Battle.PlayerHp:0}，盾 {shield:0}→{g.ShieldAmount:0}");
+});
+Check("层不匹配是目标合法性失败，不是一次『未命中』——既不结算也不记账", () => {
+    // 层是**目标合法性**（这一发本来就够不着这一层），不是命中率：没有摇骰子，也不该在
+    // 伤害统计里留下一次命中。选敌那一层已经不锁飞行单位了，这里覆盖的是 `Hit` 里那道最后防线
+    // （它要拦住 aoe_all 式的全场扫描）。
+    var g = New(); g.Step(.05);
+    var bat = g.Config.Monsters["bat"];                  // 夜枭：空中
+    Dummies(g, 1, 200, 0);
+    g.Battle.Enemies[0].MonsterId = bat.Id;
+    g.Effects.Clear(); g.ResetDamageStats();
+    g.Effects.Add(new()
+    {
+        Kind = "ground", X = g.Battle.Enemies[0].X, Damage = 1000, Life = 2, MaxLife = 2,
+        AoeRadius = 400, Layer = "ground", Skill = "skill_12",
+    });
+    double before = g.Battle.Enemies[0].Hp;
+    Step(g, 1);
+    Assert(g.Battle.Enemies[0].Hp == before, "飞行单位毫发无伤");
+    Assert(!g.DamageStats.Rows.ContainsKey("skill_12"), "也不留一次『命中』");
+});
+Check("出手快照：灼烧的每秒伤害在施放那一刻定格，继承那一发的暴击", () => {
+    // 出手快照的口径：一次 Attack Event 摇一次暴击，此后由它派生的一切结算共享这份结果。
+    // 灼烧每一跳都重摇的话，同一条火海会一跳暴击一跳不暴击——玩家看到的是同一个技能在随机翻倍。
+    GameConfig Crit(string rate) => GameConfig.Load(f => f == "fightattr.csv"
+        ? Cell(source[f], "crit_rate", "base_value", rate) : source[f]);
+    double DotDps(GameConfig cfg)
+    {
+        var g = SalvoOn(cfg, "skill_02", 200);           // 焚天剑诀：天降 → 火海 → 灼烧
+        g.Battle.Cooldowns.Clear(); g.Effects.Clear();
+        Assert(g.ForceRelease("skill_02"), "焚天剑诀 released");
+        Step(g, 1.2);
+        return g.Battle.Enemies[0].DotDps;
+    }
+    double noCrit = DotDps(Crit("0")), alwaysCrit = DotDps(Crit("1"));
+    Assert(noCrit > 0, "灼烧挂上了");
+    Assert(Math.Abs(alwaysCrit / noCrit - 1.5) < 1e-9,
+        $"灼烧按施放那一刻的暴击结算（×1.5）：{noCrit:0.#} → {alwaysCrit:0.#}");
+});
+Check("召唤物射击继承召唤那一手的快照，不重新摇暴击", () => {
+    // 「召唤物不吃攻击者侧倍率」的准确含义是"不**重新**摇"，而不是"不算暴击"：
+    // 召唤那一手才是 Attack Event，射击是它派生的结算。
+    var summoning = GameConfig.Load(f => f == "SwordSkill.csv"
+        ? Cell(Cell(Cell(Cell(source[f], "skill_06", "kind", "summon"), "skill_06", "trajectory", ""),
+            "skill_06", "projectile_count", "1"), "skill_06", "duration", "7")
+        : source[f]);
+    var g = SalvoOn(summoning, "skill_06", 900);         // 靶子放远：召唤物锚点在身前 110
+    var shell = g.Effects.First(e => e.Kind == "summon");
+    Step(g, 1.2);                                        // 召唤物每 1 秒射一发
+    var bolt = g.Effects.FirstOrDefault(e => e.Kind == "projectile");
+    Assert(bolt is not null, "召唤物射出了弹丸");
+    Assert(bolt!.Critical == shell.Critical && Math.Abs(bolt.BuffPower - shell.BuffPower) < 1e-9,
+        $"弹丸继承召唤那一刻的快照：crit {shell.Critical}/{bolt.Critical}");
+    Assert(Math.Abs(bolt.Damage - shell.Damage) < 1e-9, "而且用的是同一份 DMG1，不重算");
+});
+Check("曲线模型与 fightattr 对账：改了主轴常量而不同步锚点，模型会响亮失败", () => {
+    // 模型不再抄一份 `BaseAttack = 10` 常量，而是直接读 fightattr.csv；
+    // 这条锁的是那条"裸开局 N 刀"的锚点校验还活着（两份口径脱钩时它必须响）。
+    LevelCurve.Compute(f => source[f]);                  // 现行配置应当算得出来
+    bool Threw(Action a) { try { a(); } catch (InvalidOperationException) { return true; } return false; }
+    Assert(Threw(() => LevelCurve.Compute(f => f == "fightattr.csv"
+        ? Cell(source[f], "basic_power", "base_value", "0.5") : source[f])),
+        "把 basic_power 减半会让『裸开局 3 刀』的锚点校验失败");
 });
 Console.WriteLine($"ALL {passed} CHECKS PASSED");
 

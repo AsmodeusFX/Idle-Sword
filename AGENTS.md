@@ -1,6 +1,7 @@
 # Idle-Sword 开发约定
 
 - 工作前阅读 `docs/README.md`、`docs/design/core_rules.md` 和 `docs/planning/phase_01.md`。
+- **动战斗相关代码或数值前，先读 `docs/design/combat.md`**（伤害公式 `DMG1/DMG2/DMG3`、事件顺序、出手快照、频率分离的权威口径；`docs/battle/` 那两份外部规范已作废）。新增或改动战斗属性另读 `docs/design/fightattr.md`。伤害公式只许有一份实现：`Core/Data/DamageFormula.cs`，逐拍模拟与 `LevelCurve` 期望模型共用。
 - Godot 工程在 `idle-sword/`，文档在外层 `docs/`。不要另建平行工程。
 - 使用 C#；纯逻辑在 `Core/` 和 `Features/`，不得依赖 Godot 节点。表现与输入在 `UI/`。
 - 养成操作统一通过 GameSession，界面不得直接扣除货币或发放奖励。

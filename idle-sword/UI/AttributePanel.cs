@@ -16,13 +16,15 @@ namespace IdleSword.UI;
 /// 1. **`fightattr` 全表**（**由 `Config.Rows("fightattr")` 现取**，加属性自动出现，不会漏）。
 ///    每行四列：`基础`（配置里的原值）/ `面板值`（各养成系统加成之后的最终值）/
 ///    `动态值`（**当前真正生效的量**）/ `受什么影响`（一句话说清它为什么是这个数）。
-///    - 「动态值」不是"属性本身被改写成什么"，而是**当前真正生效的量**：`atk` 会乘上共享伤害倍率窗、
-///      普攻间隔会除以攻速、暴击率会加上 buff 那一份。为什么这么定：buff 大多**不改属性**——
+///    - 「动态值」不是"属性本身被改写成什么"，而是**当前真正生效的量**：`atk_base` 会乘上共享伤害倍率窗、
+///      普攻间隔会按攻速折算、暴击率会加上 buff 那一份。为什么这么定：buff 大多**不改属性**——
 ///      它乘的是结算伤害（见 `GameSession.BuffPower` 的说明），而"随时在变"的正是打出去的那个量。
+///    - ⚠️ 这一列**只对上面 `switch` 里列到的属性有话说**。新增一行 fightattr 会自动出现在表里，
+///      但"受什么影响"是空的——**冒烟测不出来**（它比的是行数），要新增属性时记得回来补一个 `case`。
 ///    - `format` 列**本工程至今没有别的消费者**，而且**没有加载期校验**（合法值只写在文档里），
 ///      所以这里对未知取值兜底成普通数字，不假设它一定合法。
 ///
-/// 2. **当前生效的临时状态**：护盾 / 回血 / 吸血 / 攻速 / 暴击加成 / 影分身 / 伤害倍率窗 / 暴击缩冷却。
+/// 2. **当前生效的临时状态**：护盾 / 回血 / 吸血 / 攻速与冷却 / 暴击加成 / 影分身 / 伤害倍率窗 / 暴击缩冷却。
 ///    它们**全都不是 `fightattr` 属性**（是结算乘区与资源池），混进上面那张表会误导，
 ///    但不列出来又会漏掉"真正随时在变"的那部分——所以单开一块，带**剩余秒数**。
 ///    没生效的行显示成暗色 + "—"，**不隐藏**：位置稳定，扫一眼就知道现在有没有。
@@ -186,11 +188,11 @@ public partial class Main
             string note = "";
             switch (id)
             {
-                case "hp":
+                case "max_hp_base":
                     panel = current = s.MaxHp;
                     note = TalentNote(s, "hp", "hp_flat");
                     break;
-                case "atk":
+                case "atk_base":
                     // 攻击属性**不被临时状态改写**；被改的是结算伤害，所以动态列乘的是那个倍率窗。
                     panel = s.Attack;
                     current = panel * s.BuffPower;
@@ -199,19 +201,36 @@ public partial class Main
                     break;
                 case "atk_percent":
                     panel = current = baseValue + s.TalentBonus("atk");
-                    note = TalentNote(s, "atk", "");
+                    note = Join(TalentNote(s, "atk", ""), "进 DMG1（乘在攻击力上）");
                     break;
-                case "hp_percent":
+                case "max_hp_percent":
                     panel = current = baseValue + s.TalentBonus("hp");
                     note = TalentNote(s, "hp", "");
                     break;
-                case "crit":
+                case "crit_rate":
                     current = baseValue + s.CritBonus;
-                    note = s.CritBonus > 0 ? $"临时加成 +{s.CritBonus:P0}" : "";
+                    note = Join(s.CritBonus > 0 ? $"临时加成 +{s.CritBonus:P0}" : "", "判定在 DMG2，倍率在 DMG3");
+                    break;
+                case "crit_damage":
+                    note = "DMG3 第二乘区（暴击时生效）";
+                    break;
+                case "attack_speed":
+                    current = s.AttackSpeed;
+                    note = Join(s.HasteFactor > 1 ? $"增益 +{s.HasteFactor - 1:P0}" : "", "只改普攻频率，不进伤害");
+                    break;
+                case "skill_cdr":
+                    current = s.SkillCdr;
+                    note = Join(s.HasteFactor > 1 ? $"增益 +{s.HasteFactor - 1:P0}" : "", "只改法术频率，不进伤害");
+                    break;
+                case "generic_damage":
+                    note = "DMG3 第一乘区（加算池），暂无投放";
+                    break;
+                case "dodge":
+                    note = "承伤方减伤，不是命中/闪避对抗";
                     break;
                 case "basic_interval":
-                    current = baseValue / s.HasteFactor;
-                    note = s.HasteFactor > 1 ? $"攻速 ×{s.HasteFactor:0.##}" : "";
+                    current = baseValue / (1 + s.AttackSpeed);
+                    note = s.HasteFactor > 1 ? $"攻速 ×{1 + s.AttackSpeed:0.##}" : "";
                     break;
                 case "basic_power":
                     current = baseValue * s.BuffPower;
@@ -246,7 +265,8 @@ public partial class Main
             ("护盾", $"{s.ShieldAmount:0.#}", s.ShieldRemaining),
             ("回血", $"{s.RegenRate:P1}/秒", s.RegenRemaining),
             ("吸血", $"{s.LifestealFactor:P0}", s.LifestealRemaining),
-            ("攻速", $"×{s.HasteFactor:0.##}", s.HasteRemaining),
+            // 仙风云体术那类增益**同时**加速普攻与法术冷却，所以这一行写的不是"攻速"而是它给的整体加速倍数。
+            ("攻速/冷却", $"×{s.HasteFactor:0.##}", s.HasteRemaining),
             ("暴击加成", $"+{s.CritBonus:P0}", s.CritBonusRemaining),
             ("影分身", $"{s.MirrorRatio:P0}", s.MirrorRemaining),
             ("暴击缩冷却", $"{s.CritReduceSeconds:0.##}s", s.CritBonusRemaining),
