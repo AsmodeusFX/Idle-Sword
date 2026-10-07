@@ -99,7 +99,11 @@ public static class LevelCurve
     {
         List<CsvRow> Load(string file) => CsvTable.Parse(file, source(file));
 
-        var skills = Load("SwordSkill.csv");
+        // 技能三层走**与游戏侧同一个解析器**（`SkillTable.Parse`）：模型与模拟读同一份口径，
+        // 这是"漏算一个乘区就是静默低估"唯一的结构性防线。见 `SkillTable.cs` 顶部。
+        var skillTables = SkillTable.Parse(Load("SwordSkill.csv"), Load("SkillEffect.csv"), Load("SkillBuff.csv"),
+            Load("SkillBuffTimeline.csv"), Load("SkillBuffTrigger.csv"));
+        var skills = skillTables.Skills.Values.ToList();
         var monsters = Load("monster.csv").ToDictionary(r => r.Text("id"));
         var levelRows = Load("level.csv");
         var levelByOrder = levelRows.ToDictionary(r => r.Int("order"));
@@ -110,8 +114,6 @@ public static class LevelCurve
         // 战斗属性**从表里读**，不再抄一份常量在代码里（see the anchor comment above）。缺行会当场抛，
         // 这正是想要的：改名/删行之后模型不该"接着按旧值算下去"。
         var attrs = Load("fightattr.csv").ToDictionary(r => r.Text("id"), r => r.Number("base_value"));
-        // 地面持续效果的结算间隔：与 `GameSession.TickEffects` 读的是**同一个配置项**。
-        double groundTick = settings["ground_tick_interval"];
 
         double Lerp(double a, double b, int order) => a + (b - a) * (order - 1) / 99.0;
         double WaveSize(int order) => Lerp(NStart, NEnd, order);
@@ -211,14 +213,15 @@ public static class LevelCurve
         }
 
         double Attack(int order) => attackByOrder[Math.Clamp(order, 1, count)];
-        int RealmOf(CsvRow s) => int.Parse(s.Text("realm_id").Replace("realm_", ""));
-        bool Unlocked(CsvRow s, int order) => order >= realmUnlockOrder[RealmOf(s)];
+        // 境界号取 `realm_id` 的尾号（`realm_0` … `realm_4`），与 `SwordLevel.csv` 的 order 一一对应。
+        int RealmOf(SkillDef s) => int.Parse(s.Realm.Replace("realm_", ""));
+        bool Unlocked(SkillDef s, int order) => order >= realmUnlockOrder[RealmOf(s)];
 
         // 期望出手周期：冷却制 = 冷却；神通 = 冷却 + 期望等待（冷却未就绪时 RollTriggerSkills 直接跳过）。
         // 叠加形态（trigger_chance_step > 0）用生存积求期望普攻次数。
-        double Cycle(CsvRow s)
+        double Cycle(SkillDef s)
         {
-            double cd = s.Number("cooldown"), p = s.Number("trigger_chance"), step = s.Number("trigger_chance_step");
+            double cd = s.Cooldown, p = s.TriggerChance, step = s.TriggerChanceStep;
             if (p <= 0) return cd;
             if (step <= 0) return cd + 1 / p;
             double sum = 0, survive = 1;
@@ -228,39 +231,51 @@ public static class LevelCurve
 
         // 一次施法的命中数——**按参考波次下的期望命中数**（口径见 docs/design/skill_values.md 第三节）。
         // 只记单体口径会让多目标技能白拿 N 倍（实测里天剑一个人占 39%），所以按形态给期望命中数。
-        double Hits(CsvRow s, double wave)
+        double Hits(SkillDef s, double wave)
         {
-            if (s.Flag("aoe_all")) return s.Int("projectile_count") * wave;
-            // 地面持续效果的跳数 = 时长 ÷ 结算间隔。间隔**读 game_settings**，与 GameSession 同源——
-            // 写死 0.6 的旧写法会让"把间隔调成 0.5"变成一次静默的模型脱钩（模型仍按 0.6 算命中数）。
-            if (s.Text("kind") == "ground") return Math.Round(s.Number("duration") / groundTick) * PerTick;
-            if (s.Text("trajectory") == "sky_drop")
+            // ⚠️ **形态与类别必须穷举**：新增一种形态却没进模型，会让它的命中数**静默算成 1**——
+            // 那是系统性低估（`combat.md` §12.2 记过：模型给天剑按单体算，实测一次出手平均贯穿 18.6 只）。
+            // 所以没识别的取值在这里响亮失败，与 `SkillText` 的穷举是同一套纪律。
+            if (s.Kind is not ("projectile" or "target" or "ground" or "buff" or "summon"))
+                throw new InvalidDataException($"技能类别 '{s.Kind}' 没有进期望模型——新增类别时要在这里补一条");
+            if (s.Trajectory is not ("" or "bolt" or "line_shot" or "line_pierce" or "sky_drop" or "arc_homing" or "hover_homing"))
+                throw new InvalidDataException($"飞行形态 '{s.Trajectory}' 没有进期望模型——新增形态时要在这里补一条");
+            var effect = s.Effects.Count > 0 ? s.Effects[0] : null;
+            // 周期结算的间隔**读效果行**（`tick_interval`），与 `GameSession.TickEffects` 同源——
+            // 从前两处各读 `game_settings.ground_tick_interval`，写死一个数就会变成静默的模型脱钩。
+            double tick = effect?.TickInterval ?? 0;
+            if (s.AoeAll) return s.ProjectileCount * wave;
+            if (s.Kind == "ground") return Math.Round(s.Duration / tick) * PerTick;
+            if (s.Trajectory == "sky_drop")
             {
-                if (s.Text("secondary") == "dot")
+                var buff = effect?.Buff;
+                if (buff is { Kind: "dot" })
                     // 天降火海：落地不结算，只有火海在跳 —— 直伤按跳数，灼烧按"着火秒数 × 灼烧系数"折算成等效命中。
-                    return Math.Round(s.Number("secondary_duration") / groundTick) * PerTick
-                        + s.Number("secondary_duration") * PerTick * s.Number("secondary_value");
-                return s.Int("projectile_count") * PerBlade;
+                    return Math.Round(buff.Duration / tick) * PerTick + buff.Duration * PerTick * buff.Value;
+                return s.ProjectileCount * PerBlade;
             }
-            if (s.Text("trajectory") == "line_pierce") return wave;
-            if (s.Text("trajectory") == "arc_homing") return s.Int("projectile_count");
+            if (s.Trajectory == "line_pierce") return wave;
+            if (s.Trajectory == "arc_homing") return s.ProjectileCount;
             return 1;
         }
 
         // 三个增益都是乘区：加速作用于普攻与法术（两条轴各算各的）、暴击作用于全链，影分身只复制法术、不复制普攻。
-        CsvRow? Buff(string sec) => skills.FirstOrDefault(s => s.Text("kind") == "buff" && s.Text("secondary") == sec);
-        double BuffCooldown(CsvRow s, int order) => Math.Max(
-            s.Number("duration") * settings["buff_cooldown_floor_ratio"],
-            s.Number("cooldown") * (1 - settings["buff_cooldown_per_level"] * (Lerp(RankStart, RankEnd, order) - 1)));
-        double BuffUptime(CsvRow? s, int order) =>
-            s is null || !Unlocked(s, order) ? 0 : Math.Min(1, s.Number("secondary_duration") / BuffCooldown(s, order));
-        var haste = Buff("haste"); var critBuff = Buff("crit_reduce"); var mirror = Buff("mirror");
+        // **按自身增益的 kind 找**（不再按 `secondary` 字符串猜）：一个 kind 只属于一个增益类法术，
+        // 找不到就是"这个乘区没有载体"，返回 null 让各调用方回落到中性值。
+        SkillDef? BuffSkill(string kind) => skills.FirstOrDefault(s =>
+            s.Kind == "buff" && s.Buffs.Count > 0 && s.Buffs[0].Kind == kind);
+        double BuffCooldown(SkillDef s, int order) => Math.Max(
+            s.Duration * settings["buff_cooldown_floor_ratio"],
+            s.Cooldown * (1 - settings["buff_cooldown_per_level"] * (Lerp(RankStart, RankEnd, order) - 1)));
+        double BuffUptime(SkillDef? s, int order) =>
+            s is null || !Unlocked(s, order) ? 0 : Math.Min(1, s.Buffs[0].Duration / BuffCooldown(s, order));
+        var haste = BuffSkill("haste"); var critBuff = BuffSkill("crit_reduce"); var mirror = BuffSkill("mirror");
 
         // ── 频率：**普攻与法术是两条独立的轴**（见 docs/design/combat.md）──
         // 普攻吃 `attack_speed`、法术吃 `skill_cdr`，两者都不能进伤害乘区。
         // 加速类增益（仙风云体术）**两样一起给**——它的效果口径就是"普攻与法术一起加速"，
         // 与 `GameSession.CastBuff` 的 `haste` 分支同源；只给一边这条曲线整体就变形了。
-        double SpeedBonus(int order) => haste is null ? 0 : haste.Number("secondary_value") * BuffUptime(haste, order);
+        double SpeedBonus(int order) => haste is null ? 0 : haste.Buffs[0].Value * BuffUptime(haste, order);
         /// <summary>普攻频率乘区 = `1 + attack_speed + 增益那一份`（普攻间隔是 `basic_interval ÷(1+它)`）。</summary>
         double BasicSpeed(int order) => 1 + attrs["attack_speed"] + SpeedBonus(order);
         /// <summary>法术频率乘区 = `1 + skill_cdr + 增益那一份`（冷却是 `cooldown ÷(1+它)`）。</summary>
@@ -277,8 +292,8 @@ public static class LevelCurve
         /// 那是设计决定，见 `docs/design/combat.md` §12.4 第 2 条。
         /// **提取成一处**是为了让它只有一个该被改的地方，而不是散在两个函数里。
         /// </summary>
-        double SkillRateAt(CsvRow s, int order) =>
-            s.Number("power") * (1 + settings["skill_level_bonus"] * (Lerp(RankStart, RankEnd, order) - 1));
+        double SkillRateAt(SkillDef s, int order) =>
+            s.Power * (1 + settings["skill_level_bonus"] * (Lerp(RankStart, RankEnd, order) - 1));
 
         /// <summary>普攻**未加速**的每发 DMG1（`AttackPower × basic_power + 0`）。</summary>
         double BasicDmg1(int order) => DamageFormula.Dmg1(Attack(order), attrs["basic_power"], 0);
@@ -293,13 +308,13 @@ public static class LevelCurve
             double chain = 0;
             foreach (var s in skills)
             {
-                if (s.Text("kind") is "buff" or "summon" || !Unlocked(s, order)) continue;
+                if (s.Kind is "buff" or "summon" || !Unlocked(s, order)) continue;
                 // ⚠️ 这里从前给御剑术单开了一条成长轴（剑支 1 → 5），而**模拟根本不产生多支**
                 // （`projectile_count = 1` 写死、选敌只取一支）⇒ 模型按一条不存在的成长轴多算了最多 5 倍
                 // 命中数。删掉它，模型回到"只算真的会发生的事"。
                 // 参悟把剑支涨上去是**设计里写过、但没接线**的东西（见 `docs/design/combat.md` §12.4 第 3 条），
                 // 接线时要连同这条一起加回来。
-                chain += DamageFormula.Dmg1(Attack(order), SkillRateAt(s, order), s.Number("skill_flat"))
+                chain += DamageFormula.Dmg1(Attack(order), SkillRateAt(s, order), s.SkillFlat)
                     * Hits(s, WaveSize(order)) / Cycle(s);
             }
             return chain;
@@ -318,11 +333,15 @@ public static class LevelCurve
             double product = 1;
             foreach (var s in skills)
             {
-                if (s.Text("kind") != "buff" || s.Number("power") == 1 || !Unlocked(s, order)) continue;
-                // `CastBuff` 写进窗里的是**算上等级与参悟**的威力（`SkillPower`），不是配置的 power。
+                // ⚠️ 判据是 Buff 上的**显式标记** `damage_window`，**不是** `power != 1`。
+                // 从前这里写的是 `power == 1`，而模拟侧（`GameSession.CastBuff`）用的是显式标记——
+                // 两边**已经分叉**，只是当前 15 式都没声明窗、所有增益的威力又都是 1，结论恰好相同。
+                // 那正是本工程反复踩的"错得对称、伪装成正确"（见 combat.md §12）：这一轮收到同一口径。
+                if (s.Kind != "buff" || !s.DamageWindow || !Unlocked(s, order)) continue;
+                // `CastBuff` 写进窗里的是**算上等级与参悟**的威力（`SkillPower`），不是配置的幂。
                 double power = SkillRateAt(s, order);
-                // 窗的寿命取 `duration`（`CastBuff` 用的是它），与 `secondary_duration` 那类效果量是两件事。
-                double uptime = Math.Min(1, s.Number("duration") / BuffCooldown(s, order));
+                // 窗的寿命取增益自己的时长（`CastBuff` 用的是它），与 `secondary_duration` 那类效果量是两件事。
+                double uptime = Math.Min(1, s.Duration / BuffCooldown(s, order));
                 product *= 1 + (power - 1) * uptime;
             }
             return product;
@@ -335,19 +354,24 @@ public static class LevelCurve
         /// </summary>
         double GuardBlade(int order)
         {
-            var shield = skills.FirstOrDefault(s => s.Text("kind") == "buff" && s.Text("secondary") == "shield");
+            var shield = BuffSkill("shield");
             if (shield is null || !Unlocked(shield, order)) return 0;
-            double uptime = Math.Min(1, shield.Number("duration") / BuffCooldown(shield, order));
-            return DamageFormula.Dmg1(Attack(order), settings["guard_blade_power"] / settings["guard_interval"], 0) * uptime;
+            // 威力与间隔**读机制自己的行**：护盾增益的时间轴上挂的那条效果（威力 ÷ 间隔）。
+            // 从前这两项散在 `game_settings` 里（`guard_blade_power` / `guard_interval`），
+            // 是"机制参数不在机制旁边"的典型——改结构时一起下放到 SkillBuffTimeline.csv。
+            var tick = skillTables.Timelines.FirstOrDefault(t => t.BuffId == shield.Buffs[0].Id);
+            if (tick is null) return 0;
+            double uptime = Math.Min(1, shield.Duration / BuffCooldown(shield, order));
+            return DamageFormula.Dmg1(Attack(order), skillTables.Effects[tick.EffectId].Power / tick.Interval, 0) * uptime;
         }
 
         /// <summary>该关的暴击率合计（基础 + 增益那一份）。暴击的**判定**在 DMG2，这里只解它的期望。</summary>
         double CritRate(int order) => attrs["crit_rate"]
-            + (critBuff is null ? 0 : critBuff.Number("secondary_value") * BuffUptime(critBuff, order));
+            + (critBuff is null ? 0 : critBuff.Buffs[0].Value * BuffUptime(critBuff, order));
         /// <summary>暴击的**期望**倍率 `1 + C × (M − 1)`——共用 `DamageFormula` 那一份实现，别在这里重写一遍。</summary>
         double CritMul(int order) => DamageFormula.ExpectedCritMultiplier(CritRate(order), attrs["crit_damage"]);
         /// <summary>影分身的**期望继承总量** = 继承比例 × 覆盖率。它复制的是法术，所以只乘法术链。</summary>
-        double Mirror(int order) => mirror is null ? 0 : mirror.Number("secondary_value") * BuffUptime(mirror, order);
+        double Mirror(int order) => mirror is null ? 0 : mirror.Buffs[0].Value * BuffUptime(mirror, order);
         /// <summary>DMG3 的通用增伤（加算池）。当前 `generic_damage = 0`，但**结构上必须在**。</summary>
         double GenericMul(int order) => DamageFormula.GenericMultiplier(attrs["generic_damage"]);
 

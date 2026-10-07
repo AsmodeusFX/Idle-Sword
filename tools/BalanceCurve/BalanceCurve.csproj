@@ -8,6 +8,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\idle-sword\Core\Data\CsvTable.cs" Link="CsvTable.cs" />
+    <!-- 技能五表（Skill / Effect / Buff / 时间轴 / 触发器）的解析与校验也只许有一份：
+         曲线模型要按它解期望命中数与各个乘区，抄第二份就会与游戏侧静默分叉。 -->
+    <Compile Include="..\..\idle-sword\Core\Data\SkillTable.cs" Link="SkillTable.cs" />
     <!-- 曲线模型与游戏侧**共用同一份源文件**（关卡编辑器要显示"模型建议值"）。
          抄第二份的后果是两边静默分叉：编辑器显示的建议和工具真算出来的不一样，而两边都不报错。 -->
     <Compile Include="..\..\idle-sword\Core\Data\LevelCurve.cs" Link="LevelCurve.cs" />

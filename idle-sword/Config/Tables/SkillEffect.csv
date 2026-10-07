@@ -1,0 +1,15 @@
+id,name,effect_type,condition,condition_value,power,skill_flat,duration,delay,tick_interval,range,trajectory,projectile_count,hover_time,arc_min,arc_max,speed,spread,volley_interval,volley_jitter,spawn_jitter,pierce_chance,aoe_radius,aoe_all,band,knockback,gather,buff_id
+e_01_sword,御剑术飞剑,attack,,0,3.5,0,0.8,0,0,0,line_shot,1,0.12,0,0,1500,0,0,0.03,0,0,0,0,0,0,0,
+e_11_arc,青元剑芒,attack,,0,1.45,0,0.9,0,0,0,arc_homing,3,0,-50,140,1200,0,0.1,0.02,0,0,0,0,0,0,0,
+e_06_rain,万剑齐落,attack,,0,1.19,0,0.5,0,0,0,sky_drop,5,0.25,0,0,0,40,0.06,0.05,40,0,60,0,0,0,0,
+e_17_sweep,天剑横扫,attack,target_hp_below,0.3,5.24,0,3,0,0,0,line_pierce,1,0.25,0,0,900,0,0,0,0,0,0,0,0,0,0,
+e_02_meteor,焚天火海,attack,,0,2.52,0,0.5,0,0.6,0,sky_drop,1,0.25,0,0,0,0,0,0,40,0,120,0,0,0,0,buff_burn
+e_12_cyclone,寒冰龙卷,attack,,0,2.51,0,4,0,0.6,0,,1,0,0,0,0,0,0,0,0,0,240,0,0,0,60,buff_chill
+e_07_thunder,九霄雷击,attack,,0,137,0,0,0.6,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,buff_stun
+e_18_meteor,苍穹剑陨,attack,,0,29.4,0,0.25,0,0,0,sky_drop,3,0.4,0,0,0,0,0.12,0.06,0,0,150,0,1200,0,0,
+e_05_wall,剑气流云壁,attack,,0,17.9,0,4,0,0,0,line_pierce,1,0.5,0,0,700,0,0,0,0,0,0,0,0,160,0,
+e_10_slash,斩鬼神,attack,target_has_state,0.3,279,0,0,0.9,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+e_15_array,诛仙剑阵,attack,,0,41.1,0,0.5,0,0,0,sky_drop,4,1,0,0,0,420,0,0,30,0,700,1,0,0,0,
+e_guard,环绕飞剑,auto_attack,,0,1.2,0,0,0,0,400,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+e_shorten_cd,暴击缩冷却,shorten_cooldown,,0,0,0,0,0,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+e_mirror_cast,影分身复制,mirror_cast,,0,0,0,0,0,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,

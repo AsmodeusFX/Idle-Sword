@@ -1,0 +1,8 @@
+id,name,kind,target,duration,value,extra,damage_window,damage_window_power
+buff_haste,仙风云体,haste,self,6,0.25,0,0,0
+buff_shield,剑罡护体,shield,self,6,2,0,0,0
+buff_burn,灼烧,dot,enemy,5,0.25,0,0,0
+buff_chill,寒冷,chill,enemy,5,0.25,0,0,0
+buff_stun,雷击麻痹,stun,enemy,1.5,0,0,0,0
+buff_crit,醉仙望月,crit_reduce,self,8,0.4,1,0,0
+buff_mirror,影分身,mirror,self,10,0.7,0,0,0

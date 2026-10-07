@@ -21,11 +21,10 @@ public partial class Main
         int shown = Math.Max(1, rank);
         string level = rank > 0 ? $"等级 {rank}/{skill.MaxLevel}" : "尚未习得";
         double rate = SkillRateAt(skill, shown), next = SkillRateAt(skill, shown + 1);
-        // 环绕飞剑的参数（剑罡护体用）住在 `game_settings` 里，不在 SwordSkill 行上，所以显式传进去。
+        // 派生效果（环绕飞剑那一类）由技能自己带进来（`SkillDef.TickEffect`），界面不必再去别处取参数。
         return $"{skill.Name}　{level}\n\n"
             + $"{skill.Description}\n\n"
-            + SkillText.ParamsBlock(skill, _game.Attack, rate, next,
-                _game.Config.Setting("guard_blade_power"), _game.Config.Setting("guard_interval")) + "\n\n"
+            + SkillText.ParamsBlock(skill, _game.Attack, rate, next) + "\n\n"
             + UpgradeTip(skill, shown);
     }
 

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace IdleSword.Core;
 
 /// <summary>版本化存档 DTO。永久进度与本轮战斗分离，保存未收取参悟产物，无离线时间戳。</summary>
@@ -62,21 +64,92 @@ public sealed class EnemyState
     public double MaxHp { get; set; }
     public double Atk { get; set; }
     public double AttackTimer { get; set; }
-    // 次级效果状态：Until 为剩余秒数，0 表示未生效；Factor 为生效期间的乘数。
-    public double SlowUntil { get; set; }
-    public double SlowFactor { get; set; } = 1;
-    // 寒冷：减速之外多一个状态源，仅用于表现层把受击角色染成冰蓝。
-    // 移速仍由 SlowUntil/SlowFactor 决定（chill 会同时置位那两个字段），所以战斗判定只有一条路径。
-    public double ChillUntil { get; set; }
-    public double StunUntil { get; set; }
-    public double DotUntil { get; set; }
-    public double DotDps { get; set; }
-    // 施加这份灼烧的法术 id——伤害统计要按来源归因，而跳伤那条路上没有 `CombatEffect` 可查。
-    // **多个来源的灼烧只留最后一次的施加者**（`ApplySecondary` 是赋值而非叠加，与 DotDps 同一条口径）；
-    // 想要严格区分得给灼烧建模成"可叠加的多个实例"，那是另一件事，这里不额外建模。
-    public string DotSkill { get; set; } = "";
-    public double VulnerableUntil { get; set; }
-    public double VulnerableFactor { get; set; } = 1;
+    /// <summary>
+    /// 挂在身上的状态与增益。**与玩家侧同一套** `BuffInstance`：配置在 `SkillBuff.csv`，
+    /// "这只敌人身上这一份还剩多久"是运行态。本工程**不叠层**——同一个 kind 同时只有一份，
+    /// 再挂一次是**刷新**（覆盖剩余时间与定格值），不是叠加；想严格区分同种状态的多个来源
+    /// 得先有"可叠加的实例列表"，那是另一件事。
+    /// </summary>
+    /// <summary>
+    /// **不入存档**：下面那几个状态属性就是它的持久化投影（`SlowUntil` / `SlowFactor` / `StunUntil` /
+    /// `DotUntil` / `DotDps` / `DotSkill` / `VulnerableUntil` / `VulnerableFactor`）——存取格式与从前
+    /// **一个字节都没变**，读档时由那些属性重新建出实例来。把这一列直接序列化会把配置（`BuffDef`）
+    /// 一起写进存档，而且与那批属性互相覆盖，读回去的状态就不确定了。
+    /// </summary>
+    [JsonIgnore]
+    public List<BuffInstance> Buffs { get; } = [];
+
+    private BuffInstance? Status(string kind) => Buffs.FirstOrDefault(b => b.Def.Kind == kind);
+    /// <summary>某一类状态在役那一份的剩余秒数；0 表示没有（"到期"与"从未有过"因此是同一种表示）。</summary>
+    private double Until(string kind) => Status(kind)?.Remaining ?? 0;
+    private double ValueOf(string kind, double fallback) => Status(kind)?.Value ?? fallback;
+    /// <summary>
+    /// 取在役的那一份，没有就造一份**临时定义**：`cast_root`（施放瞬间的全屏定身）、靶场摆位
+    /// 与自检都会直接置状态，而那条路上没有配置行可依。真实来源（命中挂状态）走
+    /// `GameSession.ApplyBuff`，用的是配置里的那一份。
+    /// </summary>
+    private BuffInstance Ensure(string kind)
+    {
+        if (Status(kind) is { } found) return found;
+        found = new BuffInstance
+        {
+            Def = new BuffDef($"{kind}@runtime", kind, kind, "enemy", 1, 0, 0, false, 0),
+            Source = "",
+        };
+        Buffs.Add(found);
+        return found;
+    }
+    private void SetUntil(string kind, double seconds)
+    {
+        if (seconds <= 0) { if (Status(kind) is { } expired) Buffs.Remove(expired); return; }
+        Ensure(kind).Remaining = seconds;
+    }
+    private void SetValue(string kind, double value) => Ensure(kind).Value = value;
+
+    // 状态对外仍然是**同名属性**：`TickEnemies` / `BattleView` 的状态图标 / 自检都照旧读写，
+    // 换掉的只是存法（五个散字段 → 实例清单）。
+    public double SlowUntil { get => Until("slow"); set => SetUntil("slow", value); }
+    /// <summary>移速乘数（0.75 = 移速 ×0.75）。**`slow` 与 `chill` 共用这一份**——移速只有一条判定路径，
+    /// 两者互相覆盖时以最后一次命中为准（与从前共用一个字段时同义，见 `docs/data/fields.md` 的「寒冷」）。</summary>
+    public double SlowFactor { get => ValueOf("slow", 1); set => SetValue("slow", value); }
+    /// <summary>寒冷：减速之外多一个状态源，仅用于让表现层把受击角色染成冰蓝。</summary>
+    public double ChillUntil { get => Until("chill"); set => SetUntil("chill", value); }
+    public double StunUntil { get => Until("stun"); set => SetUntil("stun", value); }
+    public double DotUntil { get => Until("dot"); set => SetUntil("dot", value); }
+    /// <summary>灼烧每秒伤害。它是**施放那一刻定格的攻击者侧结算值**（出手快照），此后只有目标侧修正会变。</summary>
+    public double DotDps { get => ValueOf("dot", 0); set => SetValue("dot", value); }
+    /// <summary>施加这份灼烧的法术 id——伤害统计要按来源归因，而跳伤那条路上没有 `CombatEffect` 可查。
+    /// 多个来源只留最后一次的施加者（刷新而非叠加，与 `DotDps` 同一条口径）。</summary>
+    public string DotSkill { get => Status("dot")?.Source ?? ""; set => Ensure("dot").Source = value; }
+    public double VulnerableUntil { get => Until("vulnerable"); set => SetUntil("vulnerable", value); }
+    public double VulnerableFactor { get => ValueOf("vulnerable", 1); set => SetValue("vulnerable", value); }
+
+    /// <summary>推进**非灼烧**状态的计时（归零即摘掉）。
+    /// 灼烧单独走 <see cref="TickDot"/>：它的跳伤结算点在敌人行动之后，那个顺序是 DMG2 口径的一部分。</summary>
+    public void TickStatuses(double dt)
+    {
+        // 倒着遍历、就地删（这是**每只怪每一步**都跑的热路径，`.ToArray()` 会在 80 只 × 20 步/秒下
+        // 每秒生出一千多个小数组）。这里没有任何回调，所以原地删是安全的。
+        for (int i = Buffs.Count - 1; i >= 0; i--)
+        {
+            var buff = Buffs[i];
+            if (buff.Def.Kind == "dot") continue;
+            buff.Remaining = Math.Max(0, buff.Remaining - dt);
+            if (buff.Remaining <= 0) Buffs.RemoveAt(i);
+        }
+    }
+    /// <summary>灼烧跳伤：**先扣时间再跳伤**（与从前的写法逐字一致，跳数因此不变）。
+    /// 返回这一帧是否有灼烧在跳。</summary>
+    public bool TickDot(double dt, out double damage, out string source)
+    {
+        damage = 0; source = "";
+        if (Status("dot") is not { } dot) return false;
+        dot.Remaining = Math.Max(0, dot.Remaining - dt);
+        damage = dot.Value * dt;
+        source = dot.Source;
+        if (dot.Remaining <= 0) Buffs.Remove(dot);
+        return true;
+    }
 }
 
 /// <summary>短期效果不跨关卡；重进游戏清理表现效果，但保留已保存的敌人 HP 和技能冷却。</summary>
@@ -111,7 +184,8 @@ public sealed class CombatEffect
     /// <summary>出手那一刻的暴击倍率面板值（`fightattr.crit_damage`）。是否生效由 <see cref="Critical"/> 决定。</summary>
     public double CritDamage { get; init; } = 1;
     /// <summary>
-    /// 出手那一刻生效的**共享伤害倍率窗**（`power != 1` 的增益类法术写入），非生效期为 1。
+    /// 出手那一刻生效的**共享伤害倍率窗**（**显式声明了伤害倍率窗**的增益类法术写入，见
+    /// `SkillBuff.damage_window`），非生效期为 1。
     /// 它是攻击者侧的 **Build** 乘区因子，所以跟着快照走；召唤物射击与灼烧跳伤因此不再重算它。
     /// </summary>
     public double BuffPower { get; init; } = 1;
@@ -144,12 +218,22 @@ public sealed class CombatEffect
     // 初始时长，供界面计算渐隐与施法进度；不参与战斗判定。
     // 追踪弹重新索敌时会连同 Life 一起重置（那一段有自己的航程），所以是可写的。
     public double MaxLife { get; set; }
-    // 次级效果与命中参数：Secondary 为空表示无；Pierce 由 Secondary == "pierce" 推导。
-    public string Secondary { get; init; } = "";
-    public double SecondaryValue { get; init; }
-    public double SecondaryDuration { get; init; }
-    public double ExecuteThreshold { get; init; }
+    // 命中时挂什么状态：**带那份状态的配置本身**（`SkillEffect.buff_id` 在加载期解析好），
+    // 而不是把强度与寿命抄一份上来。从前效果实例上带着 `Secondary/SecondaryValue/SecondaryDuration`
+    // 三个副本，读的时候再回到 `ApplySecondary` 里按字符串分派——同一件事有两个真相源。
+    public BuffDef? Buff { get; init; }
+    // 命中时的**条件型倍率**（DMG3 的 Build 乘区）：`target_hp_below`（斩杀）/ `target_has_state`（利用状态）。
+    // 它是"这一发遇到的条件"，与"技能定义"分属两层，见 `docs/design/combat.md`。
+    public string Condition { get; init; } = "";
+    public double ConditionValue { get; init; }
     public double AoeRadius { get; init; }
+    /// <summary>
+    /// 周期结算的间隔（秒），来自效果行的 `tick_interval`。只有地面力场与天降火海会用到
+    /// （见 `GameSession.TickEffects` 的 ground 分支）。它**跟着效果实例走**而不是去查全局设置——
+    /// 同一份数值在模拟与期望模型里必须是同一个来源，而查全局设置会让"这一片场几秒跳一次"
+    /// 没法按机制各自配（模型那边也要跟着读同一处）。
+    /// </summary>
+    public double TickInterval { get; init; }
     // 命中时把目标沿背离玩家的方向推开的逻辑距离；0 表示不击退。
     public double Knockback { get; init; }
     // 命中时把目标**朝本效果的中心**拉近的逻辑距离；0 表示不吸。
@@ -175,9 +259,10 @@ public sealed class CombatEffect
     // 飞行速度（逻辑单位/秒）。只有法术会写入配置值；普攻、宠物弹与召唤弹一律用默认 1500，
     // 所以新增 speed 配置列不会连带改动它们。
     public double Speed { get; init; } = 1500;
-    // 穿透：既可以是次级效果（退役配置用），也可以由形态自带（line_pierce 平射贯穿），
-    // 后者让"形态决定怎么命中"而不必占用次级效果列。这是**恒穿透**，与下面的概率穿透分开。
-    public bool Pierce => Secondary == "pierce" || Trajectory == "line_pierce";
+    // 恒穿透：由形态自带（`line_pierce` 平射贯穿）。与下面的**概率穿透**分开。
+    // 退役表里那个 `secondary = pierce` 与它走的是同一段代码，所以技能结构重构时合并成了一个形态
+    // （"命中方式"归 Effect 之后，它不再需要占一个次级效果的名额）。
+    public bool Pierce => Trajectory == "line_pierce";
     // 概率穿透（line_shot 专用）：首次命中时的一次判定机会，由配置给概率。
     public double PierceChance { get; init; }
     // 是否已经用掉过那次判定机会。用完置真，此后命中一律销毁——"概率穿透只在第一次击中触发"。

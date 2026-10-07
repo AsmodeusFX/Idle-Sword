@@ -1130,8 +1130,6 @@ public partial class BattleView : Control
                 var label = UiKit.Text; label.A = (float)Math.Clamp((effect.MaxLife - effect.Life) / .7, 0, 1) * .92f;
                 DrawString(font, new(x - 130, y - 138), skill.Name, HorizontalAlignment.Center, 260, 18, label);
             }
-            if (effect.Skill == "skill_15" && effect.ExecuteThreshold > 0)
-                DrawString(font, new(x - 60, y - 96), "斩杀", HorizontalAlignment.Center, 120, 16, UiKit.Gold);
         }
     }
     /// <summary>敌人身上的次级效果图标：减速冰环、眩晕电弧、灼烧火苗、易伤裂痕。</summary>

@@ -1,0 +1,14 @@
+id,name,effect_type,condition,condition_value,power,skill_flat,duration,delay,tick_interval,range,trajectory,projectile_count,hover_time,arc_min,arc_max,speed,spread,volley_interval,volley_jitter,spawn_jitter,pierce_chance,aoe_radius,aoe_all,band,knockback,gather,buff_id
+r_e_pierce,御气飞剑,attack,,0,1,0,2,0,0,0,line_pierce,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+r_e_multi,疾风剑,attack,,0,0.85,0,2,0,0,0,,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+r_e_ember,流火剑,attack,,0,0.95,0,2,0,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,r_b_burn_light
+r_e_star,落星诀,attack,,0,3,0,0,0.6,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+r_e_thunder,天雷引,attack,,0,2.6,0,0,0.6,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,r_b_stun
+r_e_sunder,破云诀,attack,,0,2.4,0,0,0.6,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,r_b_vulnerable
+r_e_shadow,唤剑影,attack,,0,0.75,0,7,0,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+r_e_servant,太虚剑侍,attack,,0,0.8,0,7,0,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+r_e_spirit,诛邪剑灵,attack,target_hp_below,0.2,0.9,0,7,0,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+r_e_lotus,青莲剑阵,attack,,0,1.2,0,4,0,0.6,0,,1,0,0,0,0,0,0,0,0,0,220,0,0,0,0,r_b_slow_lotus
+r_e_frost,霜华剑域,attack,,0,1.2,0,4,0,0.6,0,,1,0,0,0,0,0,0,0,0,0,240,0,0,0,0,r_b_slow_frost
+r_e_conflagration,焚天剑阵,attack,,0,1.4,0,4.5,0,0.6,0,,1,0,0,0,0,0,0,0,0,0,300,0,0,0,0,r_b_burn_array
+r_e_attendant,剑侍,attack,,0,1.5,0,12,0,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,

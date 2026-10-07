@@ -332,8 +332,7 @@ public partial class Main
         int rank = _preview.State.Skills.GetValueOrDefault(skill.Id);
         _previewName.Text = $"{_previewSkill + 1}/{PreviewSkillIds.Count}　{_game.Config.Row("SwordLevel", skill.Realm).Text("name")} · {skill.Name}";
         double rate = SkillRateAt(skill, rank), next = SkillRateAt(skill, rank + 1);
-        _previewParams.Text = SkillText.ParamsBlock(skill, _preview.Attack, rate, next,
-            _game.Config.Setting("guard_blade_power"), _game.Config.Setting("guard_interval"));
+        _previewParams.Text = SkillText.ParamsBlock(skill, _preview.Attack, rate, next);
         _previewAside.Text = $"{skill.Description}\n\n{UpgradeTip(skill, rank)}\n\n"
             + $"场上 {_preview.Battle.Enemies.Count} 个固定靶（不移动 / 不反击 / 打不死）";
         _previewPause.Text = _previewPaused ? "继续" : "暂停";

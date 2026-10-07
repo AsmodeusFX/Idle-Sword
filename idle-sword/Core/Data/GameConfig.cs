@@ -22,18 +22,12 @@ public sealed record WaveUnitDef(string Monster, int Weight);
 // Targeting：空 / nearest = 最近的合法目标（受射程限制）；highest_hp = 全场血量最高者，无视射程。
 // AoeAll：落点/范围结算命中全体合法敌人（aoe_radius 退为表现用）。
 // Hits：能打到哪一层。空 / both = 打地面也打空中；ground 只打地面；air 只打空中。与 monster.layer 配对判定。
-// SkillFlat：DMG1 里的固定伤害项（`攻击力 × power + skill_flat`）。**当前全表为 0 = 尚未投放**：
-// 它是给"固定伤害类"招式留的位置（例如按目标最大气血结算、或教学期不随攻击力成长的那类）。
-// 用之前先读 docs/design/combat.md 的「SkillFlat 的陷阱」——它不随境界缩放，一旦攻击力上了量级就会静默失效。
-// DamageWindow：这一式（**只有 `kind = buff` 才有意义**）是否写一格"共享伤害倍率窗"——生效期内把所有伤害
-// 乘上它的 `power`。**必须显式声明**，不能拿 `power != 1` 当判据：`power` 同时是被技能等级与参悟成长的量，
-// 于是"给一个防御增益点一级参悟"就会**静默把它变成全队伤害乘区**（本工程真踩过：剑罡护体）。
-public sealed record SkillDef(string Id, string Name, string Realm, string Kind, double Cooldown, double Range, double Power, double Duration, int MaxLevel, double Cost, double CostGrowth, string Description, string Secondary, double SecondaryValue, double SecondaryDuration, double AoeRadius, string Trajectory, int ProjectileCount, double HoverTime, double ArcMin, double ArcMax, double Speed, double Spread, double VolleyInterval, double VolleyJitter, double SpawnJitter, double PierceChance, double SecondaryExtra, double TriggerChance, double TriggerChanceStep, double CastRoot, double Knockback, string Targeting, bool AoeAll, string Hits, double Gather, double Band, double SkillFlat, bool DamageWindow);
-
+// `SkillDef` 与技能三层（Effect / Buff / 时间轴 / 触发器）的定义与校验都在 `Core/Data/SkillTable.cs`——
+// 期望模型（`LevelCurve`）必须与游戏侧读同一份解析器，否则两边静默分叉。见那个文件顶部的说明。
 /// <summary>唯一配置入口。读取源 CSV 后校验并建立索引，运行时不修改配置对象。</summary>
 public sealed class GameConfig
 {
-    public static readonly string[] Files = ["monster.csv", "level.csv", "item.csv", "fightattr.csv", "SwordLevel.csv", "SwordSkill.csv", "Talent.csv", "Equip.csv", "SwordUpgrade.csv", "Pet.csv", "PetSkill.csv", "PetEquip.csv", "wave.csv", "wave_unit.csv", "drop.csv", "spawn_point.csv", "TalentLayout.csv", "contemplation.csv", "game_settings.csv"];
+    public static readonly string[] Files = ["monster.csv", "level.csv", "item.csv", "fightattr.csv", "SwordLevel.csv", "SwordSkill.csv", "SkillEffect.csv", "SkillBuff.csv", "SkillBuffTimeline.csv", "SkillBuffTrigger.csv", "Talent.csv", "Equip.csv", "SwordUpgrade.csv", "Pet.csv", "PetSkill.csv", "PetEquip.csv", "wave.csv", "wave_unit.csv", "drop.csv", "spawn_point.csv", "TalentLayout.csv", "contemplation.csv", "game_settings.csv"];
     /// <summary>
     /// **开关类**天赋效果（含解锁类）：语义是"大于 0 即生效"，不是档位。
     ///
@@ -54,6 +48,9 @@ public sealed class GameConfig
     public Dictionary<string, WaveDef> Waves { get; } = [];
     public Dictionary<string, List<WaveUnitDef>> WaveUnits { get; } = [];
     public Dictionary<string, SkillDef> Skills { get; } = [];
+    /// <summary>技能三层（Effect / Buff / 时间轴 / 触发器）的全部定义。`Skills` 是它推导出来的
+    /// 只读视图，**新代码请读这里**——见 `SkillTable.cs` 顶部。</summary>
+    public SkillTable SkillTables { get; private set; } = null!;
     public List<CsvRow> Rows(string name) => Tables[name + ".csv"];
     public CsvRow Row(string name, string id) => Rows(name).Single(r => r.Text("id") == id);
     public double Setting(string id) => Row("game_settings", id).Number("value");
@@ -134,89 +131,14 @@ public sealed class GameConfig
         c.Levels.Sort((a, b) => a.Order.CompareTo(b.Order));
         if (c.Levels.Count == 0 || c.Levels.Select(l => l.Order).Distinct().Count() != c.Levels.Count) throw new InvalidDataException("level.csv: 关卡为空或排序重复");
         foreach (var r in c.Rows("SwordLevel")) { Nonnegative(r, "cost_gold"); r.Flag("default_unlocked"); }
-        foreach (var r in c.Rows("SwordSkill"))
-        {
-            c.Ref(r, "realm_id", "SwordLevel"); Choice(r, "kind", "projectile", "target", "ground", "buff", "summon");
-            foreach (var key in new[] { "cooldown", "range", "power", "duration", "max_level", "cost", "cost_growth" }) Positive(r, key);
-            var secondary = r.Text("secondary");
-            if (secondary != "") Choice(r, "secondary", "pierce", "multi", "slow", "stun", "dot", "vulnerable", "chill", "lifesteal", "execute", "shield", "regen", "haste", "crit_reduce", "mirror", "bonus_vs_state");
-            Nonnegative(r, "secondary_value", "secondary_duration", "aoe_radius", "secondary_extra", "pierce_chance", "trigger_chance", "trigger_chance_step");
-            // 固定伤害项（DMG1 的 `+ skill_flat`）：负数会把这一式变成"给对方回血"，拦下来。
-            Nonnegative(r, "skill_flat");
-            // 伤害倍率窗的显式标记：只有增益类法术写得进窗（`CastBuff` 只在 buff 那条路上跑），
-            // 所以在别的类别上配它是个**什么都不做的死配置**，当场拦下。
-            bool damageWindow = r.Flag("damage_window");
-            if (damageWindow && r.Text("kind") != "buff")
-                throw r.Error("damage_window", "只有 kind = buff 的招式能声明伤害倍率窗");
-            // 声明了窗却 `power = 1` ⇒ 窗里乘的是 1，等于没声明。这种"配了但不生效"的写法必须拦——
-            // 它和「参悟把防御增益变成乘区」是同一类静默失效的两端。
-            if (damageWindow && r.Number("power") == 1)
-                throw r.Error("power", "声明了伤害倍率窗（damage_window = 1）时 power 不能是 1，否则这一格窗什么都不做");
-            // 利用状态（bonus_vs_state）：对**携带任意状态**的目标增伤。它不写任何状态字段，只在 Hit 里当乘区用，
-            // 所以值必须为正——配成 0 就是一行什么都不做的死配置。
-            if (secondary == "bonus_vs_state" && r.Number("secondary_value") <= 0)
-                throw r.Error("secondary_value", "利用状态（bonus_vs_state）需要正的增伤比例");
-            // 影分身（mirror，剑二十三）：它是**自身的短时状态**，不分敌、也不生成单位，所以必须是 buff。
-            // secondary_value 是继承比例的小数（0.7 = 七成），误填成 70 不会报任何错、只会静默变成 7000%，故在这里拦下。
-            if (secondary == "mirror")
-            {
-                if (r.Text("kind") != "buff") throw r.Error("kind", "影分身（mirror）必须是 buff 类：它是自身的状态，不是单位");
-                if (r.Number("secondary_duration") <= 0) throw r.Error("secondary_duration", "影分身需要正的持续时间");
-                if (r.Number("secondary_value") > 1) throw r.Error("secondary_value", "影分身的继承比例是 0～1 的小数（0.7 = 七成）");
-            }
-            if (r.Number("pierce_chance") > 1) throw r.Error("pierce_chance", "是概率，取值 0～1");
-            // 触发概率：0 表示沿用「冷却到点自动释放」，> 0 表示改为普攻出手时按概率触发（神通）。
-            // 两者互斥，不需要额外的触发方式列：0 就是自动释放那一档。
-            if (r.Number("trigger_chance") > 1) throw r.Error("trigger_chance", "是概率，取值 0～1");
-            // gather 是 knockback（推开）的反向孪生：每次命中把目标**朝效果中心**拉近，0 = 不吸。
-            // 两者都是正交旋钮，不占 secondary，所以"吸 + 减速"能同时挂在同一个技能上（寒冰龙卷）。
-            Nonnegative(r, "cast_root", "knockback", "gather", "band");
-            // 黑洞铺开宽度：只有 sky_drop 会读它——别的形态配了就是一行什么都不做的死配置，拦下来别让它静默失效。
-            if (r.Number("band") > 0 && r.Text("trajectory") != "sky_drop")
-                throw r.Error("band", "只有 sky_drop 形态支持黑洞铺开宽度（band）");
-            // 铺得太宽就夹不住画面了（表现层要把这条带子夹在 1920 逻辑画布里，可用的横向余量只有 1460）。
-            if (r.Number("band") > 1400)
-                throw r.Error("band", "黑洞铺开宽度超过 1400 就夹不进画面（角色锚点在 330、逻辑宽 1920）");
-            if (r.Text("targeting") != "") Choice(r, "targeting", "nearest", "highest_hp", "lowest_hp", "farthest");
-            r.Flag("aoe_all");
-            // 技能定位：空 = both（打地面也打空中）。飞行单位只吃 air / both。
-            if (r.Text("hits") != "") Choice(r, "hits", "ground", "air", "both");
-            // 飞行形态：空 = bolt（原直线弹道，行为不变）。形态与数量都落在配置里，
-            // 同类弹道的新技能只改 CSV，不必新增 kind（音效映射与五 kind 自检因此不受影响）。
-            var trajectory = r.Text("trajectory");
-            var count = r.Int("projectile_count");
-            if (trajectory != "")
-            {
-                Choice(r, "trajectory", "bolt", "hover_homing", "sky_drop", "arc_homing", "line_pierce", "line_shot");
-                if (r.Text("kind") != "projectile") throw r.Error("trajectory", "仅 projectile 可使用自定义飞行形态");
-            }
-            if (count < 1) throw r.Error("projectile_count", "至少 1");
-            if (r.Text("kind") != "projectile" && count != 1) throw r.Error("projectile_count", "非 projectile 只能为 1");
-            Nonnegative(r, "hover_time", "arc_max", "spread", "volley_interval", "volley_jitter", "spawn_jitter");
-            // 弧度允许为负：负值表示从下方掠过（上方空间多、下方少）。下限 -60，再大就会插进地面与下方 UI。
-            if (r.Number("arc_min") < -60) throw r.Error("arc_min", "下弧不得超过 -60（会越出地面与下方界面）");
-            if (r.Number("arc_min") > r.Number("arc_max")) throw r.Error("arc_min", "不能大于 arc_max");
-            if (trajectory == "arc_homing")
-            {
-                // 弧顶 = 发射高度约 300 − 弧高；弧高超过 300 会顶出战斗区上沿（表现层另有夹取兜底，此处提前拦住手改配置）。
-                if (r.Number("arc_max") <= 0) throw r.Error("arc_max", "弧线形态需要正的弧度上界");
-                if (r.Number("arc_max") > 300) throw r.Error("arc_max", "弧度超过 300 会越出战斗画面");
-            }
-            // 落点判定半径复用 aoe_radius：ground 在 0 时回退 220，天降形态绝不允许回退（否则会变成来路不明的大范围）。
-            if (trajectory == "sky_drop" && r.Number("aoe_radius") <= 0) throw r.Error("aoe_radius", "天降形态需要正的落点判定半径");
-            // 天降 + 灼烧 = 落地后残留一片火海（见 GameSession.TickEffects）：火海寿命取 secondary_duration，
-            // 为 0 会变成落地即灭、DOT 也无从刷新，故此处提前拦住手改配置。
-            if (trajectory == "sky_drop" && secondary == "dot" && r.Number("secondary_duration") <= 0)
-                throw r.Error("secondary_duration", "天降火海需要正的残留时长");
-            // 天降火海优先于全体结算（见 TickEffects），两者同配会让 aoe_all 静默失效——正是这套校验要拦的东西。
-            if (trajectory == "sky_drop" && secondary == "dot" && r.Flag("aoe_all"))
-                throw r.Error("aoe_all", "天降火海与全体命中互斥");
-            // 弹速：0 表示沿用默认 1500（宠物弹与召唤弹也走那个默认值，不受本列影响）。
-            var speed = r.Number("speed");
-            if (speed != 0 && speed < 100) throw r.Error("speed", "0 表示默认 1500；显式配置时必须 ≥ 100");
-            c.Skills.Add(r.Text("id"), new(r.Text("id"), r.Text("name"), r.Text("realm_id"), r.Text("kind"), r.Number("cooldown"), r.Number("range"), r.Number("power"), r.Number("duration"), r.Int("max_level"), r.Number("cost"), r.Number("cost_growth"), r.Text("description"), secondary, r.Number("secondary_value"), r.Number("secondary_duration"), r.Number("aoe_radius"), trajectory, count, r.Number("hover_time"), r.Number("arc_min"), r.Number("arc_max"), speed, r.Number("spread"), r.Number("volley_interval"), r.Number("volley_jitter"), r.Number("spawn_jitter"), r.Number("pierce_chance"), r.Number("secondary_extra"), r.Number("trigger_chance"), r.Number("trigger_chance_step"),
-                r.Number("cast_root"), r.Number("knockback"), r.Text("targeting"), r.Flag("aoe_all"), r.Text("hits"), r.Number("gather"), r.Number("band"), r.Number("skill_flat"), damageWindow));
-        }
+        // ── 技能三层：Skill / Effect / Buff ──────────────────────────────────
+        // 解析、校验与"派生视图"全部收在 `SkillTable.Parse`：期望模型（`LevelCurve`）与游戏侧
+        // 必须读同一份实现，否则两边静默分叉（本工程栽过一次，见 `SkillTable.cs` 顶部）。
+        // 这里只剩一件本文件才知道的事：境界引用，那要查 `SwordLevel.csv`。
+        foreach (var r in c.Rows("SwordSkill")) c.Ref(r, "realm_id", "SwordLevel");
+        c.SkillTables = SkillTable.Parse(c.Rows("SwordSkill"), c.Rows("SkillEffect"), c.Rows("SkillBuff"),
+            c.Rows("SkillBuffTimeline"), c.Rows("SkillBuffTrigger"));
+        foreach (var (id, skill) in c.SkillTables.Skills) c.Skills.Add(id, skill);
         // ── 修行星图：内容表 + 布局表 ──────────────────────────────────────
         // 刻意拆成两张表：**几何与拓扑由工具整份拥有**（下一轮的节点编辑器），数值与文案人工维护。
         // 位置是画出来的、数值不是，让工具去猜数值只会帮倒忙。两表 id 必须一一对应，缺哪一边都拒绝加载。

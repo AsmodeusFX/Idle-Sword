@@ -87,12 +87,105 @@ Check("skill roster: three per realm, rearranged as designed", () => {
     var byRealm = config.Skills.Values.GroupBy(s => s.Realm).ToDictionary(g => g.Key, g => g.Select(s => s.Id).OrderBy(x => x).ToArray());
     Assert(byRealm.Count == 5 && byRealm.Values.All(v => v.Length == 3), "every realm holds exactly three skills");
     Assert(byRealm["realm_0"].SequenceEqual(new[] { "skill_01", "skill_04", "skill_11" }), "realm_0 = 御剑术 / 仙风云体术 / 青元剑芒");
-    Assert(byRealm["realm_1"].SequenceEqual(new[] { "skill_06", "skill_14", "skill_17" }), "realm_1 = 万剑 / 万剑归心 / 天剑");
+    Assert(byRealm["realm_1"].SequenceEqual(new[] { "skill_06", "skill_14", "skill_17" }), "realm_1 = 万剑决 / 剑罡护体 / 天剑");
     Assert(byRealm["realm_2"].SequenceEqual(new[] { "skill_02", "skill_07", "skill_12" }), "realm_2 = 焚天剑诀 / 御雷真诀 / 寒冰龙卷");
     Assert(byRealm["realm_3"].SequenceEqual(new[] { "skill_05", "skill_09", "skill_18" }), "realm_3 = 剑气流云壁 / 醉仙望月步 / 苍穹剑陨");
     Assert(byRealm["realm_4"].SequenceEqual(new[] { "skill_10", "skill_15", "skill_19" }), "realm_4 = 斩鬼神 / 诛仙剑阵 / 剑二十三");
     // 被挤出的四个已进归档表，不再参与加载（剑侍的跟随召唤机制留给以后的剑灵系统）。
     Assert(new[] { "skill_03", "skill_08", "skill_13", "skill_16" }.All(id => !config.Skills.ContainsKey(id)), "retired skills are gone");
+});
+// 拆分**前**的 SwordSkill.csv（39 列，逐字抄自 84ba00a 那次提交）。只被上面那条搬家护栏读。
+const string OldSwordSkillCsv = """
+    id,name,realm_id,kind,cooldown,range,power,skill_flat,damage_window,duration,max_level,cost,cost_growth,description,secondary,secondary_value,secondary_duration,aoe_radius,trajectory,projectile_count,hover_time,arc_min,arc_max,speed,spread,volley_interval,volley_jitter,spawn_jitter,pierce_chance,secondary_extra,trigger_chance,trigger_chance_step,cast_root,knockback,targeting,aoe_all,hits,gather,band
+    skill_01,御剑术,realm_0,projectile,1.2,950,3.5,0,0,0.8,50,30,1.22,剑诀御剑，飞剑自肩侧横射而出，击中即散。,,0,0,0,line_shot,1,0.12,0,0,1500,0,0,0.03,0,0,0,0,0,0,0,,0,,0,0
+    skill_04,仙风云体术,realm_0,buff,15,950,1,0,0,6,50,69,1.22,仙风云体，周身真气鼓荡，出手快如疾风。,haste,0.25,6,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,0,,0,0
+    skill_11,青元剑芒,realm_0,projectile,1.3,950,1.45,0,0,0.9,50,150,1.22,青元剑气激射，划出弧光索敌，专收残血之敌。,,0,0,0,arc_homing,3,0,-50,140,1200,0,0.1,0.02,0,0,0,0,0,0,0,lowest_hp,0,,0,0
+    skill_06,万剑决,realm_1,projectile,1.5,950,1.19,0,0,0.5,50,200,1.22,万剑齐落，自敌人上空垂直坠下，落点之内尽数命中。,,0,0,60,sky_drop,5,0.25,0,0,0,40,0.06,0.05,40,0,0,0,0,0,0,,0,,0,0
+    skill_17,天剑,realm_1,projectile,18,950,5.24,0,0,3,50,300,1.22,天剑横空斩出，剑光贯穿一整排敌人；伤重者一剑断魂。,execute,0.3,0,0,line_pierce,1,0.25,0,0,900,0,0,0,0,0,0,0,0,0,0,,0,,0,0
+    skill_14,剑罡护体,realm_1,buff,12,950,1,0,0,6,50,450,1.22,剑罡护体，周身剑气凝成一道护罩；罡气未散时，环绕的飞剑会自行射向来犯之敌。,shield,2,6,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,0,,0,0
+    skill_02,焚天剑诀,realm_2,projectile,6,950,2.52,0,0,0.5,50,600,1.22,召唤一柄火焰剑自敌人上空坠落，落地后化作一片火海，灼烧其中的敌人。,dot,0.25,5,120,sky_drop,1,0.25,0,0,0,0,0,0,40,0,0,0,0,0,0,farthest,0,ground,0,0
+    skill_12,寒冰龙卷,realm_2,ground,10,950,2.51,0,0,4,50,800,1.22,挥出寒冰剑气凝成龙卷，卷住阵中之敌并拖向风眼，沿途之敌受创且被寒气所侵。,chill,0.25,5,240,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,0,,60,0
+    skill_07,御雷真诀,realm_2,target,5,950,137,0,0,0.6,50,1000,1.22,引动九霄雷霆，对单一敌人降下高额雷击，雷威麻其身。,stun,0,1.5,0,,1,0,0,0,0,0,0,0,0,0,0,0.3,0,0,0,,0,,0,0
+    skill_18,苍穹剑陨,realm_3,projectile,14,950,29.4,0,0,0.25,50,1300,1.22,苍穹之上剑落如陨，黑洞中剑锋齐出，各锁一敌、坠落处成片爆开。,,0,0,150,sky_drop,3,0.4,0,0,0,0,0.12,0.06,0,0,0,0,0,0,0,,0,,0,1200
+    skill_09,醉仙望月步,realm_3,buff,15,950,1,0,0,8,50,1600,1.22,醉仙望月，身法飘忽，暴击之后剑势更快一分。,crit_reduce,0.4,8,0,,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,,0,,0,0
+    skill_05,剑气流云壁,realm_3,projectile,30,950,17.9,0,0,4,50,2000,1.22,定身全场一瞬，随后一道贴地剑气破空推出，沿途之敌尽数受创并被震退。,,0,0,0,line_pierce,1,0.5,0,0,700,0,0,0,0,0,0,0,0,1,160,,0,ground,0,0
+    skill_19,剑二十三,realm_4,buff,40,950,1,0,0,10,50,3000,1.22,天光骤暗，身后凝出一道影分身，随本体同放剑诀，只是力道稍逊。,mirror,0.7,10,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,0,,0,0
+    skill_10,斩鬼神,realm_4,target,15,950,279,0,0,0.9,50,2400,1.22,身前虚影浮现，一把巨剑于场上气血最厚者身后斩落，剑光过处只取一人。,bonus_vs_state,0.3,0,0,,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,highest_hp,0,,0,0
+    skill_15,诛仙剑阵,realm_4,projectile,60,950,41.1,0,0,0.5,50,3600,1.22,天光尽墨，四柄诛仙剑齐现于九霄并同时坠落，结成虚空剑阵，阵中万物俱灭。,,0,0,700,sky_drop,4,1,0,0,0,420,0,0,30,0,0,0,0,0,0,,1,,0,0
+    """;
+// ⚠️ **搬家护栏**：15 个技能从一张 39 列的宽表拆成了 Skill / Effect / Buff 三层，
+// 而 `config.Skills` 现在是由 `SkillTable` 从五张表**推导出来的只读视图**。
+// 这条断言把拆分前的 15 行原样抄在这里、逐字段与视图对账——任何一处搬错列、落错层、
+// 丢掉一个旋钮，都会在这里当场失败，而不是等到战斗里表现成一个说不清的数值偏差
+// （本工程栽过"错得对称、伪装成正确"的模型，见 docs/design/combat.md §12）。
+// **这是棘轮不是快照**：有意改数值时才更新这 15 行，并要在提交信息里说清为什么改。
+Check("技能结构拆分：派生视图逐字段等于拆分前的值", () => {
+    foreach (var old in CsvTable.Parse("SwordSkill(拆分前)", OldSwordSkillCsv))
+    {
+        string id = old.Text("id");
+        var s = config.Skills[id];
+        if (s.Name != old.Text("name")) throw new Exception($"{id}.name: {old.Text("name")} → {s.Name}");
+        if (s.Realm != old.Text("realm_id")) throw new Exception($"{id}.realm_id: {old.Text("realm_id")} → {s.Realm}");
+        if (s.Kind != old.Text("kind")) throw new Exception($"{id}.kind: {old.Text("kind")} → {s.Kind}");
+        if (s.Description != old.Text("description")) throw new Exception($"{id}.description");
+        if (s.Secondary != old.Text("secondary")) throw new Exception($"{id}.secondary: '{old.Text("secondary")}' → '{s.Secondary}'");
+        if (s.Trajectory != old.Text("trajectory")) throw new Exception($"{id}.trajectory: '{old.Text("trajectory")}' → '{s.Trajectory}'");
+        if (s.Targeting != old.Text("targeting")) throw new Exception($"{id}.targeting: '{old.Text("targeting")}' → '{s.Targeting}'");
+        if (s.Hits != old.Text("hits")) throw new Exception($"{id}.hits: '{old.Text("hits")}' → '{s.Hits}'");
+        foreach ((string field, double was, double now) in new (string, double, double)[]
+        {
+            ("cooldown", old.Number("cooldown"), s.Cooldown),
+            ("range", old.Number("range"), s.Range),
+            ("power", old.Number("power"), s.Power),
+            ("duration", old.Number("duration"), s.Duration),
+            ("max_level", old.Int("max_level"), s.MaxLevel),
+            ("cost", old.Number("cost"), s.Cost),
+            ("cost_growth", old.Number("cost_growth"), s.CostGrowth),
+            ("secondary_value", old.Number("secondary_value"), s.SecondaryValue),
+            ("secondary_duration", old.Number("secondary_duration"), s.SecondaryDuration),
+            ("secondary_extra", old.Number("secondary_extra"), s.SecondaryExtra),
+            ("aoe_radius", old.Number("aoe_radius"), s.AoeRadius),
+            ("projectile_count", old.Int("projectile_count"), s.ProjectileCount),
+            ("hover_time", old.Number("hover_time"), s.HoverTime),
+            ("arc_min", old.Number("arc_min"), s.ArcMin),
+            ("arc_max", old.Number("arc_max"), s.ArcMax),
+            ("speed", old.Number("speed"), s.Speed),
+            ("spread", old.Number("spread"), s.Spread),
+            ("volley_interval", old.Number("volley_interval"), s.VolleyInterval),
+            ("volley_jitter", old.Number("volley_jitter"), s.VolleyJitter),
+            ("spawn_jitter", old.Number("spawn_jitter"), s.SpawnJitter),
+            ("pierce_chance", old.Number("pierce_chance"), s.PierceChance),
+            ("trigger_chance", old.Number("trigger_chance"), s.TriggerChance),
+            ("trigger_chance_step", old.Number("trigger_chance_step"), s.TriggerChanceStep),
+            ("cast_root", old.Number("cast_root"), s.CastRoot),
+            ("knockback", old.Number("knockback"), s.Knockback),
+            ("gather", old.Number("gather"), s.Gather),
+            ("band", old.Number("band"), s.Band),
+            ("skill_flat", old.Number("skill_flat"), s.SkillFlat),
+        })
+            if (Math.Abs(was - now) > 1e-9) throw new Exception($"{id}.{field}: 拆分前 {was} / 现在 {now}");
+        if (s.AoeAll != old.Flag("aoe_all")) throw new Exception($"{id}.aoe_all: {old.Flag("aoe_all")} → {s.AoeAll}");
+        if (s.DamageWindow != old.Flag("damage_window")) throw new Exception($"{id}.damage_window: {old.Flag("damage_window")} → {s.DamageWindow}");
+    }
+});
+Check("退役配置库：那些机制仍然能被新结构表达", () => {
+    // `*_Retired.csv` 那一套不参与加载，是"以后可复用的机制库"。它**必须能被同一套解析器读通**，
+    // 否则等真要复活某个机制时才会发现表结构已经表达不了它——那正是"归档表与字段字典悄悄分叉"。
+    string Kept(string name) => File.ReadAllText(Path.Combine(root, name));
+    var kept = SkillTable.Parse(
+        CsvTable.Parse("SwordSkill_Retired.csv", Kept("SwordSkill_Retired.csv")),
+        CsvTable.Parse("SkillEffect_Retired.csv", Kept("SkillEffect_Retired.csv")),
+        CsvTable.Parse("SkillBuff_Retired.csv", Kept("SkillBuff_Retired.csv")),
+        new List<CsvRow>(), new List<CsvRow>());
+    Assert(kept.Skills.Count == 15, $"退役库 15 式：{kept.Skills.Count}");
+    // 三处"折进现成旋钮"的映射要钉住——它们正是那两个次级效果可以下线的原因：
+    Assert(kept.Skills["skill_01"].Trajectory == "line_pierce", "退役的 `pierce` 折进 `line_pierce` 形态");
+    Assert(kept.Skills["skill_06"].ProjectileCount == 3, "退役的 `multi 3` 折进多弹编排");
+    Assert(kept.Skills["skill_04"] is { DamageWindow: true } ward && Math.Abs(ward.Power - 1.3) < 1e-9,
+        "护心剑罡的伤害倍率窗成了 Buff 上的显式一列（倍率 1.3）");
+    Assert(kept.Skills["skill_12"].Secondary == "vulnerable", "易伤仍是可表达的增益类型");
+    Assert(kept.Skills["skill_15"].Secondary == "execute", "诛邪剑灵仍带斩杀");
+    Assert(kept.Skills.Values.Count(s => s.Kind == "summon") == 4, "四个退役召唤仍在库里");
 });
 Check("new and moved skills carry the intended effects", () => {
     // 天剑：改为**横向贯穿**（line_pierce），带斩杀；不锁层（空 hits = both）。
@@ -197,6 +290,23 @@ Check("影分身：本体每放一式，分身同步再放一份、伤害打折�
     g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     Assert(g.ForceRelease("skill_01"), "御剑术 released again");
     Assert(g.Effects.All(e => !e.Mirrored), "窗口过期后不再产生镜像效果");
+});
+Check("headers.json 与实际表头一致（它是手工维护的，最容易悄悄过期）", () => {
+    // `Config/Schemas/headers.json` **没有任何代码读它**（Godot 的 CSV 翻译导入另有一套），
+    // 所以它是一份能静静谎报 schema 的文档：改了列却忘了同步，没有任何东西会告诉你。
+    // 这一条把它钉在真实表头上；顺带保证加载清单里的每一张表都在里面出现过。
+    var schemas = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string[]>>(
+        File.ReadAllText(Path.Combine(root, "..", "Schemas", "headers.json")))!;
+    foreach (string file in GameConfig.Files)
+        if (!schemas.ContainsKey(file)) throw new Exception($"headers.json 里没有 {file} 的表头");
+    foreach (var (file, expected) in schemas)
+    {
+        string path = Path.Combine(root, file);
+        if (!File.Exists(path)) throw new Exception($"headers.json 记着一张不存在的表：{file}");
+        var actual = File.ReadAllText(path).TrimStart('﻿').Split('\n')[0].TrimEnd('\r').Split(',');
+        if (!actual.SequenceEqual(expected))
+            throw new Exception($"{file} 的表头与 headers.json 不符\n  记的：{string.Join(",", expected)}\n  实际：{string.Join(",", actual)}");
+    }
 });
 Check("CSV BOM, quotes, multiline and write roundtrip", () => {
     var csv = CsvTable.Write(new[] { new[] { "id", "name" }, new[] { "1", "a,\"b\"\n中文" } });
@@ -321,37 +431,60 @@ Check("reject malformed talent star map", () => {
     Reject(() => GameConfig.Load(f => f == "TalentLayout.csv" ? source[f] + "t_orphan,9,0,t_root,,\n" : source[f]));
     Reject(() => GameConfig.Load(f => f == "Talent.csv" ? source[f] + "t_orphan,孤儿,1,gold,1,atk,0.1,attack\n" : source[f]));
 });
-Check("reject unknown secondary effect", () => Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "secondary", "bogus") : source[f])));
+Check("reject unknown condition / buff kind", () => {
+    // 条件与增益类型各自是一份**白名单**：取值不在表里就该在加载期被拒，
+    // 而不是安静地落进兜底分支（那正是本工程反复栽的那类坑）。
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "condition", "bogus") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SkillBuff.csv" ? Cell(source[f], "buff_chill", "kind", "freeze") : source[f]));
+    // 作用对象由 kind 决定，配反了是"看起来能配、实际挂错人"，不会报错只会在战斗里表现出来。
+    Reject(() => GameConfig.Load(f => f == "SkillBuff.csv" ? Cell(source[f], "buff_chill", "target", "self") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SkillBuffTimeline.csv" ? Cell(source[f], "tl_shield_tick", "trigger", "at_time") : source[f]));
+    // 事件触发的白名单**只放已经有消费点的事件**：on_hit 那一批要等事件总线上线。
+    Reject(() => GameConfig.Load(f => f == "SkillBuffTrigger.csv" ? Cell(source[f], "tr_crit_shorten", "trigger_type", "on_hit") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SkillBuffTrigger.csv" ? Cell(source[f], "tr_crit_shorten", "buff_id", "missing") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_guard", "buff_id", "missing") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_01", "effect_ids", "missing") : source[f]));
+    // 纯派发标记（暴击缩冷却 / 影分身复制）不该带参数：每个效果都要么被 handler 读、要么被拦下。
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_shorten_cd", "power", "2") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_mirror_cast", "trajectory", "bolt") : source[f]));
+});
 Check("reject invalid flight shape, count and arc band", () => {
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "trajectory", "warp") : source[f]));
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_07", "trajectory", "arc_homing") : source[f]));   // 非 projectile 不得带形态
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "projectile_count", "0") : source[f]));     // 弹数至少 1
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_07", "projectile_count", "3") : source[f]));     // 非 projectile 只能单发
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "arc_min", "200") : source[f]));            // 弧区间倒挂
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "arc_max", "400") : source[f]));            // 弧高越出战斗画面
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_06", "aoe_radius", "0") : source[f]));           // 天降必须有落点半径
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "arc_min", "-80") : source[f]));           // 下弧越出地面
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "speed", "10") : source[f]));              // 慢到几乎不动的弹道
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_01", "pierce_chance", "1.5") : source[f]));     // 概率不能超过 1
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_04", "secondary_extra", "-1") : source[f]));    // 附加参数不能为负
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "trajectory", "warp") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_07_thunder", "trajectory", "arc_homing") : source[f]));   // 非 projectile 不得带形态
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "projectile_count", "0") : source[f]));     // 弹数至少 1
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_07_thunder", "projectile_count", "3") : source[f]));     // 非 projectile 只能单发
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "arc_min", "200") : source[f]));            // 弧区间倒挂
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "arc_max", "400") : source[f]));            // 弧高越出战斗画面
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_06_rain", "aoe_radius", "0") : source[f]));           // 天降必须有落点半径
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "arc_min", "-80") : source[f]));           // 下弧越出地面
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "speed", "10") : source[f]));              // 慢到几乎不动的弹道
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_01_sword", "pierce_chance", "1.5") : source[f]));     // 概率不能超过 1
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_01_sword", "power", "0") : source[f]));              // 一次出手的威力为 0 = 放了等于没放
+    Reject(() => GameConfig.Load(f => f == "SkillBuff.csv" ? Cell(source[f], "buff_haste", "extra", "-1") : source[f]));    // 附加参数不能为负
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_02", "trigger_chance", "1.5") : source[f]));     // 触发概率不能超过 1
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_02", "trigger_chance", "-0.1") : source[f]));    // 触发概率不能为负
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_12", "trigger_chance_step", "-0.1") : source[f])); // 概率累加的步进不能为负
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_10", "secondary_value", "0") : source[f]));      // 利用状态必须有正的增伤比例（0 就是一行死配置）
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_02", "secondary_duration", "0") : source[f]));   // 天降火海需要正的残留时长
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_12", "secondary", "freeze") : source[f]));       // chill 之外的名字仍然被拒
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_10_slash", "condition_value", "0") : source[f]));      // 利用状态必须有正的增伤比例（0 就是一行死配置）
+    Reject(() => GameConfig.Load(f => f == "SkillBuff.csv" ? Cell(source[f], "buff_burn", "duration", "0") : source[f]));   // 天降火海需要正的残留时长
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_05", "targeting", "weakest") : source[f]));      // 未知的选敌方式
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_05", "cast_root", "-1") : source[f]));           // 定身时长不能为负
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_05", "knockback", "-1") : source[f]));           // 击退距离不能为负
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_12", "gather", "-1") : source[f]));              // 吸附距离不能为负
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_17", "band", "400") : source[f]));              // 黑洞铺开宽度只对 sky_drop 有意义
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_18", "band", "1600") : source[f]));             // 铺太宽就夹不进画面（上限 1400）
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_02", "aoe_all", "1") : source[f]));              // 天降火海与全体命中互斥
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_05_wall", "knockback", "-1") : source[f]));           // 击退距离不能为负
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_12_cyclone", "gather", "-1") : source[f]));              // 吸附距离不能为负
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_17_sweep", "band", "400") : source[f]));              // 黑洞铺开宽度只对 sky_drop 有意义
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_18_meteor", "band", "1600") : source[f]));             // 铺太宽就夹不进画面（上限 1400）
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_02_meteor", "aoe_all", "1") : source[f]));              // 天降火海与全体命中互斥
+    // 地面力场没有结算间隔就永远不会结算——"放了没反应"且不报错的一类。
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_12_cyclone", "tick_interval", "0") : source[f]));
+    Reject(() => GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_12_cyclone", "duration", "0") : source[f]));         // 主效果必须有自己的时间
     Reject(() => GameConfig.Load(f => f == "monster.csv" ? Cell(source[f], "slime", "layer", "sky") : source[f]));                    // 未知层级
     Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "hits", "sky") : source[f]));              // 未知技能定位
-    // 伤害倍率窗是**显式声明**的，而且只在 buff 上成立：
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "damage_window", "1") : source[f]));      // 非 buff 声明窗 = 什么都不做的死配置
-    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_14", "damage_window", "1") : source[f]));      // 声明了窗却 power = 1 = 那格窗乘 1，等于没声明
+    // 伤害倍率窗是**显式声明**的，而且只在增益类法术身上成立：
+    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "buff_ids", "buff_haste") : source[f]));      // 非 buff 配自身增益 = 什么都不做的死配置
+    Reject(() => GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_04", "effect_ids", "e_01_sword") : source[f]));   // 增益类不带瞬时效果
+    Reject(() => GameConfig.Load(f => f == "SkillBuff.csv" ? Cell(source[f], "buff_haste", "damage_window_power", "1.5") : source[f]));  // 没声明窗时倍率必须留 0
+    Reject(() => GameConfig.Load(f => f == "SkillBuff.csv" ? Cell(source[f], "buff_shield", "damage_window", "1") : source[f]));       // 声明了窗却没有正的倍率
+    Reject(() => GameConfig.Load(f => f == "SkillBuff.csv" // 声明了窗却倍率为 1 = 那格窗乘 1，等于没声明
+        ? Cell(Cell(source[f], "buff_shield", "damage_window", "1"), "buff_shield", "damage_window_power", "1") : source[f]));
     Reject(() => GameConfig.Load(f => f == "wave_unit.csv" ? Cell(source[f], "wave_3_hawk", "wave_id", "wave_99") : source[f]));      // 悬空波次引用
     Reject(() => GameConfig.Load(f => f == "wave_unit.csv" ? Cell(source[f], "wave_1_slime", "monster_id", "missing") : source[f]));   // 悬空的怪物引用
     // 某一波没有任何 wave_unit：那一波会刷不出怪、关卡直接空转，必须在加载期被拒。
@@ -1172,7 +1305,7 @@ Check("secondary: vulnerable amplifies, stun freezes, slow halves, dot ticks", (
     Assert(e.Hp < hp - 40 && e.Hp > hp - 60, "dot");
 });
 // hover_homing 已无在役技能使用（御剑术改走 line_pierce），但形态留在词汇表里供日后配，故用改过的配置保住覆盖。
-var hoverForm = GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_01", "trajectory", "hover_homing") : source[f]);
+var hoverForm = GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_01_sword", "trajectory", "hover_homing") : source[f]);
 Check("hover_homing hovers above the caster, then homes and hits", () => {
     var g = SalvoOn(hoverForm, "skill_01");
     var blade = g.Effects.First(e => e.Trajectory == "hover_homing");   // 御剑术默认 1 支（剑支数是成长轴，不是初值）
@@ -1243,7 +1376,7 @@ Check("line_shot strikes the first enemy on its path and is destroyed", () => {
 });
 Check("line_shot pierces only on the first hit, and only when the chance allows", () => {
     // 概率穿透：一次判定机会。pierce_chance = 1 时第一击必穿，穿完标记下来，第二击照样销毁。
-    var piercing = GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_01", "pierce_chance", "1") : source[f]);
+    var piercing = GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_01_sword", "pierce_chance", "1") : source[f]);
     var g = SalvoOn(piercing, "skill_01", 200);
     var victim = g.Battle.Enemies[0];
     // 只留一个身前靶子：SalvoOn 把三个靶子放在同一个 X，剑穿过后会立刻撞上第二个同位置的靶子就销毁。
@@ -1263,7 +1396,7 @@ Check("line_shot pierces only on the first hit, and only when the chance allows"
 Check("line_pierce sweeps every enemy along the line", () => {
     // 恒穿透形态现在由剑气流云壁与寒冰龙卷使用；这里仍用改过的配置单独跑一遍，作为形态自身的对照
     // （两个在役技能各自还叠了击退与寒冷，混在一起就看不清形态本身的行为）。
-    var sweeping = GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(Cell(source[f], "skill_01", "trajectory", "line_pierce"), "skill_01", "projectile_count", "1") : source[f]);
+    var sweeping = GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_01_sword", "trajectory", "line_pierce") : source[f]);
     var g = SalvoOn(sweeping, "skill_01", 200);
     var line = g.Battle.Enemies.ToArray();
     for (int i = 0; i < line.Length; i++) { line[i].X = g.Battle.PlayerX + 200 + i * 100; line[i].Hp = line[i].MaxHp = 1e8; }
@@ -1389,7 +1522,10 @@ Check("焚天剑诀 lands a flame sword that leaves a lingering fire sea refresh
     Assert(g.ForceRelease("skill_02"), "the flame sword is released");
     g.Battle.Cooldowns["skill_02"] = 999;           // 用例跑得比冷却长，钉住它，免得中途又自动放一片火海
     var blade = g.Effects.Single(e => e.Trajectory == "sky_drop");
-    Assert(blade.Secondary == "dot" && Math.Abs(blade.AoeRadius - 120) < 1e-9, "the sword carries dot and the landing radius");
+    // 天降的那条效果**引用**了灼烧那份 Buff（而不是抄一份 kind/强度/寿命到实例上）——落地的"留火海"
+    // 正是靠这个引用触发的，见 TickEffects 的 sky_drop 分支。
+    Assert(blade.Buff is { Id: "buff_burn", Kind: "dot" } && Math.Abs(blade.AoeRadius - 120) < 1e-9,
+        "the sword carries the burn buff and the landing radius");
     Assert(!g.Effects.Any(e => e.Kind == "ground"), "the sea does not exist before the sword lands");
     Step(g, .8);                                    // 停留 0.25s + 下落 0.5s
     var sea = g.Effects.SingleOrDefault(e => e.Kind == "ground" && e.Skill == "skill_02");
@@ -1733,18 +1869,19 @@ Check("伤害倍率窗只认显式标记：没声明它的增益不会占用窗�
     // 判据是 `SwordSkill.damage_window` 这个显式标记，**不是** `power != 1`（见 GameSession.CastBuff 的说明）。
     // 用改过的配置造一个"声明了窗"的增益：靶子在身前 90，增益才有合法目标可放。
     // 持续秒数从配置读，别写死——增益时长是会调的。
-    var declared = GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(Cell(source[f], "skill_04", "power", "1.6"), "skill_04", "damage_window", "1") : source[f]);
+    var declared = GameConfig.Load(f => f == "SkillBuff.csv"
+        ? Cell(Cell(source[f], "buff_haste", "damage_window", "1"), "buff_haste", "damage_window_power", "1.6") : source[f]);
     double window = declared.Skills["skill_04"].Duration;
     var g = SalvoOn(declared, "skill_04");
     Assert(Math.Abs(g.BuffPower - 1.6) < 1e-9, $"声明了窗的增益写进了它自己的那一格：{g.BuffPower}");
     Assert(Math.Abs(g.BuffRemaining - window) < 1e-9, $"而且只占它自己的那一格、寿命是 {window}s：{g.BuffRemaining}");
-    // 没声明窗的增益（剑罡护体现在的样子）即便 `power` 变了也不写窗 —— 这正是"参悟/等级不再能偷偷打开它"。
-    var quiet = GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(source[f], "skill_14", "power", "1.5") : source[f]);
-    var q = SalvoOn(quiet, "skill_14");
+    // 没声明窗的增益（剑罡护体现在的样子）不写窗。
+    // ⚠️ 从前这一半靠"给它配一个 1.5 的 `power`"来造场景，而**那个场景现在在结构上不可能了**：
+    // 窗的倍率是 Buff 上独立的一列（`damage_window_power`），没声明窗时它必须留 0（加载期拦），
+    // 而"给防御增益点一级参悟"再也不会碰到那一列——这正是剑罡护体那次静默乘区事故的根治。
+    var q = SalvoOn(config, "skill_14");
     Assert(q.BuffPower == 1 && q.BuffRemaining == 0,
-        $"没声明窗的增益不写窗（power 是 1.5 也不行）：×{q.BuffPower} / {q.BuffRemaining}s");
+        $"没声明窗的增益不写窗：×{q.BuffPower} / {q.BuffRemaining}s");
 });
 Check("crit_reduce raises the crit rate while it lasts", () => {
     // 固定 seed 下确定性可比：叠伤害合计，加成期间应明显高于基础暴击率。
@@ -1939,7 +2076,7 @@ Check("焚天剑诀的火海铺在最靠前的那只身上（而不是脚边）"
 });
 Check("追踪弹的目标中途死亡时，飞完这一程再落点重索敌（而不是白飞）", () => {
     // 单发版本：让"改追了谁"没有别的解释（三支的话，另外两支追了谁说不清）。
-    var single = GameConfig.Load(f => f == "SwordSkill.csv" ? Cell(source[f], "skill_11", "projectile_count", "1") : source[f]);
+    var single = GameConfig.Load(f => f == "SkillEffect.csv" ? Cell(source[f], "e_11_arc", "projectile_count", "1") : source[f]);
     var g = SalvoOn(single, "skill_11", 400);
     var foes = g.Battle.Enemies.OrderBy(e => e.Id).ToArray();
     foes[0].X = g.Battle.PlayerX + 400;      // 会被锁定的那只
@@ -2013,11 +2150,15 @@ Check("summon and pet bolts keep the default speed", () => {
     // speed 列只作用于法术：召唤弹与宠物弹走同一条默认路径，不能连带被配置改动（回归护栏）。
     Assert(new CombatEffect().Speed == 1500, "default bullet speed is unchanged");
     // 已无在役召唤（剑侍归档，跟随召唤机制留给以后的剑灵系统），用内存改配置把一个法术改回召唤，保住这条护栏。
-    // 改 kind 必须同时清掉天降形态并把弹数压回 1，否则过不了校验。
-    var summoning = GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(Cell(Cell(Cell(source[f], "skill_06", "kind", "summon"), "skill_06", "trajectory", ""),
-            "skill_06", "projectile_count", "1"), "skill_06", "duration", "7")
-        : source[f]);
+    // 改 kind 必须同时清掉天降形态并把弹数压回 1、时长给足，否则过不了校验——`kind` 留在 Skill 表，
+    // 而形态与时长在 Effect 表，所以这条夹具要同时改两张表。
+    var summoning = GameConfig.Load(f => f switch
+    {
+        "SwordSkill.csv" => Cell(source[f], "skill_06", "kind", "summon"),
+        "SkillEffect.csv" => Cell(Cell(Cell(source[f], "e_06_rain", "trajectory", ""),
+            "e_06_rain", "projectile_count", "1"), "e_06_rain", "duration", "7"),
+        _ => source[f],
+    });
     // 靶子必须放远：召唤物的锚点在玩家身前 110，贴脸摆的话弹丸生成时就已经贴着目标、同一步内命中并被移除。
     var g = SalvoOn(summoning, "skill_06", 900);    // 召唤物每秒发射一枚弹丸（索敌距离 1100）
     Step(g, 2.2);
@@ -2025,37 +2166,27 @@ Check("summon and pet bolts keep the default speed", () => {
     Assert(bolt is not null && bolt.Speed == 1500,
         "summon-fired bolt keeps the default speed: " + string.Join(" | ", g.Effects.Select(e => $"{e.Kind}/life={e.Life:0.##}/spd={e.Speed}")));
 });
-Check("retired pierce / multi paths stay covered by config-driven effects", () => {
-    // 两个次级效果已无在役技能使用（原御气飞剑/疾风剑），退休配置日后可能复活，故用改过的配置保住覆盖。
-    // skill_02 现在是带天降形态的固定冷却技能，要把它改成"普通的多发弹"必须一并清掉形态与触发概率，
-    // 否则它既不会自动释放、也不会从玩家身前飞出，这条用例就变成空断言。
-    var multi = GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(Cell(Cell(Cell(Cell(source[f],
-            "skill_02", "kind", "projectile"),
-            "skill_02", "secondary", "multi"),
-            "skill_02", "secondary_value", "3"),
-            "skill_02", "trajectory", ""),
-            "skill_02", "trigger_chance", "0")
-        : source[f]);
+Check("multi 折进多弹编排：多发各锁一敌", () => {
+    // `secondary = multi`（退休的疾风剑）已并进"多弹 + 自有选敌"这一套现成旋钮——退休行现在就是一个
+    // 3 弹的弹道法术，所以这里用改过的配置造一个三发弹，保住那条路径的覆盖。
+    // （另一个退休的 `pierce` 也折进了 `line_pierce` 形态，由 `line_pierce sweeps every enemy` 那条覆盖，
+    //   不再需要一个"次级效果叫 pierce"的用例——那个机制已经不存在了。）
+    var multi = GameConfig.Load(f => f == "SkillEffect.csv"
+        ? Cell(Cell(source[f], "e_02_meteor", "trajectory", ""), "e_02_meteor", "projectile_count", "3") : source[f]);
     var g = new GameSession(multi, seed: 42) { BasicAttackEnabled = false }; g.Step(.05);
     // 三只放远并定身：贴脸摆的话多发弹丸会在同一个 Step 内命中并被移除，数不到编排。
     Dummies(g, 3, 160, 0);
     g.State.Skills.Clear(); g.State.Skills["skill_02"] = 1; g.Battle.Cooldowns.Clear(); g.Effects.Clear();
     g.Step(.05);
-    Assert(g.Effects.Count(e => e.Kind == "projectile" && !e.Hostile) >= 3, "multi still fires several projectiles");
-    // pierce：直接构造一枚穿透弹，验证沿途每个敌人各挨一次；清空技能以保证伤害只可能来自它。
-    var p = New(); p.Step(.05); p.State.Skills.Clear(); p.Battle.Cooldowns.Clear();
-    Dummies(p, 3, 200, 100);
-    var targets = p.Battle.Enemies.ToArray();
-    p.Effects.Clear();
-    p.Effects.Add(new() { Kind = "projectile", X = p.Battle.PlayerX, Damage = 1000, Life = 4, MaxLife = 4, Secondary = "pierce" });
-    Step(p, .5);
-    Assert(targets.All(e => e.Hp < e.MaxHp), "pierce hits every enemy along the line");
+    Assert(g.Effects.Count(e => e.Kind == "projectile" && !e.Hostile) >= 3, "多发一起出手，各锁一敌");
 });
 Check("retired shield / regen effects stay covered", () => {
     // 护心剑罡 / 归元护法 已搬进退役配置，shield / regen 当前无技能使用，故用改过的配置保住消费路径的覆盖。
-    GameConfig BuffCfg(string secondary, string value) => GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(Cell(Cell(Cell(source[f], "skill_04", "secondary", secondary), "skill_04", "secondary_value", value), "skill_04", "secondary_duration", "5"), "skill_04", "power", "1.3")
+    // 从前这里还顺手把 `power` 抬到 1.3——那是为了证明"威力非 1 的防御增益不会变成乘区"，
+    // 而**那件事现在由结构保证**：窗的倍率是 Buff 上独立的一列，没声明窗时必须为 0（加载期拦），
+    // 所以这个场景根本配不出来，也就不必再用一个夹具去试它。
+    GameConfig BuffCfg(string kind, string value) => GameConfig.Load(f => f == "SkillBuff.csv"
+        ? Cell(Cell(Cell(source[f], "buff_haste", "kind", kind), "buff_haste", "value", value), "buff_haste", "duration", "5")
         : source[f]);
     // 护盾：厚盾扛住近战攻击，掉的是盾不是血。靶子解除定身并调成低伤害，便于观察。
     var guarded = SalvoOn(BuffCfg("shield", "100"), "skill_04");
@@ -2283,10 +2414,13 @@ Check("出手快照：灼烧的每秒伤害在施放那一刻定格，继承那�
 Check("召唤物射击继承召唤那一手的快照，不重新摇暴击", () => {
     // 「召唤物不吃攻击者侧倍率」的准确含义是"不**重新**摇"，而不是"不算暴击"：
     // 召唤那一手才是 Attack Event，射击是它派生的结算。
-    var summoning = GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(Cell(Cell(Cell(source[f], "skill_06", "kind", "summon"), "skill_06", "trajectory", ""),
-            "skill_06", "projectile_count", "1"), "skill_06", "duration", "7")
-        : source[f]);
+    var summoning = GameConfig.Load(f => f switch
+    {
+        "SwordSkill.csv" => Cell(source[f], "skill_06", "kind", "summon"),
+        "SkillEffect.csv" => Cell(Cell(Cell(source[f], "e_06_rain", "trajectory", ""),
+            "e_06_rain", "projectile_count", "1"), "e_06_rain", "duration", "7"),
+        _ => source[f],
+    });
     var g = SalvoOn(summoning, "skill_06", 900);         // 靶子放远：召唤物锚点在身前 110
     var shell = g.Effects.First(e => e.Kind == "summon");
     Step(g, 1.2);                                        // 召唤物每 1 秒射一发
@@ -2310,16 +2444,16 @@ Check("共享伤害倍率窗：按来源相乘、威力含等级成长，且期�
     // 两个窗同时在役时先放的会被静默取消）。
     // ⚠️ 在役的 15 个法术**没有一个声明窗**（唯一的历史载体是退役表里的「护心剑罡」），
     // 所以这一组用改过的配置合成窗——这与其它死配置（pierce / multi / summon…）是同一套办法。
-    GameConfig Windows(string power) => GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(Cell(source[f], "skill_14", "power", power), "skill_14", "damage_window", "1") : source[f]);
+    GameConfig Windows(string power) => GameConfig.Load(f => f == "SkillBuff.csv"
+        ? Cell(Cell(source[f], "buff_shield", "damage_window", "1"), "buff_shield", "damage_window_power", power) : source[f]);
     var one = Windows("1.5");
     var g = SalvoOn(one, "skill_14", 200);
     Assert(Math.Abs(g.BuffPower - 1.5) < 1e-9, $"单窗 = 配置 power：{g.BuffPower}");
-    // 第二个窗：让仙风云体术也声明一格。它的 `power` 本来是 1，而加载期拦着"声明了窗却 power = 1"
-    // （那格窗什么都不做），所以这里连 power 一起抬到 1.25 ⇒ 两格相乘应当是 1.5 × 1.25 = 1.875。
-    var two = GameConfig.Load(f => f == "SwordSkill.csv"
-        ? Cell(Cell(Cell(Cell(source[f], "skill_14", "power", "1.5"), "skill_14", "damage_window", "1"),
-               "skill_04", "damage_window", "1"), "skill_04", "power", "1.25") : source[f]);
+    // 第二个窗：让仙风云体术也声明一格。加载期拦着"声明了窗却倍率 = 1"（那格窗什么都不做），
+    // 所以这里连倍率一起抬到 1.25 ⇒ 两格相乘应当是 1.5 × 1.25 = 1.875。
+    var two = GameConfig.Load(f => f == "SkillBuff.csv"
+        ? Cell(Cell(Cell(Cell(source[f], "buff_shield", "damage_window", "1"), "buff_shield", "damage_window_power", "1.5"),
+               "buff_haste", "damage_window", "1"), "buff_haste", "damage_window_power", "1.25") : source[f]);
     var both = SalvoOn(two, "skill_14", 200);
     Assert(Math.Abs(both.BuffPower - 1.5) < 1e-9, $"先只有一格：{both.BuffPower}");
     both.State.Skills["skill_04"] = 1; both.Battle.Cooldowns.Clear();
@@ -2335,8 +2469,8 @@ Check("共享伤害倍率窗：按来源相乘、威力含等级成长，且期�
     Assert(Math.Abs(ranked.BuffPower - expected) < 1e-9, $"窗的威力含等级成长：{ranked.BuffPower} vs {expected}");
     // 模型侧：**声明了窗**与**没声明**相比，后期 normal_hp 必须明显不同。
     // 模型要是没算这一项，下面这条会纹丝不动——这正是本轮修掉的那个"模型漏乘区"。
-    var withWindow = LevelCurve.Compute(f => f == "SwordSkill.csv"
-        ? Cell(Cell(source[f], "skill_14", "power", "1.5"), "skill_14", "damage_window", "1") : source[f]);
+    var withWindow = LevelCurve.Compute(f => f == "SkillBuff.csv"
+        ? Cell(Cell(source[f], "buff_shield", "damage_window", "1"), "buff_shield", "damage_window_power", "1.5") : source[f]);
     var noWindow = LevelCurve.Compute(f => source[f]);
     Assert(noWindow.NormalHp[99] < withWindow.NormalHp[99] * .8,
         $"模型必须算上共享倍率窗：关 100 的 normal_hp 有窗 {withWindow.NormalHp[99]:0.#} / 无窗 {noWindow.NormalHp[99]:0.#}");
@@ -2349,7 +2483,7 @@ Check("共享伤害倍率窗是**全队**乘区：它放大的是别人的伤害
     // ⚠️ 在役的 15 个法术没有一个声明窗（历史载体是退役表里的「护心剑罡」），所以这里合成一个。
     var cfg = GameConfig.Load(f => f switch
     {
-        "SwordSkill.csv" => Cell(Cell(source[f], "skill_14", "power", "1.5"), "skill_14", "damage_window", "1"),
+        "SkillBuff.csv" => Cell(Cell(source[f], "buff_shield", "damage_window", "1"), "buff_shield", "damage_window_power", "1.5"),
         "fightattr.csv" => Cell(source[f], "crit_rate", "base_value", "0"),
         _ => source[f],
     });
@@ -2383,9 +2517,17 @@ Check("技能文案：每个在役法术都能翻成人话，且不泄漏配置�
     foreach (var s in config.Skills.Values)
     {
         string text = SkillText.Summary(s) + "\n" + SkillText.ParamsBlock(s, 100, s.Power, s.Power * 1.15);
-        foreach (string raw in new[] { s.Secondary, s.Trajectory, s.Targeting, s.Hits, s.Kind, s.Realm })
-            if (raw.Length > 0 && text.Contains(raw, StringComparison.Ordinal))
-                throw new Exception($"{s.Id} 的文案里出现了配置原始值 '{raw}'：\n{text}");
+        // ⚠️ 枚举源要**跟着表结构一起扩**：技能拆成三层之后，取值分散到了 `effect_type` / `buff.kind` /
+        // `trigger_type` 这些新列上。仍然只看旧的六项的话，一个漏进文案的新取值（例如 `auto_attack`）
+        // 会从这条检查底下走过去——漏检一列就是开一个新盲区。
+        var raw = new List<string> { s.Secondary, s.Trajectory, s.Targeting, s.Hits, s.Kind, s.Realm };
+        foreach (var fx in s.Effects) raw.AddRange([fx.Type, fx.Condition]);
+        foreach (var buff in s.Buffs) raw.Add(buff.Kind);
+        foreach (var buff in s.Buffs)
+            foreach (var trigger in config.SkillTables.TriggersOf(buff.Id)) raw.Add(trigger.TriggerType);
+        foreach (string value in raw)
+            if (value.Length > 0 && text.Contains(value, StringComparison.Ordinal))
+                throw new Exception($"{s.Id} 的文案里出现了配置原始值 '{value}'：\n{text}");
     }
     // 层是玩家会反复踩到的硬规则（飞行单位免疫只打地面的技能），必须在参数里说清。
     var sea = config.Skills["skill_02"];
@@ -2398,9 +2540,13 @@ Check("技能文案：每个在役法术都能翻成人话，且不泄漏配置�
     var shield = config.Skills["skill_14"];
     Assert(!SkillText.ParamsBlock(shield, 100, shield.Power, shield.Power).Contains("单发伤害"),
         "增益类不该印单发伤害（它的 power 不产生伤害）");
-    // 穷举兜底是**响亮失败**，不是把原始 id 印出去。
+    // 穷举兜底是**响亮失败**，不是把原始 id 印出去。文案现在按 Effect/Buff 的取值分派，
+    // 所以三个词表各要有一支兜底——漏一个取值都会在这里当场炸，而不是静默不印。
     bool Threw(Action a) { try { a(); } catch (InvalidDataException) { return true; } return false; }
-    Assert(Threw(() => SkillText.Secondary(config.Skills["skill_01"] with { Secondary = "bogus" })), "未知次级效果要响亮失败");
+    var probe = config.SkillTables.Buffs["buff_chill"];
+    Assert(Threw(() => SkillText.BuffText(probe with { Kind = "bogus" })), "未知增益类型要响亮失败");
+    Assert(Threw(() => SkillText.ConditionText("bogus", 1)), "未知条件要响亮失败");
+    Assert(Threw(() => SkillText.Shape("projectile", config.SkillTables.Effects["e_01_sword"] with { Trajectory = "warp" })), "未知形态要响亮失败");
     Assert(Threw(() => SkillText.Kind(config.Skills["skill_01"] with { Kind = "bogus" })), "未知类别要响亮失败");
 });
 Check("沙盒模式：世界静止，只有战斗结算在跑", () => {
@@ -2442,6 +2588,26 @@ Check("SaveStore.Clone：深拷贝一份状态（改副本不影响原状态）"
         "改副本的字典不该影响原状态（说明不是浅拷贝）");
     Assert(original.Battle.PlayerX == 123 && original.Battle.Enemies.Count == 1 && original.Battle.Enemies[0].Hp == 5,
         "嵌套的 Battle 也必须是新的实例");
+});
+Check("敌人的状态不入存档：`Buffs` 是那几个状态属性的运行态投影", () => {
+    // 状态改成了 `BuffInstance` 清单之后，最容易踩的一脚是**把这份清单一并序列化**：
+    // 它会连 `BuffDef`（配置）整份写进存档，还会与那几个状态属性互相覆盖——读回去的状态就不确定了。
+    // 所以 `EnemyState.Buffs` 带 `[JsonIgnore]`，落盘的仍然是 `StunUntil` / `DotDps` / `DotSkill` 那批属性，
+    // **存档格式与拆分前逐字一致**（老存档照样读得回来），读档时由那些属性的 setter 重建实例。
+    var g = New(); g.Step(.05);
+    var e = g.Battle.Enemies[0];
+    e.StunUntil = 5; e.SlowUntil = 3; e.SlowFactor = .5; e.DotUntil = 2; e.DotDps = 40; e.DotSkill = "skill_02";
+    string json = System.Text.Json.JsonSerializer.Serialize(g.State);
+    Assert(json.Contains("StunUntil") && json.Contains("skill_02"), "状态属性照旧落盘");
+    // `"Buffs":` 带引号是刻意的——`PetBuffs` 是另一回事，别把它误伤成"状态清单进了存档"。
+    Assert(!json.Contains("\"Buffs\":"), "实例清单不许进存档（它会连配置一起写进去）");
+    var copy = SaveStore.Clone(g.State).Battle.Enemies[0];
+    Assert(copy.StunUntil == 5 && copy.SlowUntil == 3 && copy.SlowFactor == .5
+        && copy.DotUntil == 2 && copy.DotDps == 40 && copy.DotSkill == "skill_02", "往返之后状态照旧");
+    // 而且重建出来的实例是**能继续跑**的（不是只把数字填回去）：直接推进那一份状态，计时与跳伤都得在。
+    double before = copy.DotUntil;
+    Assert(copy.TickDot(.05, out double dot, out string from) && from == "skill_02" && dot > 0 && copy.DotUntil < before,
+        "重建出来的灼烧会继续倒计时并跳伤");
 });
 Console.WriteLine($"ALL {passed} CHECKS PASSED");
 

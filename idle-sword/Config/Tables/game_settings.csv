@@ -12,8 +12,4 @@ wave_accel,0.00032
 skill_level_bonus,0.15
 buff_cooldown_per_level,0.02
 buff_cooldown_floor_ratio,1.25
-guard_blade_power,1.2
-guard_interval,0.8
-guard_range,400
 talent_grid_rows,5
-ground_tick_interval,0.6

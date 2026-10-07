@@ -1,0 +1,2 @@
+id,buff_id,trigger,effect_id,interval
+tl_shield_tick,buff_shield,on_tick,e_guard,0.8
