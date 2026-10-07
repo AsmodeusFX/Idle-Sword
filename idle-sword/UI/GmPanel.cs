@@ -208,6 +208,9 @@ public partial class Main
         // 按钮文字跟着状态走，进这里也能退出来。
         _previewToggle = UiKit.Button(_gmRoot, "", left + 155, row, 145, GmRowHeight, () => { CloseGm(); TogglePreview(); });
         _previewToggle.TooltipText = "用独立会话逐个播放 15 个法术，不写存档；预览期间主线挂机暂停。再点一次退出。";
+        // 第三个入口：看角色属性——fightattr 全表（基础 / 养成后 / 当前生效）+ 当前临时状态。
+        UiKit.Button(_gmRoot, "属性面板", left + 310, row, 145, GmRowHeight, () => { CloseGm(); OpenAttributes(); })
+            .TooltipText = "看每个属性的基础值、养成后的最终值，以及叠上临时状态后当前真正生效的量。";
         NextRow();
         EndArea(tools);
 

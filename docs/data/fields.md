@@ -75,6 +75,15 @@
 
 其中 `basic_interval`（普攻间隔，秒）、`basic_power`（普攻倍率，乘最终攻击）、`basic_range`（普攻射程）、`melee_range`（近战普攻射程）、`melee_stop_range`（近战停步距离）五行是**普通攻击**的参数，校验为**必须大于 0**（其余属性允许为 0）。普攻的规则见 [../design/core_rules.md](../design/core_rules.md) 的「战斗」一节。
 
+> ⚠️ **`name` 与 `format` 两列长期没有消费者**，而且 **`format` 连加载期校验都没有**（`GameConfig` 只校验 `base_value` 非负、上面那五行 > 0）——合法取值只写在本节这张表里。
+> **2026-10-07 起它们有了第一个消费者**：GM 的**属性面板**（`UI/AttributePanel.cs`）按 `name` 显示中文名、按 `format` 渲染数值，
+> 并对**未知取值兜底**成普通数字（不能假设它一定合法）。改这两列之前先看那儿。
+>
+> 属性面板把每个属性显示成**三种状态**：`基础`（本表的 `base_value`）/ `面板值`（各养成系统加成之后的最终值）/
+> `动态值`（叠上当前临时状态后**真正生效的量**）。最后那一列的口径值得记一句：**临时状态大多不改属性**——
+> 它乘的是结算伤害（`GameSession.BuffPower`），所以 `atk` 的动态值是 `Attack × 伤害倍率窗`，而属性本身没变。
+> 真正被临时状态改写的只有 `crit`（加 buff 那份）与 `basic_interval`（按攻速折算）。
+
 **普攻有近战 / 远程两种形态**（`GameSession.MeleeBasic`）：远程用 `basic_range` + `stop_range`，近战用 `melee_range` + `melee_stop_range`。近战不是"换个画法"——射程与停步距离都真的缩短，角色要走进去才够得着。两条不变量：
 
 - `melee_range ≥ melee_stop_range`（普攻射程不小于停步距离）——否则角色站定了却打不到怪，表现为**停在原地永远不出手**且不报任何错。

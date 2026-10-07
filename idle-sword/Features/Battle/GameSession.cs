@@ -219,6 +219,22 @@ public sealed partial class GameSession
     public double CritBonusRemaining => _critBonusUntil;
     /// <summary>影分身剩余时间（剑二十三）。只读，供表现层决定要不要画那个半透明分身。</summary>
     public double MirrorRemaining => _mirrorUntil;
+    // 同一个口径的"**值**"（上面那批只有剩余时间）——GM 的「属性面板」要看"这一条现在是多少"。
+    // 一律 `生效期外给中性值`（乘区给 1、加法给 0、绝对值给 0），于是面板不必自己判断
+    // "这一条到底在不在生效"，直接把值摆出来就行。
+    /// <summary>共享伤害倍率窗的倍率（`power != 1` 的增益类法术写入）。**它乘的是结算伤害、不是攻击属性**——
+    /// 属性面板的动态列据它算"当前真正打出去多少"，别误读成"攻击被改成了这个数"。</summary>
+    public double BuffPower => _buffTime > 0 ? _buffPower : 1;
+    /// <summary>护盾当前吸收池（还剩多少能吸）。</summary>
+    public double ShieldAmount => _shieldUntil > 0 ? _shield : 0;
+    /// <summary>每秒回血比例（占气血上限）。</summary>
+    public double RegenRate => _regenUntil > 0 ? _regenRate : 0;
+    /// <summary>吸血比例（按造成的伤害折算）。</summary>
+    public double LifestealFactor => _lifestealUntil > 0 ? _lifestealFactor : 0;
+    /// <summary>影分身继承比例（剑二十三放出的那一份按它打折）。</summary>
+    public double MirrorRatio => _mirrorUntil > 0 ? _mirrorRatio : 0;
+    /// <summary>暴击后缩短的冷却秒数（醉仙望月步的 `secondary_extra`）。</summary>
+    public double CritReduceSeconds => _critReduceUntil > 0 ? _critReduce : 0;
     /// <summary>该法术**当前**的触发概率（含每次普攻累加的那部分）。自检用它断言累加与清零，不必靠概率碰运气。</summary>
     internal double TriggerChanceNow(string id) => Config.Skills.TryGetValue(id, out var s)
         ? Math.Min(1, s.TriggerChance + _triggerRamp.GetValueOrDefault(id)) : 0;

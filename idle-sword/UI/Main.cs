@@ -219,6 +219,7 @@ public partial class Main : Control
         if (_talentRoot.Visible) TickTalentPan(delta);
         TickSettings(delta);
         TickDamage(delta);
+        TickAttributes(delta);
         _saveClock += delta; _refreshClock += delta;
         if (_preview is null && _saveClock >= _game.Config.Setting("save_interval")) { _saveClock = 0; Save(); }
         if (_refreshClock >= .15) { _refreshClock = 0; Refresh(); }
@@ -1263,6 +1264,54 @@ public partial class Main : Control
             if (_damageRoot.Visible) throw new Exception("Damage panel did not close");
             Tap("GM");
             if (_gmRoot is null || !_gmRoot.Visible) throw new Exception("GM panel did not reopen");
+            // 属性面板：全表覆盖 + 口径 + 取自活状态（三条各管一件事）。
+            Tap("属性面板");
+            if (!AttributesOpenForCheck()) throw new Exception("Attribute panel did not open");
+            if (_gmRoot.Visible) throw new Exception("GM panel should close when the attribute panel opens");
+            var attrRows = AttributeRows();
+            // ㉖ **fightattr 的每一行都要在**——这条就是"抓取 fightattr 里所有属性"的可执行形式。
+            //    ⚠️ 量的是**建出来的控件行数**，不是数据行数：后者与表同源，比一下是同义反复；
+            //    而控件行是"建面板那一刻"按表里行数建的，**在这两轮已经栽过两次**——
+            //    凡是要用"现取列表"建的控件，若早于配置读完，就会一行都建不出来。
+            int tableRows = _game.Config.Rows("fightattr").Count;
+            if (attrRows.Length != tableRows) throw new Exception($"属性面板的数据行数不对：{attrRows.Length} vs {tableRows}");
+            if (AttributeCellRowCountForCheck() != tableRows)
+                throw new Exception($"属性面板**建出来**的行数与 fightattr 不符：{AttributeCellRowCountForCheck()} vs {tableRows}");
+            // ㉗ 口径写死在断言里：面板值走 `MaxHp` / `Attack`，动态值走暴击加成与攻速。
+            //    以后谁把动态列改成"只显示属性本身"，这几条会红。
+            var hpRow = attrRows.First(r => r.Id == "hp");
+            if (Math.Abs(hpRow.Panel - _battle.Session.MaxHp) > 1e-6)
+                throw new Exception($"气血的面板值应当等于 MaxHp：{hpRow.Panel} vs {_battle.Session.MaxHp}");
+            var atkRow = attrRows.First(r => r.Id == "atk");
+            if (Math.Abs(atkRow.Panel - _battle.Session.Attack) > 1e-6)
+                throw new Exception($"攻击的面板值应当等于 Attack：{atkRow.Panel} vs {_battle.Session.Attack}");
+            if (Math.Abs(atkRow.Current - _battle.Session.Attack * _battle.Session.BuffPower) > 1e-6)
+                throw new Exception("攻击的动态值应当是 Attack × 伤害倍率窗（buff 改的是伤害、不是攻击）");
+            var critRow = attrRows.First(r => r.Id == "crit");
+            if (Math.Abs(critRow.Current - (_game.Config.Attr("crit") + _battle.Session.CritBonus)) > 1e-9)
+                throw new Exception("暴击率的动态值应当含临时加成");
+            var intervalRow = attrRows.First(r => r.Id == "basic_interval");
+            if (Math.Abs(intervalRow.Current - _game.Config.Attr("basic_interval") / _battle.Session.HasteFactor) > 1e-9)
+                throw new Exception("普攻间隔的动态值应当按攻速折算");
+            if (BuffRows().Length != 8) throw new Exception("临时状态那一块应当固定八行（没生效也要占位）");
+            // ㉘ **面板值读的是活状态，不是开面板那一刻的快照**：给一个投攻击的天赋点上一级，
+            //    面板上的攻击必须跟着涨。这条是这一段里**真正有判别力**的那条——
+            //    上面几条口径断言在"没有 buff 生效"时是恒等式（那一段的边界写在 AttributePanel 的注释里）。
+            string atkTalent = _game.Config.Rows("Talent").First(r => r.Text("effect") is "atk_flat" or "atk").Text("id");
+            int hadLevel = _game.State.Talents.GetValueOrDefault(atkTalent);
+            _game.State.Talents[atkTalent] = hadLevel + 1;
+            double before = AttributeRows().First(r => r.Id == "atk").Panel;
+            _game.State.Talents[atkTalent] = hadLevel;
+            double after = AttributeRows().First(r => r.Id == "atk").Panel;
+            if (_game.State.Talents.GetValueOrDefault(atkTalent) != hadLevel)
+                throw new Exception("天赋没还原干净——后面的断言会被这条污染");
+            if (Math.Abs(before - after) < 1e-9)
+                throw new Exception($"点了天赋而属性面板的攻击没变（{before}）：面板读的是快照，不是活状态");
+            await Capture("-attributes");
+            TapIn(_attrRoot!, "关闭");
+            if (AttributesOpenForCheck()) throw new Exception("属性面板没关掉");
+            Tap("GM");
+            if (_gmRoot is null || !_gmRoot.Visible) throw new Exception("GM panel did not reopen again");
             TapIn(_gmRoot, "关闭");
             if (_gmRoot.Visible) throw new Exception("GM panel did not close");
             // 取"属于已解锁境界且尚未习得"的技能，而不是写死某个 id：技能书序会随设计调整重排，
