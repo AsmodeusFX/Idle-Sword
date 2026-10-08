@@ -24,6 +24,13 @@
 > 详见 [combat.md](combat.md) §12.4 第 2 条。
 > （顺带：那 12 行**增益类**的参悟本来完全无效，已删除，参悟行数 60 → 48。）
 >
+> ✅ **2026-10-08 追加：战斗探针（[../battle/DPS评估与战斗模拟系统方案.md](../battle/DPS评估与战斗模拟系统方案.md)）
+> 的主指标仍然是 SU / TTK —— 本文的刻度就是这个工具的输出口径。**
+> 探针内部的 60s DPS 等窗口指标**只是场景指标，不构成第二把尺子**，
+> 且必须能与 SU 互推（桥是 [combat.md](combat.md) §5 的期望 DPS 公式）。
+> 探针的期望模式**复用 `LevelCurve`**，所以下面这条"模型没算参悟"的缺口
+> **同时也是探针 Expected Mode 的缺口**，排期见 [roadmap.md](../planning/roadmap.md) 的「战斗探针」Phase 1。
+>
 > **做数值计算前先读这一份。** 任何技能、怪物、关卡、天赋、武器的数值调整，都应当先回来看第 3–6 节的推导口径，不要直接改单个数字；改完按第 8.2 节重算。
 >
 > 关联文档：[core_rules.md](core_rules.md)（战斗规则）、[monsters.md](monsters.md)（怪物与波次）、[sword_skills.md](sword_skills.md)（剑诀效果）、[skill_realms.md](skill_realms.md)（境界编排）、[../data/fields.md](../data/fields.md)（字段与公式）。

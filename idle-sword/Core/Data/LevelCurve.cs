@@ -53,6 +53,61 @@ public static class LevelCurve
     private const double PerBlade = 1.2, PerTick = 2;       // 命中数密度系数（见 skill_values.md 第三节）
     private const string Gold = "gold";
 
+    /// <summary>
+    /// 该关的「**期望技能等级**」（`RankStart` → `RankEnd` 线性）。
+    ///
+    /// 这是模型对"打到这一关时，玩家手上的法术大概几级"的假设，与 <see cref="Model.Talents"/> 一样
+    /// 属于**练度**的一部分。对外露出是为了让"期望模型 vs 逐拍模拟"能把 `GameSession` 摆到同一个点上——
+    /// 两边各写一份插值就等于又开了一条会脱钩的接线（这正是本文件反复在防的那种事）。
+    /// </summary>
+    public static double SkillLevelAt(int order) => RankStart + (RankEnd - RankStart) * (order - 1) / 99.0;
+
+    /// <summary>该关的「**期望波次只数**」（`NStart` → `NEnd` 线性）。多目标场景摆几只靶子要照它来。</summary>
+    public static double WaveSizeAt(int order) => NStart + (NEnd - NStart) * (order - 1) / 99.0;
+
+    /// <summary>
+    /// 一次施法的**期望命中数**（口径见 `docs/design/skill_values.md` 第三节）。`wave` = 参考波次下的在场只数。
+    ///
+    /// 对外露出只有一个理由，和 <see cref="SkillLevelAt"/> 一样：**不许有第二把尺子**。
+    /// 「期望模型 vs 逐拍模拟」的对账要把模型的期望命中数与**实测命中/次**并排，
+    /// 两边各写一份形态分派就是又开了一条会脱钩的接线——而且这条分叉特别隐蔽：
+    /// 它不会报错，只会让对账表看起来"模型就是比实测低一点"。
+    ///
+    /// ⚠️ **形态与类别必须穷举**：新增一种形态却没进模型，会让它的命中数**静默算成 1**——
+    /// 那是系统性低估（`combat.md` §12.2 记过：模型给天剑按单体算，实测一次出手平均贯穿 18.6 只）。
+    /// 所以没识别的取值在这里响亮失败，与 `SkillText` 的穷举是同一套纪律。
+    /// </summary>
+    public static double HitsPerCast(SkillDef s, double wave)
+    {
+        if (s.Kind is not ("projectile" or "target" or "ground" or "buff" or "summon"))
+            throw new InvalidDataException($"技能类别 '{s.Kind}' 没有进期望模型——新增类别时要在这里补一条");
+        if (s.Trajectory is not ("" or "bolt" or "line_shot" or "line_pierce" or "sky_drop" or "arc_homing" or "hover_homing"))
+            throw new InvalidDataException($"飞行形态 '{s.Trajectory}' 没有进期望模型——新增形态时要在这里补一条");
+        var effect = s.Effects.Count > 0 ? s.Effects[0] : null;
+        // 周期结算的间隔**读效果行**（`tick_interval`），与 `GameSession.TickEffects` 同源——
+        // 从前两处各读 `game_settings.ground_tick_interval`，写死一个数就会变成静默的模型脱钩。
+        double tick = effect?.TickInterval ?? 0;
+        if (s.AoeAll) return s.ProjectileCount * wave;
+        if (s.Kind == "ground") return Math.Round(s.Duration / tick) * PerTick;
+        if (s.Trajectory == "sky_drop")
+        {
+            var buff = effect?.Buff;
+            // 天降火海：落地不结算，只有火海在跳 —— 直伤按跳数，灼烧按"着火秒数 × 灼烧系数"折算成等效命中。
+            if (buff is { Kind: "dot" })
+            {
+                // ⚠️ 先问覆盖登记表：`dot` 若被登记成「不计」，这里就成了"登记说不管、代码却在算"。
+                // 那种分叉必须当场炸——它正是"模型静默漏算/多算一个乘区"的入口。
+                if (!CountedKind("dot")) throw new InvalidOperationException(
+                    $"覆盖登记表把 'dot' 记成「{Fate(KindFate, "Buff kind", "dot")}」，但命中数在按它折算火海——两者必须一致");
+                return Math.Round(buff.Duration / tick) * PerTick + buff.Duration * PerTick * buff.Value;
+            }
+            return s.ProjectileCount * PerBlade;
+        }
+        if (s.Trajectory == "line_pierce") return wave;
+        if (s.Trajectory == "arc_homing") return s.ProjectileCount;
+        return 1;
+    }
+
     /// <summary>某关 BOSS 的 SU 份额（缓坡，见 <see cref="BossRampStart"/>）。</summary>
     public static double BossSuAt(int order) => order <= BossRampStart ? BossSuStart
         : order >= BossRampEnd ? BossSu
@@ -66,6 +121,33 @@ public static class LevelCurve
         public required IReadOnlyList<double> NormalAtk { get; init; }
         /// <summary>关数（= 读到的 level 行数）。</summary>
         public int Count => NormalHp.Count;
+
+        /// <summary>
+        /// 每一关的**期望总 DPS**（伤害 / 秒，已含通用增伤 × 暴击期望 × 伤害倍率窗 × 三个来源的频率）。
+        ///
+        /// 它和 <see cref="NormalHp"/> 是同一份推导的两面：`SU(order)` 就是拿它比出来的
+        /// （`su1 × Dps(order) ÷ Dps(1) × …`），所以这一列**不是新算法**，只是把中间量露出来。
+        ///
+        /// 露出来的用途只有一个：让"期望模型 vs 逐拍模拟"能摆在**同一个练度点**上对账
+        /// （见 <see cref="Talents"/>）。没有它，两边只能比一个被 `<see cref="NormalHp"/>`
+        /// 归一化过的形状，而"模型漏了一个乘区"恰恰表现为**绝对值**偏差。
+        /// </summary>
+        public required IReadOnlyList<double> Dps { get; init; }
+
+        /// <summary>
+        /// 每一关结束时，模型认为玩家**已经买到手**的修行节点等级（`id → 等级`）。
+        ///
+        /// 这是那条经济模拟（每关收入 → 贪心买最便宜的 → 灵核门封顶）的直接产物，
+        /// 从前只喂给内部的 `TotalAttack()`。对账要用它把 `GameSession` 摆到同一个练度点上——
+        /// 否则"模型说该有多少 DPS"和"模拟跑出来多少"根本不是在说同一个人。
+        /// </summary>
+        public required IReadOnlyList<IReadOnlyDictionary<string, int>> Talents { get; init; }
+
+        /// <summary>
+        /// 每个境界（索引 = `realm_0`…`realm_4` 的尾号）被打开的关数；`int.MaxValue` = 到最后一关都没开。
+        /// 法术的可用性由它决定（`Unlocked`），所以对账时也要照它摆。
+        /// </summary>
+        public required IReadOnlyList<int> RealmUnlock { get; init; }
 
         /// <summary>
         /// 某一关七个倍率列的**模型建议值**。`order ≤ HandTunedLevels` 时 `boss_hp` / `boss_atk`
@@ -170,8 +252,10 @@ public static class LevelCurve
         // 这正是想要的：改名/删行之后模型不该"接着按旧值算下去"。
         var attrs = Load("fightattr.csv").ToDictionary(r => r.Text("id"), r => r.Number("base_value"));
 
-        double Lerp(double a, double b, int order) => a + (b - a) * (order - 1) / 99.0;
-        double WaveSize(int order) => Lerp(NStart, NEnd, order);
+        // ⚠️ 期望练度的两条轴**必须与对外露出的那两个方法同源**：它们是要拿去和模拟对账的，
+        // 各写一份插值就会在"有人调了 RankEnd"时静默分叉（对账两边摆不到同一个点上，
+        // 而偏差看起来像模型不准）。
+        double WaveSize(int order) => WaveSizeAt(order);
         int count = levelRows.Count;
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -185,6 +269,8 @@ public static class LevelCurve
         var bought = talent.Keys.ToDictionary(id => id, _ => 0);
         double goldLeft = 0, coresLeft = 0;
         var attackByOrder = new double[count + 2];
+        // 逐关留档：这一关的期望练度（`Model.Talents` 的载体）。期望 DPS 最后统一取一遍。
+        var talentByOrder = new Dictionary<string, int>[count + 2];
 
         double avgNormalGold = monsters.Values.Where(m => m.Text("kind") == "normal").Average(m => m.Number("gold"));
         double bossFirstGold = Load("drop.csv")
@@ -265,6 +351,10 @@ public static class LevelCurve
             }
 
             attackByOrder[order] = TotalAttack();
+            // 练度也要**逐关快照**（`bought` 是就地累加的，只留一份就等于每关都记最后一关的）。
+            // `Dps(order)` 留到循环之后再取——它依赖的那几个局部函数在下面才声明，
+            // 而 `Attack(order)` 读的正是上面这一行刚写进去的攻击力，所以两趟结果一致。
+            talentByOrder[order] = new Dictionary<string, int>(bought);
         }
 
         double Attack(int order) => attackByOrder[Math.Clamp(order, 1, count)];
@@ -284,42 +374,7 @@ public static class LevelCurve
             return cd + sum;
         }
 
-        // 一次施法的命中数——**按参考波次下的期望命中数**（口径见 docs/design/skill_values.md 第三节）。
-        // 只记单体口径会让多目标技能白拿 N 倍（实测里天剑一个人占 39%），所以按形态给期望命中数。
-        double Hits(SkillDef s, double wave)
-        {
-            // ⚠️ **形态与类别必须穷举**：新增一种形态却没进模型，会让它的命中数**静默算成 1**——
-            // 那是系统性低估（`combat.md` §12.2 记过：模型给天剑按单体算，实测一次出手平均贯穿 18.6 只）。
-            // 所以没识别的取值在这里响亮失败，与 `SkillText` 的穷举是同一套纪律。
-            if (s.Kind is not ("projectile" or "target" or "ground" or "buff" or "summon"))
-                throw new InvalidDataException($"技能类别 '{s.Kind}' 没有进期望模型——新增类别时要在这里补一条");
-            if (s.Trajectory is not ("" or "bolt" or "line_shot" or "line_pierce" or "sky_drop" or "arc_homing" or "hover_homing"))
-                throw new InvalidDataException($"飞行形态 '{s.Trajectory}' 没有进期望模型——新增形态时要在这里补一条");
-            var effect = s.Effects.Count > 0 ? s.Effects[0] : null;
-            // 周期结算的间隔**读效果行**（`tick_interval`），与 `GameSession.TickEffects` 同源——
-            // 从前两处各读 `game_settings.ground_tick_interval`，写死一个数就会变成静默的模型脱钩。
-            double tick = effect?.TickInterval ?? 0;
-            if (s.AoeAll) return s.ProjectileCount * wave;
-            if (s.Kind == "ground") return Math.Round(s.Duration / tick) * PerTick;
-            if (s.Trajectory == "sky_drop")
-            {
-                var buff = effect?.Buff;
-                // 天降火海：落地不结算，只有火海在跳 —— 直伤按跳数，灼烧按"着火秒数 × 灼烧系数"折算成等效命中。
-                if (buff is { Kind: "dot" })
-                {
-                    // ⚠️ 先问覆盖登记表：`dot` 若被登记成「不计」，这里就成了"登记说不管、代码却在算"。
-                    // 那种分叉必须当场炸——它正是"模型静默漏算/多算一个乘区"的入口。
-                    if (!CountedKind("dot")) throw new InvalidOperationException(
-                        $"覆盖登记表把 'dot' 记成「{Fate(KindFate, "Buff kind", "dot")}」，但 `Hits` 在按它折算火海命中——两者必须一致");
-                    return Math.Round(buff.Duration / tick) * PerTick + buff.Duration * PerTick * buff.Value;
-                }
-                return s.ProjectileCount * PerBlade;
-            }
-            if (s.Trajectory == "line_pierce") return wave;
-            if (s.Trajectory == "arc_homing") return s.ProjectileCount;
-            return 1;
-        }
-
+        // 命中数走 `LevelCurve.HitsPerCast`（公开静态）——这里是本地函数的话，探针那边就得再抄一份形态分派。
         // 三个增益都是乘区：加速作用于普攻与法术（两条轴各算各的）、暴击作用于全链，影分身只复制法术、不复制普攻。
         // **按自身增益的 kind 找**（不再按 `secondary` 字符串猜）：一个 kind 只属于一个增益类法术，
         // 找不到就是"这个乘区没有载体"，返回 null 让各调用方回落到中性值。
@@ -331,7 +386,7 @@ public static class LevelCurve
         }
         double BuffCooldown(SkillDef s, int order) => Math.Max(
             s.Duration * settings["buff_cooldown_floor_ratio"],
-            s.Cooldown * (1 - settings["buff_cooldown_per_level"] * (Lerp(RankStart, RankEnd, order) - 1)));
+            s.Cooldown * (1 - settings["buff_cooldown_per_level"] * (SkillLevelAt(order) - 1)));
         double BuffUptime(SkillDef? s, int order) =>
             s is null || !Unlocked(s, order) ? 0 : Math.Min(1, s.Buffs[0].Duration / BuffCooldown(s, order));
         var haste = CountedBuff("haste"); var critBuff = CountedBuff("crit_reduce"); var mirror = CountedBuff("mirror");
@@ -358,7 +413,7 @@ public static class LevelCurve
         /// **提取成一处**是为了让它只有一个该被改的地方，而不是散在两个函数里。
         /// </summary>
         double SkillRateAt(SkillDef s, int order) =>
-            s.Power * (1 + settings["skill_level_bonus"] * (Lerp(RankStart, RankEnd, order) - 1));
+            s.Power * (1 + settings["skill_level_bonus"] * (SkillLevelAt(order) - 1));
 
         /// <summary>普攻**未加速**的每发 DMG1（`AttackPower × basic_power + 0`）。</summary>
         double BasicDmg1(int order) => DamageFormula.Dmg1(Attack(order), attrs["basic_power"], 0);
@@ -380,7 +435,7 @@ public static class LevelCurve
                 // 参悟把剑支涨上去是**设计里写过、但没接线**的东西（见 `docs/design/combat.md` §12.4 第 3 条），
                 // 接线时要连同这条一起加回来。
                 chain += DamageFormula.Dmg1(Attack(order), SkillRateAt(s, order), s.SkillFlat)
-                    * Hits(s, WaveSize(order)) / Cycle(s);
+                    * HitsPerCast(s, WaveSize(order)) / Cycle(s);
             }
             return chain;
         }
@@ -482,8 +537,18 @@ public static class LevelCurve
         // 因为它是"第 100 关"的设计锚，不是"最后一关"。这里只把结果截到实际关数。
         var hpList = new List<double>(count);
         var atkList = new List<double>(count);
-        for (int order = 1; order <= count; order++) { hpList.Add(NormalHpOf(order)); atkList.Add(NormalAtkOf(order)); }
-        return new Model { NormalHp = hpList, NormalAtk = atkList };
+        var dpsList = new List<double>(count);
+        var talentList = new List<IReadOnlyDictionary<string, int>>(count);
+        for (int order = 1; order <= count; order++)
+        {
+            hpList.Add(NormalHpOf(order)); atkList.Add(NormalAtkOf(order));
+            dpsList.Add(Dps(order)); talentList.Add(talentByOrder[order]);
+        }
+        return new Model
+        {
+            NormalHp = hpList, NormalAtk = atkList, Dps = dpsList, Talents = talentList,
+            RealmUnlock = realmUnlockOrder.ToArray(),
+        };
     }
 
     /// <summary>跑一遍模型，配置有问题时**返回 null 而不是抛**——游戏侧（关卡编辑器）要能优雅降级。</summary>

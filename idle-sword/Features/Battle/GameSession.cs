@@ -423,7 +423,15 @@ public sealed partial class GameSession
     /// <summary>
     /// 波次只数的关卡倍率：随关卡递增，且递增本身在加快（线性一项 + 平方一项，两项都在 `game_settings` 可调）。
     /// </summary>
-    public double WaveScale => 1 + (Level.Order - 1) * Config.Setting("wave_growth") + Math.Pow(Level.Order - 1, 2) * Config.Setting("wave_accel");
+    public double WaveScale => WaveScaleFor(Config, Level.Order);
+
+    /// <summary>
+    /// 上面那条的**纯函数形态**：只吃配置与关卡序号，不需要一场战斗。
+    /// 战斗探针（`Features/Battle/CombatProbe.cs`）要在**不建会话**的前提下算出同一批靶子的血量倍率，
+    /// 而"再写一遍这个公式"就是第二把尺子——改了一边另一边静默不跟。
+    /// </summary>
+    internal static double WaveScaleFor(GameConfig config, int order) =>
+        1 + (order - 1) * config.Setting("wave_growth") + Math.Pow(order - 1, 2) * config.Setting("wave_accel");
     /// <summary>
     /// 这一波各模板刷几只。**只数先按关卡算，再按比例摊给模板**——所以"两只小怪配一只肉盾"永远是这个配比，
     /// 数量涨起来不会把阵容比例改掉（旧写法是各模板各自乘一个关卡倍率，`count = 1` 的模板会跳变：
@@ -451,7 +459,13 @@ public sealed partial class GameSession
         return counts;
     }
 
-    private void Spawn(string monsterId, int cell, double offset)
+    /// <summary>
+    /// 按模板 + 关卡与波次倍率造一只敌人生到场上。**战斗探针复用这一个**（`internal` 而非 `private`）——
+    /// 它要摆的靶子必须和真实刷怪**逐条同源**：`Kind` 分流、两重倍率、`X` 的算法。
+    /// 探针那边自己写一遍"血量 = monster.hp × level.hp_scale"，改了一边就会静默分叉，
+    /// 而对账表看上去只会变成"模型就是比实测低一点"。
+    /// </summary>
+    internal void Spawn(string monsterId, int cell, double offset)
     {
         var m = Config.Monsters[monsterId];
         // 普通怪吃两重倍率：关卡倍率（level.csv，随关卡递增）× 波次强度系数（wave.csv，同一关内的波次梯度）。

@@ -1,5 +1,6 @@
 using Godot;
 using IdleSword.Core;
+using IdleSword.Features;
 
 namespace IdleSword.UI;
 
@@ -57,6 +58,25 @@ public partial class Main
     private readonly List<string> _waveIds = [], _bossIds = [], _riftIds = [], _rewardGroups = [], _monsterIds = [];
     // ── 只读区 ──
     private Label _levelPreview = null!, _levelAudit = null!;
+
+    // ── 战斗探针（只读）──
+    /// <summary>探针内核（`Features/Battle/CombatProbe.cs`）：与 `LevelCurve` 共用同一份模型，
+    /// 与 `GameSession` 共用同一套建场——这里只是它的一个"给人看的出口"。模型读不出来时为 null。</summary>
+    private CombatProbe? _probe;
+    /// <summary>探针那一块的每一行**各是一个单行标签**：`Capped(Wrapped(…))` 会把控件撑到"没封顶时的
+    /// 最小高"，之后只长不缩（见 `UiKit.WrappedCapped` 的说明，这一屏踩过两次），所以多行内容要拆成单行。
+    /// 拆开还有个好处：两个练度点各自着色，"是哪一边超带"不用靠读字。</summary>
+    private Label _levelProbeHead = null!, _levelProbeModel = null!, _levelProbeSave = null!, _levelProbeNote = null!;
+    private Label _levelProbeSkillsHead = null!, _levelProbeSkillsTail = null!;
+    private readonly List<Label> _probeSkillRows = [];
+    /// <summary>上一次重算的结果。**唯一写入点是 `ComputeProbe`**；屏上画的永远是它，不是现算的。</summary>
+    private ProbeReconciliation? _probeResult;
+    /// <summary>上一次重算时"这是哪一关 + 哪条波次"。变了就自动重算（换关是这个动作的主语）。</summary>
+    private string _probeIdKey = "\0";
+    /// <summary>上一次重算时"这一关的数值"（七列 + 波次参数 + 阵容）。变了只把屏上标成过期，不自动重跑。</summary>
+    private string _probeDataKey = "";
+    /// <summary>数值改过、但还没重算。**屏上必须明说**——否则一串旧数字会冒充新数字（那就是静默低估）。</summary>
+    private bool _probeStale;
     // ── 待写通道 ──
     /// <summary>关卡 id → 列 → 值。**只放被明确改过的格子**，其余列原样往返——
     /// 否则编辑器开着时 AI 在磁盘上改的行会被保存悄悄改回去（这条纪律是节点编辑器踩出来的）。</summary>
@@ -90,6 +110,9 @@ public partial class Main
          ("elite_hp", "精英血量"), ("elite_atk", "精英攻击"),
          ("boss_hp", "BOSS 血量"), ("boss_atk", "BOSS 攻击"),
          ("rift_hp", "裂隙血量")];
+
+    /// <summary>探针那一节列几式技能（差得最远的排前面）。**不是"最多就这么多式"**——列不下会在尾行说清有几式没列。</summary>
+    private const int ProbeSkillSlots = 6;
 
     private const string LevelPath = "res://Config/Tables/level.csv";
     private const string WavePath = "res://Config/Tables/wave.csv";
@@ -277,6 +300,13 @@ public partial class Main
             Row(s, edit, dy);
             return edit;
         }
+        // 探针那一块的单行标签（**必须单行**：`Capped(Wrapped(…))` 撑起来的尺寸只长不缩，见字段上那条说明）。
+        Label ProbeLine(SectionList.Section s, float dy, int size, Color color)
+        {
+            var label = UiKit.WrappedCapped(inner, "", px, 0, 680, size + 8, 1, size, color);
+            Row(s, label, dy, RowWhen.Always);
+            return label;
+        }
         OptionButton Drop(SectionList.Section s, float x, float dy, float w, List<string> ids, Action<string> onPick)
         {
             var list = new OptionButton();
@@ -380,7 +410,39 @@ public partial class Main
         _levelAudit = UiKit.Capped(UiKit.Wrapped(inner, "", px, 0, 680, 130, 18, UiKit.Muted), 8);
         Row(audit, _levelAudit, 0, RowWhen.Always);
 
-        // ⑦ 新增关卡（末尾追加）
+        // ⑦ 战斗探针（只读）
+        //
+        // 这一节回答的是编辑器最要紧的那个问题：**"这一关的强度对不对"**。
+        // 左边那条曲线和上面「实际数值」都是模型自己推自己——模型说第 60 关该有多少 DPS，
+        // 而唯一能给它打脸的东西，是让 `GameSession` 在**同一个练度点、同一批靶子**上真跑一遍。
+        // 探针就是那次对账（内核在 `Features/Battle/CombatProbe.cs`，与工具共用同一份模型）。
+        //
+        // **只读**：不改配置、不写盘、不碰存档（存档点是深拷贝，见 `CombatProbe.Measure`）。
+        var probe = Section("战斗探针", 512);
+        Row(probe, UiKit.WrappedCapped(inner,
+            "口径：空跑 30 秒（丢掉起手齐射）→ 记账 60 秒；靶子照这一关真实波次摆，含分层与真实血量。"
+            + "「模型期望」按模型给的天赋 / 境界 / 技能等级，不给参悟与武器；「当前存档」是此刻的你。"
+            + "带 [0.75, 1.25]，超带 = 模型与逐拍模拟对不上。",
+            px, 0, 680, 66, 3, 17, UiKit.Muted), 0, RowWhen.Always);
+        // ⚠️ 行距从第 80 起：上面那句说明是**三行 17 号**，实际高 73（声明的 66 会被真实高度盖掉——
+        //    与「强度倍率」那一节同一个坑，见那边 `84 + i * 46` 的注释）。
+        _levelProbeHead = ProbeLine(probe, 80, 19, UiKit.Text);
+        _levelProbeModel = ProbeLine(probe, 112, 19, UiKit.Text);
+        _levelProbeSave = ProbeLine(probe, 144, 19, UiKit.Text);
+        _levelProbeNote = ProbeLine(probe, 176, 17, UiKit.Muted);
+        var recompute = UiKit.Button(inner, "重算", px, 0, 90, 38, () => RefreshProbe(true), pad: 2);
+        recompute.AddThemeFontSizeOverride("font_size", 18);
+        recompute.Tip("拿此刻的配置与存档重跑一遍（一次对账 = 两场 90 秒模拟，所以不跟着每次击键跑）。"
+            + "改了倍率 / 波次之后屏上会标「已过期」，点它就刷新。");
+        Row(probe, recompute, 210, RowWhen.Always);
+        Row(probe, UiKit.WrappedCapped(inner,
+            "换关、换波次会自动重算；只改数值不自动重跑——点「重算」。", px + 100, 0, 580, 38, 1, 17, UiKit.Muted),
+            210, RowWhen.Always);
+        _levelProbeSkillsHead = ProbeLine(probe, 262, 18, UiKit.Muted);
+        for (int i = 0; i < ProbeSkillSlots; i++) _probeSkillRows.Add(ProbeLine(probe, 294 + i * 30, 18, UiKit.Muted));
+        _levelProbeSkillsTail = ProbeLine(probe, 476, 18, UiKit.Muted);
+
+        // ⑧ 新增关卡（末尾追加）
         var add = Section("新增关卡", 122);
         Note(add, 0, "以当前这一关为模板复制一份追加到末尾：自动分配 id 与 order、复用两个奖励组、"
             + "七列填模型建议值。不动任何已有行的 order。", 44);
@@ -516,6 +578,9 @@ public partial class Main
         // 阵容那 8 行**到这一步才能建**（怪物列表刚刚才有内容）。只建一次——它是固定的几行。
         if (_waveUnitCells.Count == 0) BuildRosterRows();
         _levelModel = LevelCurve.TryCompute(file => Godot.FileAccess.GetFileAsString("res://Config/Tables/" + file));
+        // 探针与模型**同一份读表口径**（同一个 lambda），所以它算出来的期望值就是上面那条虚线。
+        _probe = new CombatProbe(cfg, file => Godot.FileAccess.GetFileAsString("res://Config/Tables/" + file));
+        _probeIdKey = "\0";   // 换过配置了：下一次刷新必须重算，不能拿旧结果顶上
         // 默认落在**当前正在打的那一关**（大多数时候"我要改的就是它"）。
         if (_editorLevelSelected.Length == 0 || !_editorLevelIds.Contains(_editorLevelSelected))
             _editorLevelSelected = _editorLevelIds.FirstOrDefault(l => cfg.Levels.First(x => x.Id == l).Order == _game.Level.Order)
@@ -645,8 +710,138 @@ public partial class Main
 
         _levelPreview.Text = DescribeActualValues();
         _levelAudit.Text = LevelAudit();
+        RefreshProbe();
         _levelPanel.Layout(new SectionState(true, false));   // 见 BuildLevelEditor 里那条说明：这一屏没有"选中态"
         _levelCanvas_Refresh();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  战斗探针（只读那一节）
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 决定"要不要重算"，再重画。重算的门槛是**这一关变了没有**，分成两把钥匙：
+    /// <list type="bullet">
+    /// <item><c>idKey</c> = 关卡 id + 波次 id。变了就**自动重算**（换关是"看另一个东西"，没有理由拖着）。</item>
+    /// <item><c>dataKey</c> = 七列倍率 + 波次参数 + 阵容。变了**只把屏上标成已过期**——</item>
+    /// </list>
+    /// 一次对账是两场 90 秒模拟，而数值框每敲一个字符都会走到这里（`LevelCell` → `LevelRefreshUi`），
+    /// 每次重跑会把编辑器卡住。所以数值改动**要人点一下「重算」**，但屏上必须明说手上的数字已经过期——
+    /// 拿旧数字冒充新数字，正是这一节要防的那种静默错误。
+    /// </summary>
+    private void RefreshProbe(bool force = false)
+    {
+        string wave = LevelValue(_editorLevelSelected, "wave_id");
+        string idKey = _editorLevelSelected + "|" + wave;
+        string dataKey = string.Join("|",
+            string.Join(",", LevelScales.Select(s => LevelValue(_editorLevelSelected, s.Column))),
+            string.Join(",", new[] { "interval", "count", "count_max", "hp_scale", "atk_scale", "elite_every", "elite_id" }
+                .Select(c => WaveValue(wave, c))),
+            string.Join(",", WaveUnitsOf(wave).Select(u => $"{u.Monster}:{u.Weight:0.####}")));
+
+        if (!force)
+        {
+            if (idKey == _probeIdKey && dataKey == _probeDataKey) return;
+            if (idKey == _probeIdKey)
+            {
+                _probeDataKey = dataKey;
+                _probeStale = true;
+                RenderProbe();
+                return;
+            }
+        }
+        _probeIdKey = idKey;
+        _probeDataKey = dataKey;
+        _probeStale = false;
+        ComputeProbe();
+        RenderProbe();
+    }
+
+    /// <summary>跑一次对账。**这是 `_probeResult` 唯一的写入点**。</summary>
+    private void ComputeProbe()
+    {
+        _probeResult = null;
+        if (_probe is null || _editorLevelSelected.Length == 0) return;
+        _probeResult = _probe.Reconcile((int)LevelNumber(_editorLevelSelected, "order"), _game.State);
+    }
+
+    /// <summary>
+    /// 画探针那一节。**只读缓存，不在这里跑模拟**——屏上的每个数字都出自 `_probeResult`。
+    /// 超带的那一行转成 `UiKit.Gold`（这一屏的"要你看这里"色，与阵容用 Jade 标"这一项在役"同一套词汇；
+    /// `UiKit` 没有红色，而金在本工程里一直是"看这里"而不是"错误"）。
+    /// </summary>
+    private void RenderProbe()
+    {
+        var r = _probeResult;
+        if (_probe is null) { Blank("模型读不出来（配置表有问题），探针不可用。"); return; }
+        if (r is null)
+        {
+            Blank($"第 {(int)LevelNumber(_editorLevelSelected, "order")} 关超出了模型的定义范围"
+                + $"（曲线只覆盖 order 1..{_probe.Model?.Count ?? 0}），没有可对账的期望值。");
+            return;
+        }
+
+        bool alert(bool inBand) => r.Judge && !inBand;
+        bool modelWarn = alert(r.ModelInBand);
+        bool saveWarn = r.SavePoint is not null && alert(r.SaveInBand);
+
+        _levelProbeHead.Text = $"第 {r.Order} 关 · 一波 {r.ModelPoint.FieldCount} 只 · "
+            + $"窗口内清掉 {r.ModelPoint.Kills} 只 / {r.ModelPoint.Waves} 波 · 模型 {r.ModelDps:0.#} 血/s";
+        _levelProbeHead.AddThemeColorOverride("font_color", UiKit.Text);
+        Row(_levelProbeModel, "模型期望", r.ModelPoint, r.ModelRatio, modelWarn);
+        if (r.SavePoint is null)
+        {
+            _levelProbeSave.Text = "当前存档　（拿不到存档：此刻没有进行中的战斗）";
+            _levelProbeSave.AddThemeColorOverride("font_color", UiKit.Muted);
+        }
+        else Row(_levelProbeSave, "当前存档", r.SavePoint, r.SaveRatio, saveWarn);
+
+        _levelProbeNote.Text = _probeStale
+            ? "⚠ 这一关的数值已经改过，上面是上一次重算的结果——点「重算」刷新。"
+            : r.SavePoint is not null && r.ModelPoint.HpPerSecond > 1e-9
+                ? $"这一档练度是模型期望的 ×{r.SavePoint.HpPerSecond / r.ModelPoint.HpPerSecond:0.00}"
+                    + "（> 1 = 练度跑在模型前面，这一关对你偏松）"
+                : r.Note;
+        _levelProbeNote.AddThemeColorOverride("font_color", _probeStale ? UiKit.Gold : UiKit.Muted);
+
+        var skills = r.ModelPoint.Skills
+            .Where(s => s.Comparable && s.Casts > 0)
+            .Select(s => (Row: s, Ratio: s.HitsPerCast / s.ModelHitsPerCast))
+            // 按 |log 比值| 排：×3 与 ÷3 一样显眼（直接按比值排的话，偏小的会被挤到看不见）。
+            .OrderByDescending(x => Math.Abs(Math.Log(Math.Max(x.Ratio, 1e-9))))
+            .ToArray();
+        _levelProbeSkillsHead.Text = "每一式的「实测命中 / 次」对照模型期望（差得最远的排前面）：";
+        for (int i = 0; i < _probeSkillRows.Count; i++)
+        {
+            var label = _probeSkillRows[i];
+            if (i >= skills.Length) { label.Text = ""; continue; }
+            var (row, ratio) = skills[i];
+            label.Text = $"　{row.SkillId}　实测 {row.HitsPerCast,6:0.0}　模型 {row.ModelHitsPerCast,6:0.0}"
+                + $"　×{ratio,5:0.00}　{row.Casts} 次出手";
+            label.AddThemeColorOverride("font_color", ratio is < .75 or > 1.25 ? UiKit.Gold : UiKit.Muted);
+        }
+        // **不许默默截断**：列不下的式数必须说出来——被截掉的可能正好是最不准的那一式。
+        _levelProbeSkillsTail.Text = skills.Length == 0
+            ? "　窗口内没有放出一式技能（模板没授权 / 冷却太长）。"
+            : skills.Length > ProbeSkillSlots
+                ? $"　……另有 {skills.Length - ProbeSkillSlots} 式偏差更小，未列。"
+                : "";
+
+        void Row(Label label, string name, ProbeResult p, double ratio, bool warn)
+        {
+            string verdict = !r.Judge ? "（第 1 关不判定）" : !warn ? "带内 ✓" : ratio > 1 ? "偏高" : "偏低";
+            label.Text = $"{(warn ? "⚠ " : "　")}{name}　SU/s {p.SuPerSecond,6:0.0}"
+                + $"　清一波 {p.WaveTtk,6:0.00}s　对模型 ×{ratio,5:0.00}　{verdict}";
+            label.AddThemeColorOverride("font_color", warn ? UiKit.Gold : UiKit.Text);
+        }
+        void Blank(string text)
+        {
+            _levelProbeHead.Text = text;
+            _levelProbeHead.AddThemeColorOverride("font_color", UiKit.Gold);
+            _levelProbeModel.Text = _levelProbeSave.Text = _levelProbeNote.Text = "";
+            _levelProbeSkillsHead.Text = _levelProbeSkillsTail.Text = "";
+            foreach (var label in _probeSkillRows) label.Text = "";
+        }
     }
 
     /// <summary>重算曲线采样点（**含待写改动**，所以改一格当场就能看见曲线动），然后重画。</summary>
@@ -1059,6 +1254,19 @@ public partial class Main
     internal double LevelEditorCurveValueForCheck(string levelId, string column) =>
         _curvePoints.First(p => p.Order == (int)LevelNumber(levelId, "order")).Values[column];
 
+    // 探针那几条：**只读缓存，不在这里跑模拟**（跑一次是两场 90 秒，自检里连跑几关会很慢）。
+    // 要重跑就先 `LevelProbeRecomputeForCheck()`。
+    internal string LevelProbeForCheck() =>
+        string.Join("\n", new[] { _levelProbeHead.Text, _levelProbeModel.Text, _levelProbeSave.Text, _levelProbeNote.Text });
+    internal string LevelProbeSkillsForCheck() => string.Join("\n",
+        new[] { _levelProbeSkillsHead.Text }.Concat(_probeSkillRows.Select(r => r.Text)).Append(_levelProbeSkillsTail.Text));
+    internal bool LevelProbeStaleForCheck() => _probeStale;
+    internal bool LevelProbeReadyForCheck() => _probeResult is not null;
+    internal double LevelProbeSuForCheck() => _probeResult?.ModelPoint.SuPerSecond ?? 0;
+    internal double LevelProbeTtkForCheck() => _probeResult?.ModelPoint.Ttk ?? 0;
+    internal int LevelProbePlanCountForCheck(int order) => _probe?.PlanWaveField(order).Count ?? 0;
+    internal void LevelProbeRecomputeForCheck() => RefreshProbe(true);
+
     /// <summary>把三张表按"即将写下去"的样子拼出来（**不落盘**）——断言用它看改动到底写进了哪一格。</summary>
     internal string LevelEditorAlignedForCheck(string file) => file switch
     {
@@ -1215,6 +1423,28 @@ public partial class Main
             throw new Exception("关卡编辑器分区里有行压在一起：" + overlap);
         if (_levelPanel.FooterBottom > SectionList.BottomLimit)
             throw new Exception($"关卡编辑器脚注出了屏：{_levelPanel.FooterBottom:F0}");
+        // ㉖ 战斗探针：这一节的数字必须是**真的跑出来的**，不是占位符。
+        //    ⚠️ 断言**不钉死具体数字**——改曲线、改波次都会让 SU/s 动，钉死等于给未来埋一条假红。
+        //    钉的是"有限 / 为正 / 换一关会变"这三件不会随数值漂移的性质。
+        if (!LevelProbeReadyForCheck()) throw new Exception("探针没算出结果");
+        double su = LevelProbeSuForCheck(), ttk = LevelProbeTtkForCheck();
+        if (!double.IsFinite(su) || su <= 0) throw new Exception($"探针的 SU/s 不是正有限数：{su}");
+        if (!double.IsFinite(ttk) || ttk <= 0) throw new Exception($"探针的 TTK 不是正有限数：{ttk}");
+        if (!LevelProbeForCheck().Contains("模型期望")) throw new Exception("探针那一块没画出来：" + LevelProbeForCheck());
+        // 纯函数先断言摆放（不真跑一场）：第 1 关是单只教学波，之后每关的靶数都该 > 1。
+        if (LevelProbePlanCountForCheck(1) != 1)
+            throw new Exception($"第 1 关的靶场应当是 1 只（单只教学波），实为 {LevelProbePlanCountForCheck(1)}");
+        if (LevelProbePlanCountForCheck(30) <= 1)
+            throw new Exception($"第 30 关的靶场不止 1 只，实为 {LevelProbePlanCountForCheck(30)}");
+        // **换一关必须换个数**——这条比"截图非空"强得多：它证明屏上那块是真算的。
+        // 这里**故意不显式重算**：换关走的是自动那条路（`idKey` 变了就重跑），断言它确实自己动了。
+        LevelEditorSelectForCheck(LevelEditorIdsForCheck().First(id => id != probe));
+        if (Math.Abs(LevelProbeTtkForCheck() - ttk) < 1e-9)
+            throw new Exception($"换了一关 TTK 却没变（还是 {ttk}）——自动重算那条路断了，或者探针那一块是死的");
+        if (LevelProbeStaleForCheck()) throw new Exception("换关之后不该标过期（换关是自动重算的）");
+        LevelEditorSelectForCheck(probe);
+        if (!LevelProbeForCheck().Contains("模型期望")) throw new Exception("换回原关卡之后探针没画出来");
+
         // ⑦ 面板滚两屏再拍：试打区 / 阵容 / 体检那几块都在视口下方，只看第一屏是看不到的。
         //    顺手也是**滚动真的能用**的实证：偏移没动就说明还是滚不动。
         var scroll = _levelPanel.ScrollBar;
@@ -1227,6 +1457,11 @@ public partial class Main
         scroll.Value = Math.Min(scroll.MaxValue, _levelPanel.SectionY(3) - 20);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         await capture("-level-editor-roster");
+        // 停在「战斗探针」那一块上（分区序号：0 提示 / 1 基础信息 / 2 强度倍率 / 3 挑战 /
+        // 4 实际数值 / 5 体检 / 6 战斗探针 / 7 新增关卡）。中文与数字的对齐只有出图才看得出。
+        scroll.Value = Math.Min(scroll.MaxValue, _levelPanel.SectionY(6) - 20);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        await capture("-level-editor-probe");
         ToggleLevelEditor();
     }
 

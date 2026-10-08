@@ -2608,6 +2608,181 @@ Check("沙盒模式：世界静止，只有战斗结算在跑", () => {
     g.Step(.05);
     Assert(g.Battle.Cooldowns["skill_01"] < 5, "沙盒里冷却照常流逝");
 });
+Check("战斗结算的可复现性：同 seed 逐步一致（战斗探针 Phase 0 的地基）", () => {
+    // 这条是 `docs/planning/roadmap.md`「战斗探针」Phase 0 的落点之一，工程一直欠着它。
+    // ⚠️ 它比"两次跑出来的**终值**相同"强：两个 bug 互相抵消也能让终值相同，
+    // 而**逐步快照**会让第一次分歧当场露出来 —— 排查"改了这条配置，输出为什么变了"时，
+    // "第一次分歧发生在哪一拍"正是唯一有用的线索（见 docs/design/combat.md §12.2 的教训）。
+    // 它同时也覆盖"改了技能/战斗循环、但语义应当不变"那一类问题：比一次性对拍耐用
+    // （原计划那份改造前的整树快照 `%LOCALAPPDATA%\Temp\idle-skill-refactor\baseline\` 已被清理）。
+    string Snap(GameSession g) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        g.State.Battle.Cell, g.State.Battle.PlayerX, g.State.Battle.PlayerHp, g.State.Battle.BossDefeated,
+        g.State.Wallet,
+        Enemies = g.State.Battle.Enemies.Select(e => new
+        { e.Id, e.MonsterId, e.X, e.Hp, e.MaxHp, e.StunUntil, e.SlowUntil, e.SlowFactor, e.DotDps, e.DotUntil, e.DotSkill, e.VulnerableUntil, e.VulnerableFactor }),
+        // `Effects` 是**不落盘**的运行态，恰恰是最容易被"顺手改成另一套写法"而没人发现的地方。
+        Effects = g.Effects.Select(e => new
+        { e.Kind, e.Skill, e.DamageSource, e.X, e.Target, e.Timer, e.Life, e.Delay, e.Damage, e.Critical, e.CritDamage, e.BuffPower, e.Mirrored }),
+    });
+    // 尽量多的随机分支一起进场：普攻（每秒一支）+ 剑诀链 + 灼烧跳伤 + 增益 + 追踪弹索敌 + 影分身。
+    // 靶子给 1e8 血 ⇒ 打不死、只数不变，快照比较不会被"谁先死"这类无关噪声干扰。
+    GameSession Run(int seed)
+    {
+        var g = new GameSession(config, seed: seed) { BasicAttackEnabled = true };
+        GrantLateGame(g);
+        g.Step(.05);
+        foreach (string id in new[] { "skill_01", "skill_02", "skill_04", "skill_11", "skill_14", "skill_17", "skill_19" })
+            g.State.Skills[id] = 8;
+        g.Battle.Spawns.Clear();
+        Dummies(g, 5, 140, 55);
+        return g;
+    }
+    var a = Run(20261008);
+    var b = Run(20261008);
+    var other = Run(20261009);
+    bool divergedFromOtherSeed = false;
+    for (int i = 0; i < 600; i++)   // 30 秒 @ 50ms
+    {
+        string sa = Snap(a), sb = Snap(b), so = Snap(other);
+        Assert(sa == sb, $"第 {i} 拍（{i * .05:0.##}s）同 seed 两跑出现分歧：\n{sa}\n---\n{sb}");
+        if (sa != so) divergedFromOtherSeed = true;
+        a.Step(.05); b.Step(.05); other.Step(.05);
+    }
+    // 反证：换一个 seed 必须**真的**分叉。否则上面那条比较等于什么都没比
+    // （快照里若只剩"两边都恒为空的字段"，它会永远绿 —— 那是空断言的一种）。
+    Assert(divergedFromOtherSeed, "换 seed 也该分叉：这条断言现在没有牙齿，快照大概已经比不出东西了");
+});
+
+Check("战斗探针：按真实波次摆靶（数量走引擎的 WaveCountsFor，分层照 monster.layer）", () => {
+    // 摆靶是**纯计算**（`CombatProbe.PlanWaveField`），所以这条不必真跑一场战斗就能断言。
+    // 它对账的是「模型的 `WaveSizeAt` 假设」与「`level.csv` 实际引用的那套 `wave.csv` / `wave_unit.csv`」——
+    // 两者本来就不是同一份数据，分叉了要看得见。
+    var probe = new CombatProbe(config, f => source[f]);
+    Assert(probe.PlanWaveField(1).Count == 1,
+        "第 1 关引的是 `count_max = 1` 的单只教学波（模型那边 `WaveSizeAt(1) = 3`，是既有的表债务，探针如实照出）");
+    // 数量分配必须走引擎那一份纯函数，不是探针自己算的——所以这里断言的是"结果合乎 wave 表的约束"。
+    foreach (int order in new[] { 3, 10, 30, 60, 100 })
+    {
+        var level = config.Levels.FirstOrDefault(l => l.Order == order);
+        if (level is null) continue;
+        var wave = config.Waves[level.Wave];
+        var plan = probe.PlanWaveField(order);
+        Assert(plan.Count >= 1 && plan.Count <= wave.CountMax,
+            $"第 {order} 关一波 {plan.Count} 只，超出了 wave 表的 count_max = {wave.CountMax}");
+        // 落点照 `TickSpawns` 的 `40 + i×100`：严格递增、等距，且世界坐标 = 刷怪点偏移 + 落点。
+        for (int i = 1; i < plan.Count; i++)
+            Assert(plan[i].Offset - plan[i - 1].Offset == 100 && plan[i].X > plan[i - 1].X,
+                $"第 {order} 关第 {i} 只的落点没照 `40 + i×100` 递增");
+        // 每种模板都要出现，且比例与权重一致——只数先按关卡算、再按权重摊，比例不该被关卡倍率改掉。
+        foreach (var u in config.WaveUnits[wave.Id])
+            Assert(plan.Any(p => p.MonsterId == u.Monster),
+                $"第 {order} 关的波次模板里有 '{u.Monster}'，靶场里却一只都没有");
+    }
+    // **分层必须如实照抄**：`air` 的靶子打成地面靶，`LayerHit` 那条真实规则（地面招打不到空中）就静默失效了，
+    // 而它恰恰是"模型的密度系数为什么偏高"的主要嫌疑之一。
+    var l3 = probe.PlanWaveField(3);   // `wave_3` = 夜枭(air) + 飞蝠(air) + 青苔妖(ground)
+    Assert(l3.Any(p => p.Layer == "air") && l3.Any(p => p.Layer == "ground"),
+        "`wave_3` 混了空中与地面，靶场却只有一层——分层没照 monster.layer 抄");
+    Assert(l3.Where(p => p.Layer == "air").All(p => config.Monsters[p.MonsterId].Kind == "normal"),
+        "空中靶必须来自真实的空中模板");
+});
+Check("期望模型 vs 逐拍模拟对账：同一练度点的 DPS 必须同量级（偏差不许静默）", () => {
+    // `docs/planning/roadmap.md`「战斗探针」Phase 0 的第二条，也是 `combat.md` §12.2
+    // 「错得对称的模型会伪装成正确」的可执行形式：模型漏掉一个乘区，`--check` **不会**告诉你
+    // （它只比"两者是否一致"，两边都漏同一个乘区照样全绿）。
+    //
+    // 两边要摆在**同一个练度点**上：修行节点等级、解锁的境界、期望技能等级，全照模型的账来
+    //（`Model.Talents` / `Model.RealmUnlock` / `LevelCurve.SkillLevelAt`）。
+    // 这三样从前只活在模型内部，所以"模型漏了东西"只能靠肉眼比曲线形状看出来。
+    // 摆场交给 `CombatProbe`（`Features/Battle/CombatProbe.cs`）：测试里再有第三份建场实现，
+    // 就是三把尺子——"模型 vs 模拟"的比值会取决于用哪一份夹具，那种对账毫无意义。
+    var probe = new CombatProbe(config, f => source[f]);
+    Assert(probe.Model is not null, "关卡曲线模型必须算得出来，否则这条对账无从谈起");
+
+    // ── 基线带 ────────────────────────────────────────────────────────────────
+    // 实测值（2026-10-08 标定，`CombatProbe` 默认口径：饱和供给 / 预热 30s / 窗口 60s / seed 42）：
+    //     10 关 0.99    30 关 1.19    60 关 2.80
+    // 带取 ±25%。**换夹具、改默认口径、或有意改数值之后必须重标**，不能沿用。
+    //
+    // ⚠️ 旧的 `(0.55,1.45)/(0.75,1.95)/(0.90,2.40)` 是**对着旧夹具标的**、不可再用：
+    // 旧夹具是"5 只清一色地面青苔妖、1e8 无敌血、全摆射程内、无预热、只记有效伤害"，
+    // 它同时抹掉了分层混编、靶子会死、起手齐射、以及击空那一部分，四个偏差方向还不一致。
+    //
+    // ⚠️ **这是警报器，不是"模型正确"的证明。** 60 关的 2.80 已知有一个可归因的缺口：
+    // 模型的命中密度系数（`PerBlade 1.2` / `PerTick 2`，见 skill_values.md §3）是**常数**，
+    // 不随在场只数变化；而持续型法术（天降火海 `skill_02`）实测 67~91 命中/次，模型恒给 18.5。
+    // 它抓得住的是**整块乘区级别的漏算**：`combat.md` §12.2 记的那个"模型漏算共享倍率窗"
+    // 在曲线上表现为 ×7.71 —— 那种量级一定撞红。
+    var probes = new[] { (order: 10, lo: .74, hi: 1.24), (order: 30, lo: .89, hi: 1.49), (order: 60, lo: 2.10, hi: 3.50) }
+        .Select(p => (p.order, p.lo, p.hi, rec: probe.Reconcile(p.order, saveState: null))).ToArray();
+    foreach (var p in probes) Assert(p.rec is not null, "Reconcile 不该返回 null（模型上面已断言非空）");
+
+    Console.WriteLine("DIAG 逐拍模拟 ÷ 期望模型（真实波次 + 饱和供给 + 30s 预热）："
+        + string.Join("  ", probes.Select(p => $"{p.order} 关 {p.rec!.ModelRatio:0.###}")));
+    foreach (var p in probes)
+    {
+        var rec = p.rec!;
+        Console.WriteLine($"DIAG   {p.order} 关：一波 {rec.ModelPoint.FieldCount} 只 共 {rec.ModelPoint.Waves} 波"
+            + $" SU/s {rec.ModelPoint.SuPerSecond:0.##} 清一波 {rec.ModelPoint.WaveTtk:0.##}s"
+            + $" 模型 {rec.ModelDps:0.#}/s");
+        // 命中/次并排：**这才是这一列存在的意义**——比值偏高时看它就归因到具体形态的常数上。
+        foreach (var s in rec.ModelPoint.Skills.Where(s => s.Casts > 0 && s.Hits > 0))
+            Console.WriteLine($"DIAG     {s.SkillId,-13} 出手{s.Casts,4} 命中{s.Hits,6}"
+                + $" 实测{s.HitsPerCast,7:0.##}/次 模型{s.ModelHitsPerCast,6:0.##}");
+        Assert(p.rec!.ModelRatio > p.lo && p.rec.ModelRatio < p.hi,
+            $"{p.order} 关：逐拍模拟 ÷ 期望模型 = {p.rec.ModelRatio:0.###}，跑出了基线带 [{p.lo}, {p.hi}]"
+            + $"（模型 {p.rec.ModelDps:0.#} / 模拟 {p.rec.ModelPoint.HpPerSecond:0.#} 伤害每秒）。"
+            + "先看上面那张「实测 vs 模型 命中/次」定位到具体形态，再查是不是**某一侧漏了整块乘区**（combat.md §12）；"
+            + "确认是有意改数值再重标基线，并在提交信息里说清为什么。");
+    }
+
+    // ── 确定性：同一个 ProbeRequest 两次必须逐位相同 ────────────────────────────
+    // 探针报出来的数要能当证据用，就得不含任何"这次摇出来的"成分（种子固定 + 步长固定）。
+    string Fingerprint(ProbeResult x) => string.Join("|",
+        x.SuPerSecond, x.Ttk, x.Kills, x.ClearedSu, x.Waves, x.HpPerSecond,
+        string.Join(",", x.Skills.Select(s => $"{s.SkillId}:{s.Casts}:{s.Hits}")));
+    var req = new ProbeRequest
+    {
+        Order = 30,
+        Point = new ProbePoint
+        {
+            Name = "模型期望", FromModel = true,
+            Talents = probe.Model!.Talents[29], RealmUnlock = probe.Model.RealmUnlock,
+            SkillLevel = LevelCurve.SkillLevelAt(30),
+        },
+    };
+    Assert(Fingerprint(probe.Measure(req)) == Fingerprint(probe.Measure(req)),
+        "同一个 ProbeRequest 两次测量必须逐位相同（否则这个数不能当证据用）");
+
+    // ── 窗口收敛：预热确实把起手齐射去掉了 ────────────────────────────────────
+    // 不预热的那一发里，十五式在 t≈0 一起白得一次出手；30 秒冷却的技能于是 60 秒里出手 3 次而不是 2 次。
+    // 两个都预热、只是窗口长短不同的那两次，则必须收敛到同一个每秒输出。
+    double Su(int warmup, double window)
+    {
+        var res = probe.Measure(new ProbeRequest
+        {
+            Order = 30, WarmupSeconds = warmup, WindowSeconds = window,
+            Point = req.Point,
+        });
+        return res.SuPerSecond;
+    }
+    double warm60 = Su(30, 60), warm120 = Su(30, 120), cold60 = Su(0, 60);
+    Assert(Math.Abs(warm60 - warm120) / Math.Max(warm60, warm120) < .05,
+        $"预热后的两个窗口必须收敛到同一个每秒输出：60s 窗口 {warm60:0.##} vs 120s 窗口 {warm120:0.##} SU/s"
+        + "（差超过 5% 说明还有没被预热冲掉的暂态，比如靶子第一次走进射程的那段）");
+    // ⚠️ **方向与当初的猜测相反，而且这一条本来就该由探针来纠正**：预热期真正冲掉的
+    // **不是起手齐射，而是"靶子还在从刷怪点往里走"那段爬坡**。
+    // 实测第 30 关、两边同为 60 秒窗口：不预热 1456 / 预热后 1618 SU/s（低了 11%）。
+    // 起手齐射那一份确实存在（开局 `Battle.Cooldowns` 是空的，十五式在 t≈0 一起白得一次出手），
+    // 但它的量级远小于爬坡：十五式里绝大多数冷却只有 1~6 秒，60 秒窗口本来就出手十几次，
+    // 白得一次是个位数百分比；而爬坡期有近十秒场上几乎没人可打（首只靶子得走完 `40 + i×100` 那段路才进射程）。
+    // 所以这条断言要的是**"预热有作用"**，不是"预热一定压低数值"——写反了就会把对的实现判红。
+    Assert(cold60 < warm60 * .98,
+        $"不预热必须明显偏低（靶子还在走进射程的爬坡期占了窗口的一大块）："
+        + $"冷启动 60s 窗口 {cold60:0.##} vs 预热后 {warm60:0.##} SU/s"
+        + "——两者若差不多，说明预热期没起到作用，或者这条断言已经没有牙齿");
+});
 Check("SaveStore.Clone：深拷贝一份状态（改副本不影响原状态）", () => {
     // 技能预览的「跟随当前存档」练度靠它：沙盒会推进、会结算（靶子被打死就掉钱、写解锁标记），
     // 所以必须是拷贝而不是共享引用，否则一开预览就污染真实进度。

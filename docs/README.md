@@ -20,6 +20,8 @@
 - [十五法术设计评审（诊断 + 方向性建议）](design/skill_review.md) —— **进入参悟等扩展前先看这份**
 - [十五法术数值存档](design/skill_values.md) —— **调技能数值前必读**（口径、当前值、目标值、调优旋钮）
 - [参悟系统设计（草案，待讨论）](design/sword_intent.md)
+- [技能结构方案（三层拆表：Effect / Buff / Timeline / Trigger）](battle/技能结构方案.md)
+- [战斗评估系统方案（战斗探针）](battle/DPS评估与战斗模拟系统方案.md) —— **SU / TTK 为纲；与工程的对账差异在文末**。内核 `Features/Battle/CombatProbe.cs`，出口是关卡编辑器的只读节「战斗探针」
 - [工程框架方案](technical/architecture.md)
 - [配置表规划](data/config_plan.md)
 - [CSV 字段字典](data/fields.md)
