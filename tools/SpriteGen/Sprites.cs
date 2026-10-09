@@ -129,7 +129,7 @@ internal static class Sprites
         "", "", "", "", "", "", "", "",               // 24-31
     ]);
 
-    /// <summary>通用：一颗四角星芒（参悟）。</summary>
+    /// <summary>通用：一颗四角星芒（开关 / 解锁类节点）。</summary>
     public static readonly SpriteDef NodeUtility = Icon("node_utility",
     [
         "", "", "", "", "", "", "", "",               // 0-7

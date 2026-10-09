@@ -103,9 +103,10 @@
 | 掉落固定 +N | 资源 | 天赋 `effect=drop_flat`（只加在怪物自身那一笔；**排除裂隙**，也**不含** `drop.csv` 奖励组） |
 | 关卡奖励组 | 资源 | `drop.csv`（首杀组 / 重复组） |
 | 灵核 | 资源 | **只由 BOSS 首杀发放**，唯一入账点在 `GameSession.HurtEnemy` |
-| 参悟货币 | 资源 | `contemplation.csv`（点击 / 自动产出） |
+| ~~参悟货币~~ | 资源 | ~~`contemplation.csv`（点击 / 自动产出）~~ **2026-10-09 随参悟删除**；`item.csv` 现在只剩 `gold` / `core` |
 
-> ⚠️ **没有经验 / 等级**。成长全部通过货币购买（修行 / 法术 / 铸造 / 参悟 / 剑灵），不存在 XP 属性。
+> ⚠️ **没有经验 / 等级**。成长全部通过货币购买（修行 / 法术 / 铸造 / 剑灵），不存在 XP 属性。
+> （原文这里还列着「参悟」——**2026-10-09 随参悟删除**，见 [core_growth_systems.md](core_growth_systems.md) §10.2。）
 
 ## I. 元维度（改变规则本身）
 
@@ -113,7 +114,7 @@
 | --- | --- | --- |
 | 技能等级 | 数值 | `Features/SwordRealm/SwordRealmSystem.cs`，`skill_level_bonus` |
 | 境界解锁 | 开关 | `SwordLevel.csv`（每境若干技能） |
-| 参悟强化 | 数值 | `SwordUpgrade.csv` 的 `effect` 词汇表（目前 `damage_percent` / `inherit_percent`） |
+| ~~参悟强化~~ | 数值 | ~~`SwordUpgrade.csv` 的 `effect` 词汇表~~ **2026-10-09 随参悟删除**（整张表下线，见 §10.2） |
 | 影分身 | 机制 | `secondary=mirror`（分身复制本体每一式，比例不封顶） |
 | 普攻形态切换 | 开关 | 天赋 `ranged_basic`（近战 → 远程） |
 | 自动出手 | 开关 | 天赋 `auto_basic`（省手，**不增加 DPS**——与手动共用同一冷却键） |
@@ -203,8 +204,8 @@ Vulnerability = Π(目标身上的易伤 …)                          // 乘算
 
 > ⚠️ **`SwordUpgrade.csv` 里 12 行参悟曾经完全无效、却照样卖**（仙云 / 醉仙 / 剑罡护体 × 4 类）：
 > 它们配的是 `damage_percent`，而这三个是增益类，`power` 对增益**只有声明了伤害倍率窗才产生作用**
-> ——玩家花参悟货币买不到任何东西。**已删除**（参悟行数 60 → **48**）。
-> 参悟整体重做时，按 `sword_intent.md` 的设想给增益配"自己的强度轴"（仙云 → 攻速比例、
-> 醉仙 → 暴击、剑罡护体 → **护盾量**）再加回来。
+> ——玩家花参悟货币买不到任何东西。**已从数据里删除**（参悟行数 60 → **48**）；
+> **参悟与整张表随后在 2026-10-09 一起下线**（见 [core_growth_systems.md](core_growth_systems.md) §10.2）。
+> 留下的问题仍然成立：将来给增益配"**自己的强度轴**"（仙云 → 攻速比例、醉仙 → 暴击、剑罡护体 → **护盾量**）。
 
 退役技能原文收在 `idle-sword/Config/Tables/SwordSkill_Retired.csv`（**不参与加载**）。这些是为后续扩展留的词汇表——`tests/Program.cs` 用**内存改配置**维持它们的覆盖，所以别当成死代码删掉。

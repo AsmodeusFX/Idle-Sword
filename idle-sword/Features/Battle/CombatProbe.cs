@@ -220,7 +220,7 @@ public sealed class CombatProbe
         // 存档点必须**深拷贝**：沙盒会推进、会结算（靶子掉血、写冷却），共享引用会把真实进度改坏。
         var state = r.Point.FromModel ? new PlayerState() : SaveStore.Clone(r.Point.State ?? new PlayerState());
         var session = new GameSession(_config, state, seed: r.Seed) { SandboxMode = true, BasicAttackEnabled = true };
-        // 练度摆成模型假设的那一份（不给参悟、不给武器——模型也算不了它们，给了比值就不可归因）。
+        // 练度摆成模型假设的那一份（不给武器——模型也算不了它，给了比值就不可归因）。
         if (r.Point.FromModel) GrantModelPoint(session, r.Order, r.Point);
         // 探针量的是**输出上限**：自动出手与远程是"普攻每一发都稳定出去"这条口径的前提。
         // **两个练度点都补上**，否则存档点会因为没点这两项而变成"站着不还手"，两点的差就失去意义了。
@@ -415,7 +415,7 @@ public sealed class CombatProbe
 
     /// <summary>
     /// 把模型对**这一关该有的练度**摆到会话上：境界、天赋、技能等级。
-    /// **不给参悟、不给武器**——模型也不算它们，给了比值就不可归因（差异要能指到具体的乘区上）。
+    /// **不给武器**——模型也算不了它，给了比值就不可归因（差异要能指到具体的乘区上）。
     /// </summary>
     private void GrantModelPoint(GameSession session, int order, ProbePoint point)
     {

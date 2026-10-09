@@ -34,7 +34,6 @@ t_100022,培土 5 2 2,5,gold,4|8|12|16|20,hp_flat,10,defense
 t_100023,拔节 2 4 2 4,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100024,拔节 2 4 2 5,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100025,培土 5 2 2 9,5,gold,4|8|12|16|20,hp_flat,10,defense
-t_100026,参悟,1,core,1,intent_system,1,utility
 t_100027,拔节 2 4 2 2,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100028,拔节 2 2 6,5,gold,6|12|18|24|30,atk_flat,3,attack
 t_100029,拔节 2 4 2 3,5,gold,6|12|18|24|30,atk_flat,3,attack

@@ -24,7 +24,7 @@ public partial class Main : Control
     private OptionButton _levelSelect = null!;
     private readonly List<string> _levelIds = [];
     private readonly List<Action> _bindings = [];
-    private int _selectedTab, _intentTab = -1;
+    private int _selectedTab;
     private double _accumulator, _saveClock, _refreshClock;
     private bool _failed, _testMode;
     // 序章：只在**全新存档**时播一次。--prologue 可以强制播放（开发与截图用）。
@@ -142,9 +142,10 @@ public partial class Main : Control
         _notice = UiKit.Label(this, "", 40, 536, 1840, 34, 21, UiKit.Jade);
         // **页签改成左侧竖排**。原来横排占掉一整个 56px 高的横带，而画布是"左右宽、上下紧"——
         // 竖排之后横向让出 128px，纵向净赚 ~150px，功能区从 316 高变成 452 高（星图节点因此能放大 65%）。
-        // 只留 4 个页签：剑灵系统暂缓（用户决定先屏蔽入口，名字未定），PetPage 保留在代码里但不挂入口。
+        // 只留 3 个页签：剑灵系统暂缓（用户决定先屏蔽入口，名字未定），PetPage 保留在代码里但不挂入口；
+        // 参悟（剑意）2026-10-09 整体删除，页签一并撤掉（见 `Systems.Retired`）。
         // 「境界」改叫「**法术**」：这一页装的是"学哪些剑诀"，境界突破只是它内部的阶梯。
-        string[] names = ["修行", "法术", "铸造", "参悟"];
+        string[] names = ["修行", "法术", "铸造"];
         for (int i = 0; i < names.Length; i++)
         {
             int tab = i;
@@ -306,10 +307,6 @@ public partial class Main : Control
                 if (TalentPanXForCheck >= panBeforeReveal) throw new Exception("Talent view did not reveal an off-screen node");
             }
             else GD.Print($"SKIP talent reveal：这棵树最右只到 col {maxCol}，全在框内（等树长出去再验）");
-            _intentTab = -1; ShowPage(3); Refresh(); Press("◇");
-            var collect = _page.GetChildren().OfType<Button>().First(b => b.Text.StartsWith("移入收取"));
-            collect.EmitSignal(Control.SignalName.MouseEntered);
-            if (_game.State.Amount("intent_0") != 1) throw new Exception("Hover collection UI action failed");
             // 命中音：推进真实战斗，并逐帧放行让 BattleView._Process 里的血量差分真的跑到。
             // 一次跑完再取结果是不行的——那样敌人会在两帧之间生灭，表现层根本观察不到。
             for (int frame = 0; frame < 40; frame++)
@@ -670,9 +667,9 @@ public partial class Main : Control
                         $"[{e.MonsterId} hp={e.Hp:F0}/{e.MaxHp:F0} x={e.X:F0} atk={e.Atk:F0}]")) + "］");
             // 一帧一张紧着拍：那条曲线头两三帧就走完大半，"缩到很小"只有第一张看得到。
             for (int i = 0; i < 5; i++) { await Capture("-spawn" + i); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
-            // 前 4 张对应 4 个页签；第 5 张是 PetPage——它的页签入口已屏蔽（剑灵系统暂缓），
+            // 前 3 张对应 3 个页签；第 4 张是 PetPage——它的页签入口已屏蔽（剑灵系统暂缓），
             // 但页面本身与接线都留着，照旧截一张，等于给这个暂时不可达的页面留一份回归覆盖。
-            for (int i = 0; i < 5; i++) { ShowPage(i); Refresh(); await Capture("-page" + i); }
+            for (int i = 0; i < 4; i++) { ShowPage(i); Refresh(); await Capture("-page" + i); }
             // 系统解锁门：锁上「法术」切过去该是一张**说明页**（纯文字，没有真内容），解锁后恢复。
             // 页签本身始终可见——隐藏会让上面那圈按下标取的断言全乱，见 `Main.TabSystems` 的说明。
             _game.State.UnlockedSystems.Remove(Systems.Realm);
@@ -741,12 +738,14 @@ public partial class Main : Control
             foreach (var (id, level) in keptTalents) _game.State.Talents[id] = level;
             ShowPage(0); Refresh();
 
-            // 另三条门也各走一遍「锁着 → 说明页」，确认四个页签挂的是**各自的**系统而不是同一个。
-            for (int tab = 2; tab <= 3; tab++)
+            // 剩下那扇带门的页签（铸造）也走一遍「锁着 → 说明页」，确认每个页签挂的是**各自的**系统而不是同一个。
+            // 上界是 2 而不是"页签数−1"：参悟删掉之后，`TabSystems` 末尾那个 null 是**没有页签**的 PetPage 槽位，
+            // 走到它上面 `TabSystems[tab]!` 就是 null，这条断言自己会炸。
+            for (int tab = 2; tab <= 2; tab++)
             {
                 // 页签跟的是 `Unlocked(system)` = **里程碑 ∪ 修行节点**（下面 GM 那段就是这么理解的：
                 // "先真的全锁上（连修行节点那份推导来源一起撤）"）。所以只撤里程碑**锁不住**修行树上
-                // 挂着那扇门的系统 —— 页签照样开着，这条断言就变成假失败（`t_100026` 接上参悟门之后就是）。
+                // 挂着那扇门的系统 —— 页签照样开着，这条断言就变成假失败。
                 _game.State.UnlockedSystems.Remove(TabSystems[tab]!);
                 var gate = _game.Config.Rows("Talent")
                     .FirstOrDefault(r => Systems.ByEffect.GetValueOrDefault(r.Text("effect")) == TabSystems[tab]);
@@ -1101,7 +1100,6 @@ public partial class Main : Control
             // ── 关卡编辑器 ──（与节点编辑器同一条纪律：探针从配置现取、破坏性动作演练完就丢弃）
             await LevelEditorSmoke(Capture);
 
-            _intentTab = 0; ShowPage(3); Refresh(); await Capture("-intent");
             ShowPage(0); Refresh(); await Capture("");
             // GM 面板：发放后续步骤所需资源（既覆盖 GM→GameSession 接线，也避免界面直接改写钱包），
             // 并顺带按一下波次加成的 ＋ / −，把那条接线也走一遍。
@@ -1329,7 +1327,8 @@ public partial class Main : Control
             if (!tipBuff.Contains("每级") || !tipBuff.Contains("覆盖率")) throw new Exception("增益类的升级提示没写清幅度：" + tipBuff);
             ShowPage(2); Refresh(); Press("打造并装备"); Press("淬炼");
             if (_game.State.Weapon != "sword_wood" || _game.State.WeaponLevel != 1) throw new Exception("Forge UI action failed");
-            ShowPage(4); Refresh(); Press("召唤");
+            // 索引 3 是**没有页签**的 PetPage（剑灵入口屏蔽、页面保留）。参悟删除后它从 4 前移到了 3。
+            ShowPage(3); Refresh(); Press("召唤");
             if (_game.State.EquippedPets.Count != 1) throw new Exception("Pet UI action failed");
             // 突破音走的是"带专属成功音的 Act"路径；突破要花灵石，GM 之后才有，所以放在这里。
             ShowPage(1); Refresh(); Press("突破");
@@ -1564,16 +1563,17 @@ public partial class Main : Control
         _music = null;
     }
     /// <summary>
-    /// 页签 → 系统 id。第 5 个（剑灵）留空：它本来就没有入口，不该被门挡住。
+    /// 页签 → 系统 id。末尾那个 null 是**没有页签**的 PetPage（剑灵暂缓、入口屏蔽，页面本身还在，
+    /// 靠 `ShowPage(3)` 留着回归覆盖）：它本来就没有入口，不该被门挡住。
     /// 每个系统的解锁途径见 <see cref="Systems.ByEffect"/> 与 `GameSession.Unlocked`。
     /// </summary>
     private static readonly string?[] TabSystems =
-        [Systems.Cultivation, Systems.Realm, Systems.Forge, Systems.Intent, null];
+        [Systems.Cultivation, Systems.Realm, Systems.Forge, null];
 
     private bool TabLocked(int tab) => TabSystems[tab] is { } system && !_game.Unlocked(system);
 
     /// <summary>上一轮的锁定状态。用来发现"**刚刚**解锁了"——解锁那一刻要炸一下，见 <see cref="OnSystemUnlocked"/>。</summary>
-    private readonly bool[] _tabWasLocked = new bool[5];
+    private readonly bool[] _tabWasLocked = new bool[4];
 
     /// <summary>
     /// 解锁"揭示"的进行状态：新功能强制切过去之后，先被遮罩罩住一拍，到点那一刻碎开、露出内容。
@@ -1670,7 +1670,7 @@ public partial class Main : Control
         // 技能预览**不再借用这一页**：它是自己一块全屏工具页（`UI/SkillPreview.cs`），
         // 从前的 `if (_preview is not null) { PreviewPage(); return; }` 正是"工具与玩家页面纠缠"的来源。
         if (TabLocked(tab)) { LockedPage(_tabs[tab].Text); return; }
-        switch (tab) { case 0: break; case 1: SkillPage(); break; case 2: ForgePage(); break; case 3: IntentPage(); break; case 4: PetPage(); break; }
+        switch (tab) { case 0: break; case 1: SkillPage(); break; case 2: ForgePage(); break; case 3: PetPage(); break; }
     }
 
     /// <summary>

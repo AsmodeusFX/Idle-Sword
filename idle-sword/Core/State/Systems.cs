@@ -16,11 +16,23 @@ public static class Systems
     public const string Cultivation = "cultivation";   // 修行
     public const string Realm = "realm";               // 法术（页签名；里头仍是「境界突破」那条阶梯）
     public const string Forge = "forge";               // 铸造
-    public const string Intent = "intent";             // 参悟
     public const string Pet = "pet";                   // 剑灵（暂无入口）
 
     /// <summary>全部系统 id，供存档校验与 GM「一键解锁」共用。</summary>
-    public static readonly string[] All = [Cultivation, Realm, Forge, Intent, Pet];
+    public static readonly string[] All = [Cultivation, Realm, Forge, Pet];
+
+    /// <summary>
+    /// **已退役的系统 id**（曾经在 <see cref="All"/> 里、后来随系统一起被删）。
+    ///
+    /// 它只服务一件事：老存档的 `UnlockedSystems` 里可能还留着这些字面量，
+    /// 而 <see cref="SaveStore.Validate"/> 对未知 id 是**硬拒**的——不认这一份，
+    /// 老玩家读档就会被归档、丢掉全部进度。所以 `SaveStore` 在加载时按这个名单**定点剔除**。
+    ///
+    /// ⚠️ **千万不要把它改成"凡是白名单外的都净化掉"**：那条硬拒拦的是**代码里的拼写 bug**
+    /// （`"cutivation"` 会让那个系统永久锁死且不报任何错），通用净化会把这类 bug 一起吃掉。
+    /// 退役是**设计意图**，拼错是 **bug**，两者必须分开走。
+    /// </summary>
+    public static readonly string[] Retired = ["intent"];   // 参悟（剑意）：2026-10-09 整体删除
 
     /// <summary>
     /// 修行节点的 `effect` → 它解锁的系统。**这是解锁类效果唯一的登记处**：
@@ -34,6 +46,5 @@ public static class Systems
     {
         ["realm_system"] = Realm,
         ["forge_system"] = Forge,
-        ["intent_system"] = Intent,
     };
 }

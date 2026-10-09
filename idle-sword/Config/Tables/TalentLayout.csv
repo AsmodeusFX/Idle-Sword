@@ -29,7 +29,6 @@ t_forge,6,2,t_100022|t_100021,
 t_100023,7,2,t_forge,t_atk_middle
 t_100024,8,2,t_100023,t_atk_middle
 t_100025,9,2,t_100028|t_100037,t_atk_middle
-t_100026,10,2,t_100025,t_talent
 t_100002,1,3,t_atk_01,t_atk_middle
 t_100010,2,3,t_hp,t_hp_middle
 t_hp,3,3,t_atk,t_hp_middle

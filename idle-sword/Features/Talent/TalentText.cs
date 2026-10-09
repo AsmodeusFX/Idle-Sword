@@ -25,12 +25,10 @@ public static class TalentText
             "atk_flat" => $"攻击 +{per:0.##}/级",
             "hp_flat" => $"气血 +{per:0.##}/级",
             "drop_flat" => $"每只怪多掉 {per:0.##} 灵石",
-            "auto_intent" => "解锁在线自动参悟",
             "auto_basic" => "激活自动攻击（不用再点）",
             "ranged_basic" => "普攻变为远程·剑气",
             "realm_system" => "开启「法术」·可修习剑诀",
             "forge_system" => "开启「铸造」·可打造兵器",
-            "intent_system" => "开启「参悟」·可凝练剑意",
             "none" => "暂无效果（占位节点）",
             _ => $"效果 {effect} +{per:0.##}/级",
         };
@@ -53,12 +51,10 @@ public static class TalentText
         "drop_flat" => "掉落+",
         "auto_basic" => "自动出手",
         "ranged_basic" => "转远程",
-        "auto_intent" => "自动参悟",
         // 解锁类按 `Systems.ByEffect` 的约定以 `_system` 结尾；没登记的取值会原样吐回来——
         // 那正是"加了新效果忘了写文案"的样子，自检当场就能看见。
         "realm_system" => "法术门",
         "forge_system" => "铸造门",
-        "intent_system" => "参悟门",
         _ => effect,
     };
 

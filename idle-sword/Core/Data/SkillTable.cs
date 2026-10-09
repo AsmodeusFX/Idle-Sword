@@ -52,12 +52,12 @@ public sealed record EffectDef(
 /// <summary>时间化行为。`Kind` 决定运行时怎么解释 `Value`；`Target` 决定挂在谁身上。</summary>
 /// <param name="Value">该 kind 的强度：dot 每秒倍率 / slow·chill 减速比例 / vulnerable 增伤比例 /
 /// haste 提高比例 / crit_reduce 暴击率绝对加成 / shield 护盾×攻击 / regen 每秒回血比例 /
-/// lifesteal 吸血比例 / mirror 继承比例。它是**基础值**：技能等级与参悟的成长只施加在
+/// lifesteal 吸血比例 / mirror 继承比例。它是**基础值**：技能等级的成长只施加在
 /// "由技能直接释放的那一手"上（`SkillRate` 那条轴），由时间轴/触发器派生的效果不带成长。</param>
 /// <param name="Extra">附加参数：当前只有 `crit_reduce` 用它（每次暴击缩短的冷却秒数）。</param>
 /// <param name="DamageWindow">这一份增益是否**写一格共享伤害倍率窗**（DMG3 的 Build 乘区）。
 /// **判据与量必须是两个字段**——这正是「剑罡护体」那次事故（`power` 漏改 ⇒ 静默变成全队乘区）
-/// 的防线：拿 `DamageWindowPower` 当判据的话，给它点一级参悟就会把窗重新打开。</param>
+/// 的防线：拿 `DamageWindowPower` 当判据的话，把它升一级就会把窗重新打开。</param>
 /// <param name="DamageWindowPower">窗的倍率**基础值**（同样只吃技能成长）。未声明窗时必须为 0。</param>
 public sealed record BuffDef(
     string Id, string Name, string Kind, string Target, double Duration, double Value, double Extra,
@@ -83,9 +83,9 @@ public sealed class BuffInstance
     public double TickTimer { get; set; }
     /// <summary>
     /// 这一份的强度，**在施加那一刻定格**。多数 kind 就是配置的 `value`；三处例外各有理由：
-    /// 护盾在这里存的是**吸收池**（攻击 × value，此后被逐次扣减）；影分身的继承比例含等级与参悟的成长；
+    /// 护盾在这里存的是**吸收池**（攻击 × value，此后被逐次扣减）；影分身的继承比例含技能等级的成长；
     /// 灼烧存的是**施放那一刻的攻击者侧结算值**（出手快照——暴击与倍率窗都冻在这里，之后每跳只再叠目标侧修正）。
-    /// 定格是刻意的：正在生效的这一次不该随后续升级/参悟追溯变动。
+    /// 定格是刻意的：正在生效的这一次不该随后续升级追溯变动。
     /// </summary>
     public double Value { get; set; }
     public double Extra { get; init; }
@@ -151,7 +151,7 @@ public sealed class SkillTable
 
     // ── 词表：**只放已经有消费点的取值** ────────────────────────────────────────────
     // "先放开白名单、实现留到以后"会留下"配置上写了、战斗里没人读"的静默失效，
-    // 而拦住静默失效正是这个工程一直在做的事（见 docs/design/fightmodes 与 SwordUpgrade.effect 的先例）。
+    // 而拦住静默失效正是这个工程一直在做的事（见 docs/design/fightmodes 与 `Talent.effect` 的先例）。
     public static readonly string[] EffectTypes = ["attack", "auto_attack", "shorten_cooldown", "mirror_cast"];
     public static readonly string[] Conditions = ["", "target_hp_below", "target_has_state"];
     /// <summary>11 种时间化效果。前 5 种作用于目标，后 6 种作用于自身。</summary>

@@ -177,7 +177,6 @@ public sealed partial class GameSession
     {
         if (dt <= 0 || !double.IsFinite(dt)) return;
         Elapsed += dt;
-        TickIntent(dt);
         if (Battle.RespawnTimer > 0)
         {
             Battle.RespawnTimer = Math.Max(0, Battle.RespawnTimer - dt);
@@ -552,9 +551,9 @@ public sealed partial class GameSession
     }
     /// <summary>
     /// 法术的 **SkillRate**（文档口径里的那个；代码里叫 Power 是因为它读的是效果行的 `power`）：
-    /// `配置 power × (1 + 技能等级加成 + 参悟加成)`。普攻不走这里（它用 `fightattr.basic_power`）。
+    /// `配置 power × (1 + 技能等级加成)`。普攻不走这里（它用 `fightattr.basic_power`）。
     ///
-    /// 它是**技能自身的永久成长**：等级与参悟都是"这一式被培养到什么程度"，属于技能定义，
+    /// 它是**技能自身的永久成长**：等级是"这一式被培养到什么程度"，属于技能定义，
     /// 所以落在 **DMG1** 的 `SkillRate` 上；而"这一发因为目标残血/带着状态/某个 BD 条件而被放大多少"
     /// 落在 **DMG3** 的 Build 乘区。两者的分界见 `docs/design/combat.md`——混在一起就会出现
     /// "同一个技能在不同 BD 下的定义都不一样"，任何数值对照都失去意义。
@@ -563,7 +562,7 @@ public sealed partial class GameSession
     /// 两边必须同源，否则提示会撒谎。
     /// </summary>
     private double SkillPower(SkillDef skill, int rank) =>
-        skill.Power * (1 + Config.Setting("skill_level_bonus") * (rank - 1) + SkillBonus(skill.Id, "damage_percent"));
+        skill.Power * (1 + Config.Setting("skill_level_bonus") * (rank - 1));
 
     /// <summary>
     /// 增益类法术的**实际冷却**：每升一级缩短 `buff_cooldown_per_level`，但**下限是持续时长 × `buff_cooldown_floor_ratio`**。
@@ -1334,7 +1333,7 @@ public sealed partial class GameSession
     /// 某个系统解锁了没。UI 拿它决定页签可用不可用。
     ///
     /// 两个来源，取并：**里程碑**（首杀小怪 → 修行，记在 `State.UnlockedSystems` 里）与
-    /// **修行节点**（`realm_system` / `forge_system` / `intent_system`，见 `Systems.ByEffect`）。
+    /// **修行节点**（`realm_system` / `forge_system`，见 `Systems.ByEffect`）。
     /// 后者是**推导**出来的、不落盘——买节点时另外写一份状态的话，读档与改配置都可能让两边对不上。
     /// </summary>
     public bool Unlocked(string system) =>

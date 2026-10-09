@@ -12,7 +12,7 @@
 >
 > 以 [phase_01.md](../planning/phase_01.md) 各轮的落地记录为准。
 >
-> 关联：[sword_skills.md](sword_skills.md)（15 剑诀设计）、[skill_realms.md](skill_realms.md)（境界编排）、[balance_ttk.md](balance_ttk.md)（刻度口径）、[monsters.md](monsters.md)（怪物与波次）、[sword_intent.md](sword_intent.md)（剑意草案）、[../data/fields.md](../data/fields.md)（字段字典）。
+> 关联：[sword_skills.md](sword_skills.md)（15 剑诀设计）、[skill_realms.md](skill_realms.md)（境界编排）、[balance_ttk.md](balance_ttk.md)（刻度口径）、[monsters.md](monsters.md)（怪物与波次）、~~`sword_intent.md`~~（剑意草案，**2026-10-09 随参悟删除**）、[../data/fields.md](../data/fields.md)（字段字典）。
 
 ## 零、结论摘要
 
@@ -162,6 +162,10 @@
 
 ## 五、剑意扩展空间
 
+> ⚠️ **本节整体已作废（2026-10-09）**：参悟（剑意）系统整体删除，`SwordUpgrade.csv` 与 `sword_intent.md` 均已下线。
+> 下面讨论的"扩展 `effect` 词汇表"这条路**不再存在**；留下的真问题（炼气档缺成长轴、`pierce_chance` / `vulnerable` 等待投放）
+> 改由后续成长系统（法术灵韵 / 神通 / 神识）承载，见 [core_growth_systems.md](core_growth_systems.md) §10。**保留原文仅供追溯。**
+
 ### 5.1 现状
 
 - `SwordUpgrade.csv` **60 行**（4 意图 × 15 技能），**全部**是 `effect = damage_percent`（56 行 `value = 0.08`，剑二十三那 4 行是 `0.01`）。
@@ -170,7 +174,7 @@
 
 ### 5.2 已有草案的方向是反的
 
-[sword_intent.md](sword_intent.md) 第五节列了 7 种 `effect`：`damage_percent` / `cooldown_percent` / `crit_chance` / `crit_damage` / `secondary_value` / `secondary_duration` / `aoe_radius_percent`——**全是数值档**。
+~~`sword_intent.md`~~（**2026-10-09 已删除**）第五节列了 7 种 `effect`：`damage_percent` / `cooldown_percent` / `crit_chance` / `crit_damage` / `secondary_value` / `secondary_duration` / `aoe_radius_percent`——**全是数值档**。
 
 而用户点名的两条**恰恰都不在**：
 

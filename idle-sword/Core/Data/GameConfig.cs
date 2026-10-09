@@ -27,7 +27,7 @@ public sealed record WaveUnitDef(string Monster, int Weight);
 /// <summary>唯一配置入口。读取源 CSV 后校验并建立索引，运行时不修改配置对象。</summary>
 public sealed class GameConfig
 {
-    public static readonly string[] Files = ["monster.csv", "level.csv", "item.csv", "fightattr.csv", "SwordLevel.csv", "SwordSkill.csv", "SkillEffect.csv", "SkillBuff.csv", "SkillBuffTimeline.csv", "SkillBuffTrigger.csv", "Talent.csv", "Equip.csv", "SwordUpgrade.csv", "Pet.csv", "PetSkill.csv", "PetEquip.csv", "wave.csv", "wave_unit.csv", "drop.csv", "spawn_point.csv", "TalentLayout.csv", "contemplation.csv", "game_settings.csv"];
+    public static readonly string[] Files = ["monster.csv", "level.csv", "item.csv", "fightattr.csv", "SwordLevel.csv", "SwordSkill.csv", "SkillEffect.csv", "SkillBuff.csv", "SkillBuffTimeline.csv", "SkillBuffTrigger.csv", "Talent.csv", "Equip.csv", "Pet.csv", "PetSkill.csv", "PetEquip.csv", "wave.csv", "wave_unit.csv", "drop.csv", "spawn_point.csv", "TalentLayout.csv", "game_settings.csv"];
     /// <summary>
     /// **开关类**天赋效果（含解锁类）：语义是"大于 0 即生效"，不是档位。
     ///
@@ -36,7 +36,7 @@ public sealed class GameConfig
     /// 解锁类那三个由 `Systems.ByEffect` 现取：**它才是解锁系统的唯一登记处**。
     /// </summary>
     public static readonly string[] SwitchEffects =
-        ["auto_basic", "ranged_basic", "auto_intent", .. Systems.ByEffect.Keys];
+        ["auto_basic", "ranged_basic", .. Systems.ByEffect.Keys];
 
     // 天赋节点的前置**不设条数上限**——从前的 2 条是拍脑袋定的，而语义改成"任意一条点亮即可"之后，
     // 多挂几条反而更好读（读者读的是"这几条里走通一条就行"，不是"这几条都得走通"）。
@@ -158,10 +158,8 @@ public sealed class GameConfig
             if (currency.Text("kind") != "currency") throw r.Error("cost_currency", "必须引用 item.csv 里 kind=currency 的道具");
             Choice(r, "icon", "attack", "defense", "utility", "special");
             // 取值分两类：**数值**（atk / hp / atk_flat / hp_flat）按 `effect_per_level × 等级` 求和；
-            // **开关**（auto_basic / ranged_basic / auto_intent，以及 Systems.ByEffect 里那几个解锁类）
+            // **开关**（auto_basic / ranged_basic，以及 Systems.ByEffect 里那几个解锁类）
             // 只认">0 即已生效"，语义是开关而不是档位。
-            // `auto_intent`（在线自动参悟）**当前没有任何节点承载**——用户拍板：该功能暂不投放，
-            // 做到那一步再决定挂在哪。枚举与消费点都留着，只是配置里没有那一行。
             string effect = r.Text("effect");
             // 约定：解锁类效果一律以 `_system` 结尾，且**必须在 Systems.ByEffect 里登记**。
             // 漏登记的后果是那个系统**永久锁死且不报任何错**，所以在这里当场拦住。
@@ -230,19 +228,6 @@ public sealed class GameConfig
             visiting.Remove(id); visited.Add(id);
         }
         foreach (var id in layout.Keys) Visit(id);
-        foreach (var r in c.Rows("SwordUpgrade"))
-        {
-            c.Ref(r, "skill_id", "SwordSkill"); c.Ref(r, "currency_id", "item");
-            Positive(r, "max_level"); Positive(r, "cost"); Positive(r, "value");
-            // effect 决定"这一行加的是哪种东西"，界面按它渲染文案——填错会显示成别的东西，必须校验。
-            // damage_percent = 技能威力；inherit_percent = 影分身的继承比例（剑二十三）。
-            Choice(r, "effect", "damage_percent", "inherit_percent");
-        }
-        foreach (var r in c.Rows("contemplation"))
-        {
-            c.Ref(r, "item_id", "item"); if (r.Text("item_id") == "core") throw r.Error("item_id", "参悟不能产出灵核");
-            Positive(r, "capacity"); Positive(r, "click_amount"); Positive(r, "auto_interval");
-        }
         foreach (var r in c.Rows("PetSkill")) { Positive(r, "cooldown"); Positive(r, "power"); Positive(r, "range"); }
         foreach (var r in c.Rows("Pet")) { c.Ref(r, "skill_id", "PetSkill"); Positive(r, "weight"); }
         foreach (var r in c.Rows("PetEquip")) { Positive(r, "power"); Positive(r, "cost_gold"); }

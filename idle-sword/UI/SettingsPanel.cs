@@ -126,7 +126,7 @@ public partial class Main
         _soundSlider = VolumeSlider(516); _soundValue = UiKit.Label(_settingsRoot, "", 1145, 516, 90, 30, 18, UiKit.Muted);
 
         UiKit.Label(_settingsRoot, "重置", 660, 576, 200, 34, 24, UiKit.Jade);
-        UiKit.Wrapped(_settingsRoot, "重置会清空全部进度：修行、法术、铸造、参悟、剑灵、首杀账本与关卡解锁。画面与音量设置不受影响。", 660, 614, 560, 56, 18, UiKit.Muted);
+        UiKit.Wrapped(_settingsRoot, "重置会清空全部进度：修行、法术、铸造、剑灵、首杀账本与关卡解锁。画面与音量设置不受影响。", 660, 614, 560, 56, 18, UiKit.Muted);
         _resetButton = UiKit.Button(_settingsRoot, "重置游戏进度", 660, 678, 300, 48, PressReset);
         _resetButton.AddThemeStyleboxOverride("normal", UiKit.Box(DangerBg, 6, DangerEdge));
         _resetButton.AddThemeStyleboxOverride("hover", UiKit.Box(new Color("#5d2f3d"), 6, DangerText));

@@ -17,13 +17,11 @@
 - [战斗属性与 DamageModifier 规范](design/fightattr.md) —— **要加战斗属性前先看这份**
 - [世界观与包装](design/worldview.md)
 - [怪物设计与「层 / 定位」轴](design/monsters.md)
-- [剑意（参悟）的包装与分页](design/intent_packaging.md)
 - [数值刻度与 TTK 规划（草案，待确认）](design/balance_ttk.md) —— **做数值计算前必读**
 - [十五法术设计](design/sword_skills.md)
 - [法术境界编排](design/skill_realms.md)
-- [十五法术设计评审（诊断 + 方向性建议）](design/skill_review.md) —— **进入参悟等扩展前先看这份**
+- [十五法术设计评审（诊断 + 方向性建议）](design/skill_review.md) —— **进入系统扩展前先看这份**
 - [十五法术数值存档](design/skill_values.md) —— **调技能数值前必读**（口径、当前值、目标值、调优旋钮）
-- [参悟系统设计（草案，待讨论）](design/sword_intent.md)
 - [技能结构方案（三层拆表：Effect / Buff / Timeline / Trigger）](temp/技能结构方案.md)
 - [在役技能逻辑清单（技能名 / 描述 / 实际效果 / 可触发的逻辑）](temp/技能逻辑清单.md) —— **要改某个技能时先看这份现状快照**
 - [核心成长系统认知文档（修行 / 法术 / 神通 / 神识）](design/core_growth_systems.md) —— **四系统"职责与边界"的唯一权威口径；写代码或配置前遇到归属问题看这份**

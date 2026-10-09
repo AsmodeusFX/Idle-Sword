@@ -75,12 +75,7 @@ void Dummies(GameSession g, int count, double startOffset, double step)
         });
 }
 
-// 参悟行数 = 12 个输出法术 × 4 类 + 剑二十三的 4 行 `inherit_percent` = **48**。
-// ⚠️ 从前的 60（= 15 × 4）里，**仙云 / 醉仙 / 剑罡护体那 12 行是完全无效的**：
-// 它们配的是 `damage_percent`，而这三个是增益类，`power` 对增益**只有声明了伤害倍率窗才产生作用**
-// （它们都没声明）⇒ 玩家花参悟货币买不到任何东西。2026-10-07 删掉，等参悟整体重做时再按
-// `sword_intent.md` 的设想给增益配"自己的强度轴"（仙云 → 攻速比例、醉仙 → 暴击、剑罡护体 → 护盾量）。
-Check("all tables / 100 stages / 15 skills / 48 intent upgrades", () => Assert(config.Levels.Count == 100 && config.Skills.Count == 15 && config.Rows("SwordUpgrade").Count == 48, "table counts"));
+Check("all tables / 100 stages / 15 skills", () => Assert(config.Levels.Count == 100 && config.Skills.Count == 15, "table counts"));
 Check("skill roster: three per realm, rearranged as designed", () => {
     // 每境恰 3 个。本轮把青元剑芒下到小妖、万剑决与天剑下到妖将、剑气流云壁下到妖尊，
     // 妖圣档腾出的位置给新技能剑二十三；剑侍归档，一进一出，在役数不变。
@@ -228,7 +223,7 @@ Check("new and moved skills carry the intended effects", () => {
         "斩鬼神 利用状态（目标带状态就增伤）");
     // 苍穹剑陨（原 18 大庚剑阵）：从"持续破甲地面"换成**爆炸类**——复用现成的 `sky_drop`，
     // 六柄剑在目标区域上空铺开后坠地，**靠寒冰龙卷把怪捏到一处才炸得满**。易伤（vulnerable）
-    // 因此下线回到死配置（代码与自检覆盖保留），将来由参悟授予别的分支。
+    // 因此下线回到死配置（代码与自检覆盖保留），将来由别的成长系统授予。
     var array = config.Skills["skill_18"];
     Assert(array.Kind == "projectile" && array.Trajectory == "sky_drop", "苍穹剑陨 是爆炸类的天降形态");
     Assert(array.ProjectileCount > 1 && array.AoeRadius > 0, "苍穹剑陨 多柄齐落、按落点半径结算");
@@ -236,7 +231,7 @@ Check("new and moved skills carry the intended effects", () => {
     Assert(array.Hits == "", "苍穹剑陨 hits both layers");
     // **生成带**：落点锚在玩家身上、等分铺在 `[玩家X + range − band, 玩家X + range]`（从身前一路铺到射程末端），
     // 与阵心在哪无关。数量初期是 3 支、爆炸只笼罩两三个身位——**靠怪聚成一堆才划算**，"加数量 / 加半径"
-    // 留给参悟（见 sword_skills.md 第八节第 13 条）。
+    // 留给后续成长系统（见 sword_skills.md 第八节第 13 条）。
     Assert(array.Band > 0 && array.Band <= 1400, "苍穹剑陨 的黑洞铺开宽度配了、且夹得进画面");
     // 与诛仙剑阵的分工：后者是**无条件全屏**，前者只在射程带里稀疏落点。
     Assert(!array.AoeAll && config.Skills["skill_15"].AoeAll, "苍穹剑陨 打一条带、诛仙剑阵 打全场");
@@ -418,7 +413,7 @@ Check("reject malformed talent star map", () => {
     // 开关 / 解锁类的每级效果量**必须大于 0**：判据是"大于 0 即生效"，填 0 就是"买了也不生效"，
     // 而且**不报任何错**（系统永远打不开）。编辑器补的骨架行 `effect_per_level` 正好是 0，
     // 把它的 effect 改成 `*_system` 却忘了改这一格——是最容易踩的那种静默失效。
-    var switchEffects = new[] { "auto_basic", "ranged_basic", "auto_intent" }.Concat(Systems.ByEffect.Keys).ToHashSet();
+    var switchEffects = new[] { "auto_basic", "ranged_basic" }.Concat(Systems.ByEffect.Keys).ToHashSet();
     string switchNode = config.Rows("Talent").First(r => switchEffects.Contains(r.Text("effect"))).Text("id");
     Reject(() => GameConfig.Load(f => f == "Talent.csv"
         ? Cell(source[f], switchNode, "effect_per_level", "0") : source[f]));
@@ -645,20 +640,6 @@ Check("伤害分级：同境界里功能越杂的水位越低、后一档高过�
     double godLevel = god.Power * 1 / (3.5 * god.Cooldown);
     Assert(cloudLevel < fallLevel, $"妖尊控场 {cloudLevel:0.##} 应低于同档范围 {fallLevel:0.##}");
     Assert(fallLevel < godLevel, $"后一档要更强：妖尊范围 {fallLevel:0.##} vs 妖圣单体 {godLevel:0.##}");
-});
-Check("参悟按 effect 分类：剑二十三的继承比例不再串味到伤害里", () => {
-    // 那 4 行配的是 `inherit_percent`。以前 `SkillBonus` **完全不看 effect**、凡 skill_id 命中就把
-    // 四行全求和，于是"影分身的参悟"同时被算进了 `SkillPower`（对 buff 无害，但机制上就是错的），
-    // 而且以后每加一种 effect 都会被卷进伤害——所以拆开。这条用例锁住拆分。
-    var g = New();
-    foreach (var r in config.Rows("SwordUpgrade").Where(r => r.Text("skill_id") == "skill_19"))
-        g.State.Upgrades[r.Text("id")] = r.Int("max_level");
-    Assert(g.SkillBonus("skill_19", "inherit_percent") > 0, "继承比例吃到了参悟");
-    Assert(g.SkillBonus("skill_19", "damage_percent") == 0, "伤害那一侧一点都不吃");
-    foreach (var r in config.Rows("SwordUpgrade").Where(r => r.Text("skill_id") == "skill_01"))
-        g.State.Upgrades[r.Text("id")] = 1;
-    Assert(g.SkillBonus("skill_01", "damage_percent") > 0 && g.SkillBonus("skill_01", "inherit_percent") == 0,
-        "御剑术的参悟只进伤害");
 });
 Check("等级上限归购买闸门、不归存档：超过 max_level 的等级读得回来", () => {
     // 用户定的成长口径是"技能升级给的那个数值线性不封顶"，后期手段会把等级顶过 `max_level`。
@@ -948,20 +929,6 @@ Check("old-stage loop and final-stage loop", () => {
 Check("no valid target consumes no skill cooldown", () => {
     var g = New(); g.Step(.05); Assert(g.Battle.Cooldowns.Count == 0, "empty range cooldown");
 });
-Check("intent auto-production, capacity and hover collection contract", () => {
-    // 「生根」已改用 `auto_basic`（激活自动攻击），**在线自动参悟当前没有任何节点承载**——
-    // 用户拍板该功能暂不投放，做到那一步再定挂哪。所以这条用例用**内存改配置**临时给它挂一个节点，
-    // 保住这条路径的覆盖（与 summon / line_pierce 那几条退役配置用例同一套路），而不是删掉断言。
-    // 挂到 `t_auto` 上：它本来就是"开关类、1 级"的形状，改 `effect` 不会撞上"开关类必须 1 级"那条校验。
-    var cfg = GameConfig.Load(f => f == "Talent.csv"
-        ? Cell(source[f], "t_auto", "effect", "auto_intent") : source[f]);
-    var g = new GameSession(cfg, seed: 42) { BasicAttackEnabled = false };
-    g.State.Talents["t_auto"] = 1; Step(g, 3.05);
-    Assert(g.State.PendingIntent["intent_0"] == 1 && g.State.Amount("intent_0") == 0, "pending");
-    for (int i = 0; i < 250; i++) g.ClickOre("ore_0");
-    Assert(g.State.PendingIntent["intent_0"] == 200, "capacity");
-    g.CollectIntent("intent_0"); g.CollectIntent("intent_0"); Assert(g.State.Amount("intent_0") == 200, "collect once");
-});
 Check("talent visibility, atomic costs and finite core spending", () => {
     // **不能用 `New()`**：它给的是后期盘面（已经点过生根与剑气），而这条要验的是"从零开始点"。
     var g = new GameSession(config, seed: 42);
@@ -1095,7 +1062,7 @@ Check("首杀小怪解锁「修行」，且只写一次；裂隙不算", () => {
 });
 Check("修行节点真的能解锁系统：点亮之前是锁的，点亮之后才开", () => {
     var g = new GameSession(config, seed: 42);
-    foreach (var s in new[] { Systems.Cultivation, Systems.Realm, Systems.Forge, Systems.Intent })
+    foreach (var s in new[] { Systems.Cultivation, Systems.Realm, Systems.Forge })
         Assert(!g.Unlocked(s), $"开局 {s} 应当是锁的");
     // 这条验的是「**节点 → 系统**」的推导，不是"买得到"（买得到那条由编辑器的保存提醒与数值锚点盯着）。
     // 所以**直接给等级**，并且**按 `effect` 现取节点**——节点会被重搭、改名、换位置，
@@ -1108,22 +1075,6 @@ Check("修行节点真的能解锁系统：点亮之前是锁的，点亮之后�
     Assert(g.Unlocked(Systems.Realm) && !g.Unlocked(Systems.Forge), "点亮「法术」只开法术");
     g.State.Talents[forgeNode] = 1;
     Assert(g.Unlocked(Systems.Forge), "再点「铸造」才开铸造");
-    // 参悟的门：**树上目前没有承载它的节点**（`t_intent` 在重搭修行树时被删了）。
-    // 与 `auto_intent` 那几条同一套处理——用**内存改配置**临时挂到根上（根必然存在），
-    // 保住"解锁由修行节点推导"这条路径的覆盖。
-    string rootId = config.Rows("TalentLayout").First(r => r.TextList("prereq").Count == 0).Text("id");
-    // 注意 `effect_per_level` 也要给成 1：开关类的判据是"大于 0 即生效"，
-    // 骨架行里它是 0——**这正是加载期现在会拦住的那种静默失效**。
-    // 注意 `effect_per_level` 要给成 1（开关类判据是"大于 0 即生效"，骨架行里它是 0），
-    // 而且开关类的 `max_level` 只能是 1、`cost` 也要跟着压成 1 项——根节点原本是 3 级的，
-    // 只改 effect 不改这两格会被加载期直接拒（**这条夹具从前"碰巧"能过**：
-    // 那时根恰好是个 1 级的骨架节点，用户把真正的 `t_root` 换回起点之后就露馅了）。
-    var withIntent = GameConfig.Load(f => f == "Talent.csv"
-        ? Cell(Cell(Cell(Cell(source[f], rootId, "effect", "intent_system"), rootId, "effect_per_level", "1"),
-            rootId, "max_level", "1"), rootId, "cost", "3") : source[f]);
-    var gi = new GameSession(withIntent, seed: 42) { BasicAttackEnabled = false };
-    gi.State.Talents[rootId] = 1;
-    Assert(gi.Unlocked(Systems.Intent), "参悟接上节点后能解锁");
     // 解锁是**推导**出来的、不落盘：买节点时另外写一份状态的话，读档与改配置都可能让两边对不上。
     Assert(!g.State.UnlockedSystems.Contains(Systems.Realm), "修行节点解锁不写进 UnlockedSystems");
 });
@@ -1272,7 +1223,7 @@ Check("意图侧车不进加载清单", () => {
 
 Check("意图都是单行，且显式钉住的 effect 合法", () => {
     var effects = new HashSet<string> { "none", "atk", "hp", "atk_flat", "hp_flat", "drop_flat",
-        "auto_basic", "ranged_basic", "auto_intent" };
+        "auto_basic", "ranged_basic" };
     foreach (string key in Systems.ByEffect.Keys) effects.Add(key);
     foreach (var r in PlanRows())
     {
@@ -1884,7 +1835,7 @@ Check("伤害倍率窗只认显式标记：没声明它的增益不会占用窗�
     // 没声明窗的增益（剑罡护体现在的样子）不写窗。
     // ⚠️ 从前这一半靠"给它配一个 1.5 的 `power`"来造场景，而**那个场景现在在结构上不可能了**：
     // 窗的倍率是 Buff 上独立的一列（`damage_window_power`），没声明窗时它必须留 0（加载期拦），
-    // 而"给防御增益点一级参悟"再也不会碰到那一列——这正是剑罡护体那次静默乘区事故的根治。
+    // 而增益自身的强度从别的轴调整、碰不到那一列——这正是剑罡护体那次静默乘区事故的根治。
     var q = SalvoOn(config, "skill_14");
     Assert(q.BuffPower == 1 && q.BuffRemaining == 0,
         $"没声明窗的增益不写窗：×{q.BuffPower} / {q.BuffRemaining}s");
@@ -2277,8 +2228,8 @@ Check("three pet slots and unique buff categories", () => {
 Check("atomic save, reload without offline gains, and corrupt-primary backup recovery", () => {
     var dir = Path.GetFullPath("artifacts/checks/" + Guid.NewGuid().ToString("N"));
     var path = Path.Combine(dir, "save.json"); var store = new SaveStore(path); var g = New();
-    ToBoss(g); g.HurtEnemy(Boss(g), 1e9); g.ClickOre("ore_0"); store.Save(g.State); store.Save(g.State);
-    var state = store.Load(config)!; Assert(state.Amount("core") == 1 && state.PendingIntent["intent_0"] == 1 && state.Battle.BossDefeated, "reload");
+    ToBoss(g); g.HurtEnemy(Boss(g), 1e9); store.Save(g.State); store.Save(g.State);
+    var state = store.Load(config)!; Assert(state.Amount("core") == 1 && state.Battle.BossDefeated, "reload");
     var loaded = new GameSession(config, state); loaded.SelectLevel("level_001"); ToBoss(loaded); loaded.HurtEnemy(Boss(loaded), 1e9); Assert(loaded.State.Amount("core") == 1, "no duplicate reload");
     File.WriteAllText(path, "{broken"); Assert(store.Load(config)!.Amount("core") == 1 && store.Warning is not null, "backup recovery");
 });
@@ -2496,7 +2447,7 @@ Check("共享伤害倍率窗：按来源相乘、威力含等级成长，且期�
     both.State.Skills["skill_04"] = 1; both.Battle.Cooldowns.Clear();
     both.Step(.05);
     Assert(Math.Abs(both.BuffPower - 1.5 * 1.25) < 1e-9, $"两个窗相乘（Build = Π）：{both.BuffPower} vs 1.875");
-    // 威力取的是 `SkillPower`（**含**技能等级与参悟），不是配置里那个基础 `power`——
+    // 威力取的是 `SkillPower`（**含**技能等级），不是配置里那个基础 `power`——
     // 这一条最容易漏，而它正是这个乘区在高等级下变大的原因（剑罡护体那条遗留窗就是这么长到 ×8.5 的）。
     var ranked = SalvoOn(one, "skill_14", 200);
     ranked.State.Skills["skill_14"] = 32;

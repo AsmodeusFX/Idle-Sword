@@ -43,13 +43,13 @@ public sealed partial class GameSession
                 {
                     // 护盾的量按**施放这一刻**的攻击力算定，此后武器升级不改它（与"冷却写施放时的值"同一口径）。
                     "shield" => Attack * def.Value,
-                    // 影分身继承比例 = 基础值 + 每级 +1% + 参悟那一份，**不封顶**（用户定）。同样此刻算定。
-                    "mirror" => def.Value + .01 * (rank - 1) + SkillBonus(skill.Id, "inherit_percent"),
+                    // 影分身继承比例 = 基础值 + 每级 +1%，**不封顶**（用户定）。同样此刻算定。
+                    "mirror" => def.Value + .01 * (rank - 1),
                     // 其余 kind 的强度是定值，不随等级变（增益的成长体现在**覆盖率**上，见 `BuffCooldown`）。
                     _ => def.Value,
                 },
                 Extra = def.Extra,
-                // 声明了窗的增益把**算上等级与参悟的威力**（`SkillPower`）写进窗——不是配置里的基础幂。
+                // 声明了窗的增益把**算上等级的威力**（`SkillPower`）写进窗——不是配置里的基础幂。
                 WindowPower = def.DamageWindow ? power : 1,
             };
         }

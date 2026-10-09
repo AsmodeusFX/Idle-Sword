@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace IdleSword.Core;
 
-/// <summary>版本化存档 DTO。永久进度与本轮战斗分离，保存未收取参悟产物，无离线时间戳。</summary>
+/// <summary>版本化存档 DTO。永久进度与本轮战斗分离，无离线时间戳。</summary>
 public sealed class PlayerState
 {
     public int Version { get; set; } = 1;
@@ -15,9 +15,6 @@ public sealed class PlayerState
     public HashSet<string> Realms { get; set; } = [];
     public Dictionary<string, int> Skills { get; set; } = [];
     public Dictionary<string, int> Talents { get; set; } = [];
-    public Dictionary<string, int> Upgrades { get; set; } = [];
-    public Dictionary<string, double> PendingIntent { get; set; } = [];
-    public Dictionary<string, double> IntentTimers { get; set; } = [];
     /// <summary>已解锁的系统 id，取值只允许 <see cref="Systems.All"/> 里的那几个。
     /// **旧档缺这个字段时反序列化得到空集 = 全部锁着**——这是刻意的：老玩家没有走过教学，
     /// 但他们的进度（关卡、法术、修行点数）一样不少，重新解锁一次只是点两下。

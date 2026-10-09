@@ -402,14 +402,10 @@ public static class LevelCurve
         double SkillSpeed(int order) => 1 + attrs["skill_cdr"] + SpeedBonus(order);
 
         /// <summary>
-        /// 该关这一式的 **SkillRate**（威力）：`power × (1 + 技能等级加成 [+ 参悟])`。
+        /// 该关这一式的 **SkillRate**（威力）：`power × (1 + 技能等级加成)`。
         ///
-        /// 🚨 **参悟（剑意）这一项还没算，而它不是小项**：`SwordUpgrade.csv` 给每个法术配了 4 行
-        /// `damage_percent`（`intent_0..3`），每行 20 级 × 8% ⇒ 满配 **+640%**（`SkillRate ×7.4`）。
-        /// 模拟侧（`GameSession.SkillPower`）**是算的**，所以模型现在系统性低估。
-        /// `balance_ttk.md` §6.2 的三步走也明确要求把剑意算进满配效率，所以这是**已经脱钩的前提**，
-        /// 不是"有意简化的近似"。补它要先定一条"期望参悟练度"曲线（与 `RankStart/RankEnd` 同类）——
-        /// 那是设计决定，见 `docs/design/combat.md` §12.4 第 2 条。
+        /// 与 `GameSession.SkillPower` **逐字同口径**——同一列、同一个 `skill_level_bonus` 系数。
+        /// 任何一侧（目前只有技能等级这一项）加东西都必须同步改另一侧，否则 `--check` 照样绿而两边静默分叉。
         /// **提取成一处**是为了让它只有一个该被改的地方，而不是散在两个函数里。
         /// </summary>
         double SkillRateAt(SkillDef s, int order) =>
@@ -432,8 +428,6 @@ public static class LevelCurve
                 // ⚠️ 这里从前给御剑术单开了一条成长轴（剑支 1 → 5），而**模拟根本不产生多支**
                 // （`projectile_count = 1` 写死、选敌只取一支）⇒ 模型按一条不存在的成长轴多算了最多 5 倍
                 // 命中数。删掉它，模型回到"只算真的会发生的事"。
-                // 参悟把剑支涨上去是**设计里写过、但没接线**的东西（见 `docs/design/combat.md` §12.4 第 3 条），
-                // 接线时要连同这条一起加回来。
                 chain += DamageFormula.Dmg1(Attack(order), SkillRateAt(s, order), s.SkillFlat)
                     * HitsPerCast(s, WaveSize(order)) / Cycle(s);
             }
@@ -458,7 +452,7 @@ public static class LevelCurve
                 // 两边**已经分叉**，只是当前 15 式都没声明窗、所有增益的威力又都是 1，结论恰好相同。
                 // 那正是本工程反复踩的"错得对称、伪装成正确"（见 combat.md §12）：这一轮收到同一口径。
                 if (s.Kind != "buff" || !s.DamageWindow || !Unlocked(s, order)) continue;
-                // `CastBuff` 写进窗里的是**算上等级与参悟**的威力（`SkillPower`），不是配置的幂。
+                // `CastBuff` 写进窗里的是**算上技能等级**的威力（`SkillPower`），不是配置的幂。
                 double power = SkillRateAt(s, order);
                 // 窗的寿命取增益自己的时长（`CastBuff` 用的是它），与 `secondary_duration` 那类效果量是两件事。
                 double uptime = Math.Min(1, s.Duration / BuffCooldown(s, order));

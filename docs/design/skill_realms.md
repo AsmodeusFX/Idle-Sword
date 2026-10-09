@@ -1,9 +1,10 @@
 ﻿# 剑诀境界编排
 
-> 状态：**已落地**。本文定的编制已经写进 `SwordSkill.csv` / `SwordUpgrade.csv`、`GameSession`、`BattleView` 与自检。
+> 状态：**已落地**。本文定的编制已经写进 `SwordSkill.csv`、`GameSession`、`BattleView` 与自检。
+> （原先还写着 `SwordUpgrade.csv`——那张表 **2026-10-09 随参悟删除**，见 [core_growth_systems.md](core_growth_systems.md) §10.2。）
 > 每个剑诀具体怎么打见 [sword_skills.md](sword_skills.md)，数值刻度见 [balance_ttk.md](balance_ttk.md)，字段含义见 [../data/fields.md](../data/fields.md)。
 >
-> 关联文档：[core_rules.md](core_rules.md)（核心规则）、[monsters.md](monsters.md)（波次阵容）、[sword_intent.md](sword_intent.md)（剑意）。
+> 关联文档：[core_rules.md](core_rules.md)（核心规则）、[monsters.md](monsters.md)（波次阵容）、~~`sword_intent.md`~~（剑意，**2026-10-09 已删除**）。
 >
 > ⚠️ **编制已定，但数值层还没对齐**：效率**没有随境界上升**——每档最高效技能依次是 0.833 / 0.952 / 0.686 / 0.714 / **0.305 SU/s**，化神的斩鬼神反而全档垫底；金丹整档三个技能还都是概率触发。完整的诊断与建议清单见 [skill_review.md](skill_review.md)——**改编制或调数值之前先看那一份**。
 
@@ -108,10 +109,10 @@
 
 | 项 | 现状 | 状态 |
 | --- | --- | --- |
-| `SwordUpgrade` 行 | 60 行随编制重排：剑侍的 4 行换成剑二十三的 4 行 | **已做** |
-| `SwordUpgrade.effect` | 仍只有 `damage_percent`，`projectile_count` / `aoe_radius` / `haste_value` 等接不上去 | **待做**：炼气档的"成长轴"落不了地 |
-| `SwordUpgrade` 的进阶校验 | 不检查技能是否存在（只校验是否已习得） | **待做**（见 [sword_intent.md](sword_intent.md) 的接口缺口） |
-| 剑意货币 | `item.csv` 四种：风 / 雷 / 霜 / 炎 | **待定**：只留三元素后，"风之剑意"要改造（建议改名「太虚剑意」承接无属性剑诀），或减到 3 种货币（60 行要重排） |
+| ~~`SwordUpgrade` 行~~ | 60 行随编制重排：剑侍的 4 行换成剑二十三的 4 行 | **已作废（2026-10-09）**：参悟删除，整张表下线 |
+| ~~`SwordUpgrade.effect`~~ | 仍只有 `damage_percent`，`projectile_count` / `aoe_radius` / `haste_value` 等接不上去 | **已作废（2026-10-09）**：同上。留下的真问题——"炼气档缺一条成长轴"——改由后续成长系统（法术灵韵 / 神通）解决 |
+| ~~`SwordUpgrade` 的进阶校验~~ | 不检查技能是否存在（只校验是否已习得） | **已作废（2026-10-09）**：表已下线 |
+| ~~剑意货币~~ | `item.csv` 四种：风 / 雷 / 霜 / 炎 | **已作废（2026-10-09）**：`intent_0..3` 随参悟删除，`item.csv` 现在只剩 `gold` / `core` |
 | `BattleView` 元素配色 | 按技能 ID 硬编码 | 维持硬编码（元素不建字段），代码里注明映射表是唯一出处 |
 | 各境界的数值台阶 | 技能改境界时**数值不跟着改**（天剑按元婴档定的 12/6s 现在落在筑基） | **待做**：平衡轮按 [balance_ttk.md](balance_ttk.md) 第 6.2 节重算 K=4 |
 

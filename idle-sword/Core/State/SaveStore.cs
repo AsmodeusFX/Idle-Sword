@@ -28,6 +28,7 @@ public sealed class SaveStore(string path)
             {
                 var state = JsonSerializer.Deserialize<PlayerState>(File.ReadAllText(candidate)) ?? throw new InvalidDataException("存档为空");
                 AdoptUntrackedCores(state);
+                AdoptRetiredSystems(state);
                 AdoptUnlockState(state);
                 string pruned = PruneUnknownReferences(state, config);
                 Validate(state, config);
@@ -65,7 +66,7 @@ public sealed class SaveStore(string path)
     /// <summary>
     /// 迁移：把**指向已经不在配置里的 id 的引用丢掉**，保住存档的其余部分，并报出丢了什么。
     ///
-    /// 要分两类看。成长类的 id（修行节点 / 法术 / 参悟 / 已开境界 / 剑灵）是**设计迭代的产物**——
+    /// 要分两类看。成长类的 id（修行节点 / 法术 / 已开境界 / 剑灵 / 货币）是**设计迭代的产物**——
     /// 删一个节点、重排一次修行树，旧存档里立刻出现查不到的 id。把这种"配置漂移"当成篡改整份拒掉，
     /// 结果是**每改一次配置就废一次档**（2026-10-06 就是这么把工程锁死的）。所以这里丢弃它们。
     ///
@@ -97,9 +98,14 @@ public sealed class SaveStore(string path)
 
         PruneMap(s.Talents, "Talent", "修行节点");
         PruneMap(s.Skills, "SwordSkill", "法术");
-        PruneMap(s.Upgrades, "SwordUpgrade", "参悟");
         PruneSet(s.Realms, "SwordLevel", "已开境界");
         PruneSet(s.Pets, "Pet", "剑灵");
+        // 货币也走净化。**不做这一步，退役任何一种货币都会废掉老档**：`Validate` 的
+        // `References(s.Wallet.Keys, "item")` 会因为查不到那个 id 而整份拒收（参悟删除时
+        // `intent_0..3` 正是这么踩的）。钱包里的键只可能来自已经过加载期外键校验的配置，
+        // 所以出现未知 id 只可能是"配置删了这一行"，与上面的成长类 id 是同一类漂移。
+        PruneMap(s.Wallet, "item", "货币");
+        PruneMap(s.DebugGranted, "item", "调试发放");
         // 剑灵本体没了，出战与增强里对它的引用会变成悬空的——必须先摘引用再让 `Validate` 过。
         s.EquippedPets.RemoveAll(id => !s.Pets.Contains(id));
         foreach (string pet in s.PetBuffs.Keys.Where(id => !s.Pets.Contains(id)).ToList()) s.PetBuffs.Remove(pet);
@@ -135,6 +141,17 @@ public sealed class SaveStore(string path)
         if (excess > 0) s.DebugGranted["core"] = excess;
     }
     /// <summary>
+    /// 迁移：把**已退役的系统 id** 从 `UnlockedSystems` 里剔除（名单见 <see cref="Systems.Retired"/>）。
+    ///
+    /// 参悟（剑意）2026-10-09 整体删除之后，老存档里那一份 `"intent"` 会被 `Validate` 的未知 id 校验
+    /// 判为非法、整档归档。这个方法是**定点**的，不是"白名单外一律净化"——理由见 `Systems.Retired` 的说明。
+    ///
+    /// 放在 <see cref="AdoptUnlockState"/> **之前**是有意的：若一份老档的 `UnlockedSystems` 恰好只有
+    /// `"intent"` 一项，先剔除才能让它退化成"空集"，从而被后面的补全逻辑认出"这是个缺字段的旧档"；
+    /// 顺序颠倒的话它会以"非空"的样子跳过补全，结果全部系统锁死。
+    /// </summary>
+    private static void AdoptRetiredSystems(PlayerState s) => s.UnlockedSystems.RemoveWhere(Systems.Retired.Contains);
+    /// <summary>
     /// 迁移：`UnlockedSystems` 是后加的字段，更早的存档里没有，反序列化得到空集 = 全部锁着。
     /// 但那些存档**本来就已经走过了教学**（有首杀、有点过的修行节点、有学会的法术），
     /// 让它们回头去锁一遍是平白罚人。所以只在"这一个字段从没写过"且"存档确实有进度"时，
@@ -156,7 +173,7 @@ public sealed class SaveStore(string path)
         {
             if (ids.Any(id => !c.Rows(table).Any(r => r.Text("id") == id))) throw new InvalidDataException("存档引用缺失: " + table);
         }
-        // **等级上限归"购买闸门"，不归存档校验**：`SwordRealmSystem` / `SwordIntentSystem` 已经用
+        // **等级上限归"购买闸门"，不归存档校验**：`SwordRealmSystem` 已经用
         // `rank >= max_level` 拦住了正常途径，而**后期手段可以把等级顶过 `max_level`**（用户定的成长口径：
         // 那条公式线性不封顶）。所以这里只校验"是个合理的非负整数"——以前写 `rank > max_level` 直接拒档，
         // 会让那类存档**读回来就崩**。9999 是防呆（挡住手改存档的荒谬值），不是设计天花板。
@@ -168,7 +185,7 @@ public sealed class SaveStore(string path)
         }
         // 系统解锁：只允许白名单里的 id。写错一个字母会让那个系统**永久锁死且不报错**，必须拦在加载期。
         if (s.UnlockedSystems.Any(id => !Systems.All.Contains(id))) throw new InvalidDataException("存档引用了未知的系统 id");
-        Ranks(s.Skills, "SwordSkill"); Ranks(s.Talents, "Talent"); Ranks(s.Upgrades, "SwordUpgrade");
+        Ranks(s.Skills, "SwordSkill"); Ranks(s.Talents, "Talent");
         References(s.Realms, "SwordLevel"); References(s.Pets, "Pet"); References(s.UnlockedLevels, "level"); References(s.Wallet.Keys, "item");
         if (!s.UnlockedLevels.Contains(s.Battle.LevelId)) throw new InvalidDataException("当前关卡未解锁");
         if (s.Weapon != "") References([s.Weapon], "Equip");
@@ -189,12 +206,6 @@ public sealed class SaveStore(string path)
             References(buffs, "PetEquip");
             if (buffs.Count > 3 || buffs.Select(id => c.Row("PetEquip", id).Text("category")).Distinct().Count() != buffs.Count) throw new InvalidDataException("剑灵增强类别重复或过多");
         }
-        foreach (var (item, amount) in s.PendingIntent)
-        {
-            var r = c.Rows("contemplation").SingleOrDefault(r => r.Text("item_id") == item);
-            if (r is null || !double.IsFinite(amount) || amount < 0 || amount > r.Number("capacity")) throw new InvalidDataException("参悟积存非法");
-        }
-        if (s.IntentTimers.Values.Any(v => !double.IsFinite(v) || v < 0)) throw new InvalidDataException("参悟计时非法");
         foreach (var (cell, spawn) in s.Battle.Spawns)
             if (cell < 0 || cell >= level.Cells || !double.IsFinite(spawn.Timer) || spawn.Wave < 0) throw new InvalidDataException("刷怪点存档非法");
         foreach (var e in s.Battle.Enemies)

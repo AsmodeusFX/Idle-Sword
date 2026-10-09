@@ -1024,7 +1024,7 @@ public partial class Main
     /// <summary>效果下拉的条目：数值类 + 开关类；**解锁类从 `Systems.ByEffect` 现取**（与加载期校验同一处）。</summary>
     private static string[] EffectChoiceIds() =>
         ["none", "atk", "hp", "atk_flat", "hp_flat", "drop_flat",
-            "auto_basic", "ranged_basic", "auto_intent", .. Systems.ByEffect.Keys];
+            "auto_basic", "ranged_basic", .. Systems.ByEffect.Keys];
 
     /// <summary>
     /// 图标下拉的条目。**必须与 `GameConfig` 里 `icon` 的白名单同源**——加载期是按那张表校验的，

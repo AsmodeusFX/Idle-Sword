@@ -13,6 +13,42 @@
 
 ---
 
+## 0. 2026-10-09：参悟（剑意）删除轮的收尾
+
+**已将下列内容改为"已失效"并标注日期**（不动设计记录与 changelog 的叙事段，此即 [phase_01.md](../planning/phase_01.md) 已写下的口径）：
+
+- **删掉的两篇设计文档**：`docs/design/sword_intent.md`、`docs/design/intent_packaging.md`（Git 历史即备份）。
+  索引链接已从 `docs/README.md` 移除。**全仓指向它们的死链一律改成叙述**（保留原文措辞、只去掉链接）：
+  `combat.md` §12.2/§12.3、`fields.md`、`design_lens.md`、`skill_realms.md`、`skill_review.md`（含整个第五节加作废横幅）、
+  `sword_skills.md`、`worldview.md`、`value_inventory.md`。同批把指向已删除的 `SwordUpgrade.csv` 的死链也改成了纯文本
+  （`balance_ttk.md` 变更表的第 13、26 条）。
+  > **一条判据**：设计记录**保留旧词**（`剑意` / `参悟` 该怎么写还怎么写），但**不保留指向已删文件的链接**——
+  > 旧词是历史，死链是导航故障，两者不是一回事。
+- **`docs/data/fields.md`**：`SwordUpgrade.csv` / `contemplation.csv` 两节删除；`Talent.csv` 的 effect 表去掉
+  `auto_intent` / `intent_system`；`SkillRate` 公式与影分身继承比例去掉参悟项。
+- **`docs/data/config_plan.md`**：两张表行删除，加载表数 23 → **21**；灵核约束里的"参悟"去掉。
+- **`docs/technical/architecture.md`**：目标目录树去 `SwordIntent/`；两条只属于参悟的结构规则删除；
+  存档层「未收取产物」措辞去掉。
+- **`docs/design/core_rules.md`**：五系统 → 现役四系统的说法；「参悟与收取」整节标为**已失效**（保留原文供追溯）。
+- **`docs/design/core_growth_systems.md`**：§0 裁定 #2 与 §10.2 标注**已执行（2026-10-09）**并补落地明细；
+  §11.8 页签布局更新。
+- **`docs/design/combat.md`**：§2 的 `SkillRate` 公式去参悟项（改写成"曾经有、已删除"的说明）；
+  §12.4 第 2 条（"模型没算参悟"）标注**随删除作废**。
+- **`docs/design/balance_ttk.md`** / **`docs/planning/roadmap.md`**：只改规范表述（`--write` 前提缺口、
+  主轴口径、Phase 1 排期）；changelog 表里的历史条目保留。
+- **根 `README.md`**：「4 类参悟/强化」「在线自动参悟」条目与 `--smoke-test` 的"鼠标收取信号"措辞已更新。
+
+**仍然待修**：
+
+| 文件 | 问题 |
+| --- | --- |
+| `docs/data/talent_nodes.md` | **整份已过期**（它记的根 `sdfsdf` 与占位节点在当前 `Talent.csv` / `TalentLayout.csv` 里已不存在，树早已重搭）。本文档自称"由三张表生成的交接清单"，需按当前表**重新生成**。本轮只把其中过时的参悟条目改掉，未重排全表 |
+| `docs/design/value_inventory.md` | 参悟那两行的**锚点已删**（货币 `contemplation.csv`、强化 `SwordUpgrade.effect`），已标作废并加日期；但"**这两格价值该由谁接**"是**设计决定**（现挂在法术灵韵 / 神通 / 神识上），本轮不动 |
+| `docs/design/sword_skills.md` §八、`skill_realms.md` §五、`skill_review.md` §五 | 三条待办清单里**挂在剑意上的那些**已逐条划掉并指向 [core_growth_systems.md](core_growth_systems.md) §10；清单里**不在剑意上**的问题（炼气档缺成长轴、`pierce_chance` 没接线、易伤回归、影分身比例不封顶）**仍然成立**，只是换了承载轴 |
+| `docs/design/core_growth_systems.md` | §6.2 讲「神识」的那一格仍把 `auto_intent` 当**现役**例子引用（"把现有零散的自动化统一收编"）。措辞没错（它确实是"曾经有过的零散自动化"），但**下次动那一节时要把时态改掉** |
+
+---
+
 ## A. 会误导后续开发（P0）
 
 ### A1. 根 `README.md` 四处已失效
