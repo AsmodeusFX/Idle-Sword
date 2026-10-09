@@ -3,6 +3,8 @@
 - 工作前阅读 `docs/README.md`、`docs/design/core_rules.md` 和 `docs/planning/phase_01.md`。
 - **动战斗相关代码或数值前，先读 `docs/design/combat.md`**（伤害公式 `DMG1/DMG2/DMG3`、事件顺序、出手快照、频率分离的权威口径）。新增或改动战斗属性另读 `docs/design/fightattr.md`。伤害公式只许有一份实现：`Core/Data/DamageFormula.cs`，逐拍模拟与 `LevelCurve` 期望模型共用。**期望模型必须算上模拟里实际生效的每一个乘区**——模型漏掉一个乘区就是静默低估，而 `--check` 不会告诉你。
 - Godot 工程在 `idle-sword/`，文档在外层 `docs/`。不要另建平行工程。
+- 临时输入的外部文件统一存放在 `docs/temp/`（原 `docs/battle/`，2026-10-09 更名）；引用使用新路径，资料是否已确认为工程规则仍以相关文档的状态说明为准。
+- 内部提炼的设计结论与开发指导框架存放在 `docs/design/`。下一步四系统（修行 / 法术 / 神通 / 神识）开发先读 `docs/design/core_growth_systems.md`：已确认的职责与边界以它为准，§10 为改造清单，§11 为待裁定事项；不得把目标框架当成当前已实现状态。
 - 使用 C#；纯逻辑在 `Core/` 和 `Features/`，不得依赖 Godot 节点。表现与输入在 `UI/`。
 - 养成操作统一通过 GameSession，界面不得直接扣除货币或发放奖励。
 - 灵核只由每个稳定关卡 ID 的首次 BOSS 击杀发放 1 个，重复发放为 0。永久账本与奖励必须作为同一次存档提交。
