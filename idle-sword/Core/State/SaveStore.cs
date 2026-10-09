@@ -15,7 +15,7 @@ public sealed class SaveStore(string path)
     /// 所以必须拷贝而不是共享引用，否则一开预览就会污染真实进度。
     /// </summary>
     public static PlayerState Clone(PlayerState state) =>
-        JsonSerializer.Deserialize<PlayerState>(JsonSerializer.Serialize(state, Options)) ?? new PlayerState();
+        JsonSerializer.Deserialize<PlayerState>(JsonSerializer.SerializeToUtf8Bytes(state, Options)) ?? new PlayerState();
     public PlayerState? Load(GameConfig config)
     {
         bool exists = false;

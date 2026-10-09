@@ -51,8 +51,16 @@ public sealed class GameConfig
     /// <summary>技能三层（Effect / Buff / 时间轴 / 触发器）的全部定义。`Skills` 是它推导出来的
     /// 只读视图，**新代码请读这里**——见 `SkillTable.cs` 顶部。</summary>
     public SkillTable SkillTables { get; private set; } = null!;
+    // 配置加载后只读；索引与本次加载的 CSV 同生命期，编辑器重载会创建新的 GameConfig。
+    private readonly Dictionary<string, Dictionary<string, CsvRow>> _rowsById = [];
+    private readonly Dictionary<string, LevelDef> _levelsById = [];
     public List<CsvRow> Rows(string name) => Tables[name + ".csv"];
-    public CsvRow Row(string name, string id) => Rows(name).Single(r => r.Text("id") == id);
+    /// <summary>按表名和稳定 ID 查询配置，避免运行时反复扫描整张表；缺失 ID 仍明确抛错。</summary>
+    public CsvRow Row(string name, string id) => _rowsById[name].TryGetValue(id, out var row)
+        ? row : throw new InvalidOperationException($"{name}.csv: ID 不存在: {id}");
+    /// <summary>按稳定关卡 ID 查询已校验定义；切关和更换 BattleState 后立即读到对应关卡。</summary>
+    public LevelDef LevelById(string id) => _levelsById.TryGetValue(id, out var level)
+        ? level : throw new InvalidOperationException($"level.csv: ID 不存在: {id}");
     public double Setting(string id) => Row("game_settings", id).Number("value");
     public double Attr(string id) => Row("fightattr", id).Number("base_value");
 
@@ -66,6 +74,7 @@ public sealed class GameConfig
             foreach (var r in rows)
                 if (string.IsNullOrWhiteSpace(r.Text("id")) || !ids.Add(r.Text("id"))) throw r.Error("id", "为空或重复");
             c.Tables[file] = rows;
+            c._rowsById[Path.GetFileNameWithoutExtension(file)] = rows.ToDictionary(r => r.Text("id"));
         }
         foreach (var r in c.Rows("monster"))
         {
@@ -129,6 +138,7 @@ public sealed class GameConfig
             c.Levels.Add(new(r.Text("id"), r.Text("name"), r.Int("order"), r.Int("cells"), r.Number("normal_hp"), r.Number("normal_atk"), r.Number("elite_hp"), r.Number("elite_atk"), r.Number("boss_hp"), r.Number("boss_atk"), r.Number("rift_hp"), r.Text("wave_id"), r.Text("boss_id"), r.Text("rift_id"), r.Text("first_reward"), r.Text("repeat_reward")));
         }
         c.Levels.Sort((a, b) => a.Order.CompareTo(b.Order));
+        foreach (var level in c.Levels) c._levelsById.Add(level.Id, level);
         if (c.Levels.Count == 0 || c.Levels.Select(l => l.Order).Distinct().Count() != c.Levels.Count) throw new InvalidDataException("level.csv: 关卡为空或排序重复");
         foreach (var r in c.Rows("SwordLevel")) { Nonnegative(r, "cost_gold"); r.Flag("default_unlocked"); }
         // ── 技能三层：Skill / Effect / Buff ──────────────────────────────────
@@ -266,7 +276,7 @@ public sealed class GameConfig
     }
     private void Ref(CsvRow r, string field, string table)
     {
-        if (!Rows(table).Any(t => t.Text("id") == r.Text(field))) throw r.Error(field, $"引用不存在: {r.Text(field)}");
+        if (!_rowsById[table].ContainsKey(r.Text(field))) throw r.Error(field, $"引用不存在: {r.Text(field)}");
     }
     private static void Positive(CsvRow r, string f) { if (r.Number(f) <= 0) throw r.Error(f, "必须大于 0"); }
     /// <summary>可留空的数值列：空串 / 纯空白 → null。

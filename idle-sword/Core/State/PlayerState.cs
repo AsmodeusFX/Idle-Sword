@@ -76,7 +76,12 @@ public sealed class EnemyState
     [JsonIgnore]
     public List<BuffInstance> Buffs { get; } = [];
 
-    private BuffInstance? Status(string kind) => Buffs.FirstOrDefault(b => b.Def.Kind == kind);
+    private BuffInstance? Status(string kind)
+    {
+        foreach (var buff in Buffs)
+            if (buff.Def.Kind == kind) return buff;
+        return null;
+    }
     /// <summary>某一类状态在役那一份的剩余秒数；0 表示没有（"到期"与"从未有过"因此是同一种表示）。</summary>
     private double Until(string kind) => Status(kind)?.Remaining ?? 0;
     private double ValueOf(string kind, double fallback) => Status(kind)?.Value ?? fallback;

@@ -4,7 +4,18 @@ namespace IdleSword.Features;
 
 public sealed partial class GameSession
 {
-    public double TalentBonus(string effect) => Config.Rows("Talent").Where(r => r.Text("effect") == effect).Sum(r => r.Number("effect_per_level") * State.Talents.GetValueOrDefault(r.Text("id")));
+    private Dictionary<string, (string Id, double PerLevel)[]>? _talentEffects;
+
+    /// <summary>只缓存配置的效果分组与每级值；等级每次从当前 State 读取，购买、调试和直接改状态均即时生效。</summary>
+    public double TalentBonus(string effect)
+    {
+        _talentEffects ??= Config.Rows("Talent").GroupBy(r => r.Text("effect"))
+            .ToDictionary(g => g.Key, g => g.Select(r => (r.Text("id"), r.Number("effect_per_level"))).ToArray());
+        if (!_talentEffects.TryGetValue(effect, out var nodes)) return 0;
+        double total = 0;
+        foreach (var node in nodes) total += node.PerLevel * State.Talents.GetValueOrDefault(node.Id);
+        return total;
+    }
     // TalentVisible / TalentCost / CanBuyTalent / BuyTalent 都搬去了 Features/Talent/TalentSystem.cs——
     // 它们现在要读 TalentLayout.csv 的几何与前置，跟星图放一起更好找。
     /// <summary>

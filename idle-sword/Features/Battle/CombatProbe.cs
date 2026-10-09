@@ -253,6 +253,9 @@ public sealed class CombatProbe
 
         int kills = 0;
         double clearedSu = 0;
+        // 复用逐拍差分容器。旧写法对每个旧 ID 再扫描整个场面，密集波次会退化成平方开销。
+        var before = new List<long>();
+        var surviving = new HashSet<long>();
 
         void SpawnAt(TargetPlacement p, double x)
         {
@@ -294,14 +297,16 @@ public sealed class CombatProbe
                     PlaceWave();
                 }
                 // （`Single` 口径不补：第一波打光就没了，量的是"清一波要多久"。）
-                foreach (var e in session.Battle.Enemies) lastX[e.Id] = e.X;
-                var before = session.Battle.Enemies.Select(e => e.Id).ToArray();
+                before.Clear();
+                foreach (var e in session.Battle.Enemies) { lastX[e.Id] = e.X; before.Add(e.Id); }
                 session.Step(r.Dt);
+                surviving.Clear();
+                foreach (var e in session.Battle.Enemies) surviving.Add(e.Id);
                 // 沙盒里唯一的移除路径是 `Step` 末尾那句 `RemoveAll(e => e.Hp <= 0)`，
                 // 所以"刚才还在、现在没了"就是这一步死了。不改 `DamageTally`——它记的是有效伤害，不是死亡。
                 foreach (long id in before)
                 {
-                    if (session.Battle.Enemies.Any(e => e.Id == id)) continue;
+                    if (surviving.Contains(id)) continue;
                     if (tally)
                     {
                         kills++;

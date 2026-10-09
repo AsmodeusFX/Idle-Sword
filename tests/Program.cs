@@ -4,6 +4,7 @@ using IdleSword.Features;
 string root = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.GetFullPath("idle-sword/Config/Tables");
 var source = GameConfig.Files.ToDictionary(f => f, f => File.ReadAllText(Path.Combine(root, f)));
 var config = GameConfig.Load(f => source[f]);
+if (args.Contains("--performance")) { PerformanceChecks.Run(config); return; }
 int passed = 0;
 void Assert(bool condition, string message) { if (!condition) throw new Exception(message); }
 void Check(string name, Action test) { test(); passed++; Console.WriteLine("PASS " + name); }
@@ -24,6 +25,51 @@ void ToBoss(GameSession g)
 }
 EnemyState Boss(GameSession g) => g.Battle.Enemies.Single(e => e.Kind == "boss");
 void Reject(Action test) { try { test(); } catch (InvalidDataException) { return; } throw new Exception("Expected validation rejection"); }
+
+Check("配置 ID 索引：全部行保持对象一致，重载后读取新定义", () => {
+    foreach (string file in GameConfig.Files)
+        foreach (var row in config.Tables[file])
+            Assert(ReferenceEquals(config.Row(Path.GetFileNameWithoutExtension(file), row.Text("id")), row), "索引必须指向原配置行");
+    var changed = new Dictionary<string, string>(source);
+    changed["game_settings.csv"] = Cell(changed["game_settings.csv"], "save_interval", "value", "7");
+    var reloaded = GameConfig.Load(f => changed[f]);
+    Assert(reloaded.Setting("save_interval") == 7, "重载必须读取新表值");
+    Assert(config.Setting("save_interval") == CsvTable.Parse("game_settings.csv", source["game_settings.csv"]).Single(r => r.Text("id") == "save_interval").Number("value"), "旧配置不能被新索引污染");
+    try { config.Row("item", "@missing"); throw new Exception("缺失 ID 不应有默认行"); }
+    catch (InvalidOperationException) { }
+});
+
+Check("天赋加成只缓存定义：直接改等级、清空、不同会话都即时生效", () => {
+    var g = New();
+    var sibling = New();
+    double Sum(GameSession s, string effect) => config.Rows("Talent").Where(r => r.Text("effect") == effect)
+        .Sum(r => r.Number("effect_per_level") * s.State.Talents.GetValueOrDefault(r.Text("id")));
+    // 先把缓存热起来，再绕过购买入口改状态，覆盖 GM、自检、读档状态与正常加点共用的读取路径。
+    foreach (var effect in config.Rows("Talent").Select(r => r.Text("effect")).Distinct()) g.TalentBonus(effect);
+    foreach (var row in config.Rows("Talent"))
+    {
+        string id = row.Text("id"), effect = row.Text("effect");
+        g.State.Talents[id] = 2;
+        Assert(g.TalentBonus(effect) == Sum(g, effect), "直接改等级后加成滞后：" + id);
+        Assert(sibling.TalentBonus(effect) == Sum(sibling, effect), "不同会话共享了等级：" + id);
+    }
+    g.State.Talents.Clear();
+    foreach (var row in config.Rows("Talent")) Assert(g.TalentBonus(row.Text("effect")) == 0, "清空等级后仍有缓存加成");
+    Assert(g.TalentBonus("@unknown") == 0, "没有投放的效果应为 0");
+});
+
+Check("最近选敌同距离保持场上顺序，关卡索引跟随战斗状态切换", () => {
+    var g = New();
+    g.SandboxMode = true;
+    Dummies(g, 2, 90, 0);
+    g.Battle.Enemies.Reverse();
+    long first = g.Battle.Enemies[0].Id;
+    Assert(g.ManualBasicAttack(), "靶场应能手动普攻");
+    Assert(g.Effects.Single().Target == first, "同距离的普攻应保留列表顺序，不能擅自改为 ID 顺序");
+    g.State.Battle = new BattleState { LevelId = config.Levels[^1].Id };
+    Assert(ReferenceEquals(g.Level, config.Levels[^1]), "替换 BattleState 后必须立即读到新关卡");
+});
+
 // 按表头列名改写某一行的单元格：不再硬编码行尾字符串（列一多、值一改就会失效）。
 string Cell(string text, string id, string field, string value)
 {

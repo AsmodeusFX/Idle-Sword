@@ -57,6 +57,12 @@ public partial class BattleView : Control
     private readonly Dictionary<string, Texture2D> _textures = [];
     // _lastHp 用于逐帧差分出"命中"，_popups 为飘字，_flash 记录受击闪动截止时刻。
     private readonly Dictionary<long, double> _lastHp = [], _flash = [];
+    // 每帧复用差分容器；存活 ID 一次建表，死亡检测由 O(旧敌人数 × 当前敌人数) 降为线性。
+    private readonly HashSet<long> _liveEnemyIds = [];
+    private readonly List<long> _goneEnemyIds = [];
+    private readonly HashSet<CombatEffect> _liveCompanions = [];
+    private readonly HashSet<int> _usedCompanionSlots = [];
+    private readonly List<CombatEffect> _goneCompanions = [];
     private readonly List<Popup> _popups = [];
     // ── 手感表演（juice）的瞬时状态：只影响绘制，不参与任何判定，也不写存档 ──
     // 上一帧的玩家血量，差分出"挨打了"。回血（归元、吸血）不算，只有掉血才闪；NaN = 本场还没采样过。
@@ -180,6 +186,8 @@ public partial class BattleView : Control
     public void ResetTransient()
     {
         _lastHp.Clear(); _flash.Clear(); _popups.Clear(); _companionSlots.Clear();
+        _liveEnemyIds.Clear(); _goneEnemyIds.Clear();
+        _liveCompanions.Clear(); _usedCompanionSlots.Clear(); _goneCompanions.Clear();
         _puffs.Clear(); _playerFlash = 0; _lastPlayerHp = double.NaN;
         _corpses.Clear(); _lastEnemy.Clear();
         _spawnedAt.Clear(); _skipSpawnAnim = true;
@@ -239,15 +247,23 @@ public partial class BattleView : Control
     /// </summary>
     private void AssignCompanionSlots()
     {
-        var live = Session.Effects.Where(e => e.Kind == "summon").ToHashSet();
-        foreach (var gone in _companionSlots.Keys.Where(e => !live.Contains(e)).ToArray()) _companionSlots.Remove(gone);
-        var used = _companionSlots.Values.ToHashSet();
-        foreach (var effect in live)
+        _liveCompanions.Clear();
+        foreach (var effect in Session.Effects)
+            if (effect.Kind == "summon") _liveCompanions.Add(effect);
+        _goneCompanions.Clear();
+        foreach (var effect in _companionSlots.Keys)
+            if (!_liveCompanions.Contains(effect)) _goneCompanions.Add(effect);
+        foreach (var gone in _goneCompanions) _companionSlots.Remove(gone);
+        _usedCompanionSlots.Clear();
+        foreach (int slot in _companionSlots.Values) _usedCompanionSlots.Add(slot);
+        // 按效果列表的插入顺序分配新槽，不依赖复用 HashSet 的空位枚举顺序。
+        foreach (var effect in Session.Effects)
         {
+            if (effect.Kind != "summon") continue;
             if (_companionSlots.ContainsKey(effect)) continue;
             int slot = 0;
-            while (used.Contains(slot)) slot++;
-            used.Add(slot);
+            while (_usedCompanionSlots.Contains(slot)) slot++;
+            _usedCompanionSlots.Add(slot);
             _companionSlots[effect] = slot;
         }
     }
@@ -351,8 +367,10 @@ public partial class BattleView : Control
         double simSeconds = Math.Max(0, Session.Elapsed - _lastElapsed);
         _lastElapsed = Session.Elapsed;
         bool hitPlayed = false;
+        _liveEnemyIds.Clear();
         foreach (var enemy in Session.Battle.Enemies)
         {
+            _liveEnemyIds.Add(enemy.Id);
             // 每帧记住出场信息：它从场上消失的那一帧要拿它落尸体（那时 EnemyState 已经取不到了）。
             _lastEnemy[enemy.Id] = Of(enemy);
             // 第一次见到这只怪 = 它刚刷出来：记下出生时刻。换场那趟不算（那批怪是上一场留下的），
@@ -378,7 +396,10 @@ public partial class BattleView : Control
             HitLanded?.Invoke(heavy);
         }
         bool announced = false;
-        foreach (long id in _lastHp.Keys.Where(id => !Session.Battle.Enemies.Any(e => e.Id == id)).ToArray())
+        _goneEnemyIds.Clear();
+        foreach (long id in _lastHp.Keys)
+            if (!_liveEnemyIds.Contains(id)) _goneEnemyIds.Add(id);
+        foreach (long id in _goneEnemyIds)
         {
             _lastHp.Remove(id); _flash.Remove(id);
             // 死了就落一具尸体：爆一下再渐隐，而不是凭空消失。

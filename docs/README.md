@@ -28,6 +28,7 @@
 - [核心成长系统讨论稿（架构框架）](temp/修行&法术&神通&神识系统框架.md) / [神通系统修正](temp/神通系统修正.md) —— 推导过程与被否决的方案，结论已固化进上面那份认知文档
 - [战斗评估系统方案（战斗探针）](temp/DPS评估与战斗模拟系统方案.md) —— **SU / TTK 为纲；与工程的对账差异在文末**。内核 `Features/Battle/CombatProbe.cs`，出口是关卡编辑器的只读节「战斗探针」
 - [工程框架方案](technical/architecture.md)
+- [代码效率评估与优化记录](technical/performance.md) —— 高频路径优化、可复现基准与行为验证
 - [配置表规划](data/config_plan.md)
 - [CSV 字段字典](data/fields.md)
 - [修行星图节点清单（ID → 功能）](data/talent_nodes.md)

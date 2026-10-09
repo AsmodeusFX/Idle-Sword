@@ -9,17 +9,18 @@ public sealed partial class GameSession
     public GameConfig Config { get; }
     public PlayerState State { get; }
     public BattleState Battle => State.Battle;
-    public LevelDef Level => Config.Levels.Single(l => l.Id == Battle.LevelId);
+    public LevelDef Level => Config.LevelById(Battle.LevelId);
     public List<CombatEffect> Effects { get; } = [];
     public event Action? PersistRequested;
     public string Message { get; private set; } = "踏入青岚，问道长生。";
     public bool Moving { get; private set; }
     public double Elapsed { get; private set; }
     private readonly Random _random;
+    private readonly List<string> _cooldownKeys = [];
     /// <summary>
-    /// `fightattr` 的取值缓存。**为什么要有它**：`Config.Attr(id)` 是一次 LINQ 扫描
-    /// （`Rows("fightattr").Single(...)`），而攻速与 CDR 在冷却衰减那条热路径上**每步、每个冷却键**都要读，
-    /// 一秒就是几百次扫描。配置在 `Load` 之后只读、会话内不会变（改配置要重新加载并新建会话），所以缓存安全。
+    /// `fightattr` 的取值缓存。`Config.Row` 已按 ID 建索引，但 `Config.Attr(id)` 仍需解析 CSV 数字；
+    /// 攻速、CDR 与每次出手都会读取属性，缓存可避免重复解析。配置在 `Load` 之后只读、
+    /// 会话内不会变（改配置要重新加载并新建会话），所以缓存安全。
     /// </summary>
     private readonly Dictionary<string, double> _attrs = [];
     /// <summary>属性上下限的缓存，与上面的取值缓存同一理由（暴击率合计每次出手都要夹一次）。</summary>
@@ -81,9 +82,15 @@ public sealed partial class GameSession
     {
         get
         {
-            var ranges = State.Skills.Where(kv => kv.Value > 0 && Config.Skills.TryGetValue(kv.Key, out var s) && s.Kind != "buff")
-                .Select(kv => Config.Skills[kv.Key].Range).ToList();
-            return ranges.Count > 0 ? ranges.Max() : BasicAttackRange;
+            double range = 0;
+            bool found = false;
+            foreach (var (id, rank) in State.Skills)
+            {
+                if (rank <= 0 || !Config.Skills.TryGetValue(id, out var skill) || skill.Kind == "buff") continue;
+                range = found ? Math.Max(range, skill.Range) : skill.Range;
+                found = true;
+            }
+            return found ? range : BasicAttackRange;
         }
     }
 
@@ -192,11 +199,15 @@ public sealed partial class GameSession
         //   · **增益类法术两样都不吃**：若连增益一起加速，仙风云体术（15s 冷却 / 6s 持续）会在持续期内就转好，
         //     等于自己给自己减冷却，变成 100% 常驻；两个 15s 增益还会互相锁死。
         // 按 `dt × (1 + x)` 递减，等价于"间隔 ÷ (1 + x)"——所以 x 再大也不会出现零冷却。
-        foreach (var key in Battle.Cooldowns.Keys.ToArray())
+        // 保留这一拍开始时的键集合，但复用容量；增益尚未推进，因此本段内两种频率不会变化。
+        _cooldownKeys.Clear();
+        _cooldownKeys.AddRange(Battle.Cooldowns.Keys);
+        double skillFactor = 1 + SkillCdr, attackFactor = 1 + AttackSpeed;
+        foreach (var key in _cooldownKeys)
         {
-            double factor = 1 + (Config.Skills.TryGetValue(key, out var cooling) && cooling.Kind == "buff"
-                ? 0            // 增益类：不吃加速
-                : Config.Skills.ContainsKey(key) ? SkillCdr : AttackSpeed);
+            double factor = Config.Skills.TryGetValue(key, out var cooling)
+                ? cooling.Kind == "buff" ? 1 : skillFactor
+                : attackFactor;
             Battle.Cooldowns[key] = Math.Max(0, Battle.Cooldowns[key] - dt * factor);
         }
         // 自身增益（含伤害倍率窗）由 `BuffSystem` 统一推进：扣时间、到期摘掉、跑时间轴。
@@ -257,7 +268,16 @@ public sealed partial class GameSession
     // 一律**按 kind 查在役的那一份**——`BuffSystem` 把它们统一收编了（从前是十几个散字段 +
     // 手写计时器，两边各 decay 一次）。查询本身就是"这一份在不在役"的判据。
     /// <summary>伤害倍率窗还剩多久（取所有在役窗里最长的那个）。</summary>
-    public double BuffRemaining => _buffs.Values.Where(b => b.Def.DamageWindow).Select(b => b.Remaining).DefaultIfEmpty(0).Max();
+    public double BuffRemaining
+    {
+        get
+        {
+            double remaining = 0;
+            foreach (var buff in _buffs.Values)
+                if (buff.Def.DamageWindow) remaining = Math.Max(remaining, buff.Remaining);
+            return remaining;
+        }
+    }
     public double ShieldRemaining => Buff("shield")?.Remaining ?? 0;
     public double RegenRemaining => Buff("regen")?.Remaining ?? 0;
     public double LifestealRemaining => Buff("lifesteal")?.Remaining ?? 0;
@@ -276,7 +296,8 @@ public sealed partial class GameSession
         get
         {
             double product = 1;
-            foreach (var buff in _buffs.Values.Where(b => b.Def.DamageWindow)) product *= buff.WindowPower;
+            foreach (var buff in _buffs.Values)
+                if (buff.Def.DamageWindow) product *= buff.WindowPower;
             return product;
         }
     }
@@ -479,8 +500,9 @@ public sealed partial class GameSession
     }
     private void TickEnemies(double dt)
     {
-        foreach (var e in Battle.Enemies.Where(e => e.Hp > 0 && e.Kind != "rift"))
+        foreach (var e in Battle.Enemies)
         {
+            if (e.Hp <= 0 || e.Kind == "rift") continue;
             var m = Config.Monsters[e.MonsterId];
             // 状态计时（眩晕 / 减速 / 寒冷 / 易伤）：归零即摘掉那一份，"到期"与"从未有过"因此是同一种表示。
             // 灼烧不在这里——它由下面那段单独推进，理由见 `TickDot`。
@@ -499,8 +521,10 @@ public sealed partial class GameSession
         // 灼烧持续伤害：对非裂隙存活敌人按秒结算，不受眩晕影响。**位置与顺序是 DMG2 口径的一部分**——
         // 它排在敌人行动之后，且"这一帧开局还着着火就跳一次"（先判定再扣时间），与从前的写法逐字一致。
         // 来源记在敌人身上（`DotSkill`）——跳伤这条路上没有 `CombatEffect` 可查，只能施加时先记下来。
-        foreach (var e in Battle.Enemies.Where(e => e.Hp > 0 && e.Kind != "rift" && e.DotUntil > 0).ToArray())
-            if (e.TickDot(dt, out double dot, out string from)) HurtEnemy(e, dot, from);
+        // HurtEnemy 只标记死亡，敌人列表统一在 Step 末尾清理；本段不会增删敌人，可按原顺序直接遍历。
+        foreach (var e in Battle.Enemies)
+            if (e.Hp > 0 && e.Kind != "rift" && e.DotUntil > 0 && e.TickDot(dt, out double dot, out string from))
+                HurtEnemy(e, dot, from);
     }
     /// <summary>
     /// 按技能累计的伤害账本（GM 面板的「伤害统计」读它）。**纯运行时**：与 `Effects` / `Enemies` 同性质，不落盘。
@@ -525,7 +549,19 @@ public sealed partial class GameSession
     private bool Legal(EnemyState e, string hits) => Legal(e) && LayerHit(hits, e);
     private bool InRange(EnemyState? e, double range) => e is not null && Math.Abs(e.X - Battle.PlayerX) <= range;
     /// <summary>最近的合法目标。hits 为空表示不限层（普攻、剑灵弹、召唤弹都走这一档）。</summary>
-    private EnemyState? Target(double range, string hits = "") => Battle.Enemies.Where(e => Legal(e, hits) && Math.Abs(e.X - Battle.PlayerX) <= range).OrderBy(e => Math.Abs(e.X - Battle.PlayerX)).FirstOrDefault();
+    private EnemyState? Target(double range, string hits = "")
+    {
+        EnemyState? nearest = null;
+        double nearestDistance = double.PositiveInfinity;
+        foreach (var enemy in Battle.Enemies)
+        {
+            if (!Legal(enemy, hits)) continue;
+            double distance = Math.Abs(enemy.X - Battle.PlayerX);
+            // 同距离保留列表中先出现的目标，与原先稳定排序的 FirstOrDefault 一致。
+            if (distance <= range && distance < nearestDistance) { nearest = enemy; nearestDistance = distance; }
+        }
+        return nearest;
+    }
 
     private void CastSkills()
     {
@@ -908,8 +944,10 @@ public sealed partial class GameSession
     }
     private void TickEffects(double dt)
     {
-        foreach (var effect in Effects.ToArray())
+        // 本段只追加派生效果，不移除现有效果；固定入口数量，让新效果仍从下一拍开始推进。
+        for (int effectIndex = 0, count = Effects.Count; effectIndex < count; effectIndex++)
         {
+            var effect = Effects[effectIndex];
             // 影分身那一式晚一拍出现。拦在 Life / Timer 递减**之前**，于是延迟期间它的寿命与起飞倒计时都不流逝，
             // 到点后按原有逻辑照常走——不必给每个 kind 各打一个补丁（bolt 没有 Timer 通路、ground 的 Timer 又是 tick 间隔）。
             if (effect.Delay > 0) { effect.Delay -= dt; continue; }

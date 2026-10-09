@@ -10,6 +10,8 @@ public sealed partial class GameSession
     /// **一个 kind 同时只能有一份**：本工程没有叠层（DoT 是刷新覆盖，见 `docs/data/fields.md`），
     /// 所以"两份护盾"在 V1 不成立，查询也按 kind 走。</summary>
     private readonly Dictionary<string, BuffInstance> _buffs = [];
+    private readonly List<BuffInstance> _buffStep = [];
+    private readonly List<string> _coolingSkills = [];
 
     /// <summary>
     /// 执行一次效果的上下文。**只带"这一发是谁放的、什么力道"**——具体的形态、范围、倍率一律
@@ -19,7 +21,12 @@ public sealed partial class GameSession
         string Skill = "", double Power = 0, int Rank = 0, bool Mirrored = false, BuffInstance? Buff = null);
 
     /// <summary>在役的某一类增益（按 kind）。没有就是 null——调用方据此回落到中性值。</summary>
-    private BuffInstance? Buff(string kind) => _buffs.Values.FirstOrDefault(b => b.Def.Kind == kind);
+    private BuffInstance? Buff(string kind)
+    {
+        foreach (var buff in _buffs.Values)
+            if (buff.Def.Kind == kind) return buff;
+        return null;
+    }
 
     // ── 施加 ──────────────────────────────────────────────────────────────────────
     /// <summary>
@@ -93,7 +100,10 @@ public sealed partial class GameSession
     /// </summary>
     private void TickBuffs(double dt)
     {
-        foreach (var buff in _buffs.Values.ToArray())
+        // 本段允许移除到期增益，使用独立快照；时间轴触发器不会复用这个缓冲。
+        _buffStep.Clear();
+        _buffStep.AddRange(_buffs.Values);
+        foreach (var buff in _buffStep)
         {
             buff.Remaining -= dt;
             if (buff.Remaining <= 0) { _buffs.Remove(buff.Def.Id); continue; }
@@ -109,6 +119,7 @@ public sealed partial class GameSession
                     buff.TickTimer = tick.Interval;
             }
         }
+        _buffStep.Clear(); // 释放到期实例的引用，保留缓冲容量。
     }
 
     // ── 事件触发 ──────────────────────────────────────────────────────────────────
@@ -119,7 +130,8 @@ public sealed partial class GameSession
     /// </summary>
     private void FireTriggers(string triggerType, in EffectContext ctx)
     {
-        foreach (var buff in _buffs.Values.ToArray())
+        // 现有四类效果只发出攻击、复制施法或缩冷却，均不增删自身增益；嵌套触发也保持原顺序。
+        foreach (var buff in _buffs.Values)
             foreach (var trigger in Config.SkillTables.TriggersOf(buff.Def.Id))
                 if (trigger.TriggerType == triggerType)
                     ExecuteEffect(Config.SkillTables.Effects[trigger.EffectId], ctx with { Buff = buff });
@@ -199,11 +211,14 @@ public sealed partial class GameSession
         // 是同一条口径：增益之间的冷却不该互相喂。
         // 神通（`trigger_chance > 0`）同样排除：它们的冷却只是"最短触发间隔"，实际由概率主导，
         // 缩几秒几乎等于白给，还会稀释这次暴击本该给输出法术的收益。
-        var cooling = State.Skills.Where(kv => kv.Value > 0 && Battle.Cooldowns.GetValueOrDefault(kv.Key) > 0
-                && Config.Skills.TryGetValue(kv.Key, out var s) && s.Kind != "buff" && s.TriggerChance <= 0)
-            .Select(kv => kv.Key).ToArray();
-        if (cooling.Length == 0) return false;
-        string pick = cooling[_random.Next(cooling.Length)];
+        _coolingSkills.Clear();
+        foreach (var (id, rank) in State.Skills)
+            if (rank > 0 && Battle.Cooldowns.GetValueOrDefault(id) > 0
+                && Config.Skills.TryGetValue(id, out var skill) && skill.Kind != "buff" && skill.TriggerChance <= 0)
+                _coolingSkills.Add(id);
+        if (_coolingSkills.Count == 0) return false;
+        // 仍按原字典枚举顺序收集，再只抽一次随机数，保持同 seed 的施法序列。
+        string pick = _coolingSkills[_random.Next(_coolingSkills.Count)];
         // **按秒扣也要服从同一条上限**：冷却缩减的全部路径都必须落在 `cooldown ÷ (1 + skill_cdr)` 这个
         // 频率模型里，否则"把冷却扣到接近 0"就是一条绕过频率轴的暗路（而玩家在面板上完全看不到它）。
         // 下限取**该法术自身冷却 ÷ (1 + skill_cdr 的上限)**——也就是"CDR 拉满时能压到多低"。
